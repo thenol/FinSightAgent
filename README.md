@@ -1,6 +1,18 @@
 # FinSightAgent
 
-FinSightAgent is an evidence-first financial event research system. The current implementation is the first deterministic vertical slice: ingest a disclosure, classify an event, resolve a security code, register evidence, create a source-qualified claim, and expose a fact card through FastAPI.
+FinSightAgent is an evidence-first research system for **listed-company announcement-style events**. It turns multi-source disclosures into event cards with source-qualified claims, then optionally runs a LangGraph research workflow (Fact Checker → Company Analyst → Skeptic → Synthesizer) with review, reports, and daily briefs.
+
+MVP focus is five event types (`earnings_guidance`, `major_contract`, `merger_acquisition`, `shareholder_reduction`, `regulatory_penalty`). Ingestion keeps every document; cross-source “same story” alignment happens at the **Event** layer (matcher + router), not by byte-identical article dedup.
+
+Current slice includes:
+
+- RSS ingest with scheduling, HTML/PDF text extraction, and content-addressed revisions
+- Rule classification + Event Router gate, entity/code resolution, and event clustering hooks
+- Evidence / claim fingerprints, conflict detection, and fact cards
+- Agent workflow with budgets, retries, tool gateway `as_of` guards, and Admin SPA
+- JWT roles, Outbox → Redis Streams, and Alembic-managed PostgreSQL
+
+Progress and backlog live in [`docs/07-work-progress.md`](docs/07-work-progress.md) and [`docs/08-improvement-backlog.md`](docs/08-improvement-backlog.md). Full design index: [`docs/README.md`](docs/README.md).
 
 ## Run locally
 
@@ -61,25 +73,22 @@ uv run ruff check .
 cd web && npm test && npm run lint && npm run build
 ```
 
-Run the Outbox publisher in a second process when PostgreSQL and Redis are available:
+Workers (PostgreSQL + Redis required for Outbox / scheduling):
 
 ```bash
-uv run python -m app.worker outbox
+uv run python -m app.worker outbox   # publish transactional Outbox to Redis Streams
+uv run python -m app.worker source   # poll active sources on crawl_interval_seconds
 ```
 
 ## Storage status
 
 Default local development uses PostgreSQL (`FINSIGHT_REPOSITORY=postgresql`). `./scripts/start.sh --dev` starts Postgres + Redis via `deploy/docker-compose.dev-data.yml` (host ports `5432` and `6380`), runs `alembic upgrade head`, then launches the API and Vite admin. All domains—including LLM provider configs and agent bindings—persist in PostgreSQL across restarts.
 
-Set `FINSIGHT_REPOSITORY=memory` only for disposable in-process runs (LLM configs still write to `.data/llm_config.json`). The complete vertical slice and its Outbox record are committed in one transaction under PostgreSQL.
+Set `FINSIGHT_REPOSITORY=memory` only for disposable in-process runs (LLM configs still write to `.data/llm_config.json`). The ingest/research pipeline and its Outbox record are committed in one transaction under PostgreSQL.
 
 ## Source scheduling
 
-Sources are synced manually from the Admin Sources page / `POST /api/v1/sources/{id}/sync`, or automatically by the source worker:
-
-```bash
-uv run python -m app.worker source
-```
+Sources are synced manually from the Admin Sources page / `POST /api/v1/sources/{id}/sync`, or automatically by the source worker above.
 
 Each active source runs on its `crawl_interval_seconds` (minimum 60). The worker rescans the DB every 60 seconds so enable/disable and interval edits apply without restart. Compose includes a `source-worker` service. Recent attempts are stored in `platform.ingest_runs` and listed via `GET /api/v1/sources/{id}/runs`.
 
@@ -92,7 +101,7 @@ export FINSIGHT_JWT_SECRET="replace-with-a-random-production-secret"
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-The API exposes `/health/live` for process liveness and `/health/ready` for database readiness. The container runs as the unprivileged `finsight` user. `report_versions` is still mutable for state transitions in this release; immutable replacement versions are intentionally deferred to the next delivery batch.
+The API exposes `/health/live` for process liveness and `/health/ready` for database readiness. The container runs as the unprivileged `finsight` user. `report_versions` is still mutable for state transitions in this release; immutable replacement versions are intentionally deferred.
 
 For a persistent deployment, provision the first operator after migrations:
 
@@ -102,6 +111,13 @@ FINSIGHT_REPOSITORY=postgresql uv run python -m app.admin admin --role admin
 
 The command prompts for a password (or accepts `--password` for automation). Store `FINSIGHT_JWT_SECRET` in a secret manager outside development.
 
-Local content-addressed Artifact storage, DocumentRevision, Redis Streams Outbox publishing, retry/dead-letter handling, and persistent Inbox deduplication are implemented. Event clustering, real exchange adapters, PDF/OCR parsing, and production object storage are not yet complete.
+### Implemented vs still open
 
-System and detailed design documents are indexed in [`docs/README.md`](docs/README.md).
+| Area | Status |
+| --- | --- |
+| Artifacts, DocumentRevision, Outbox → Redis Streams, Inbox dedup | Implemented |
+| Event matcher / router, claim fingerprints, Agent graph + Admin SPA | Implemented (thresholds / merge UX still maturing) |
+| Text PDF page/offset evidence | Partial (tables, OCR, exchange S-tier APIs still open) |
+| Production object storage, live market acceptance | Not complete |
+
+See [`docs/07-work-progress.md`](docs/07-work-progress.md) for the authoritative checklist.

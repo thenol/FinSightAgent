@@ -29,7 +29,7 @@ uv run pytest                   # run the test suite
 uv run ruff check .             # lint Python code
 ```
 
-Use `docker compose -f deploy/docker-compose.yml up --build` to start the API with PostgreSQL and Redis. The Redis Outbox publisher is not yet implemented.
+Use `docker compose -f deploy/docker-compose.yml up --build` to start the API with PostgreSQL and Redis. Run `uv run python -m app.worker outbox` (or the Compose `outbox-worker` service) to publish transactional Outbox records to Redis Streams.
 
 ## Coding Style & Naming Conventions
 
@@ -43,6 +43,6 @@ Use `pytest`; name files `tests/test_<module>.py` and tests `test_<behavior>()`.
 
 ## Commit & Pull Request Guidelines
 
-Git history is not available in this workspace, so no existing convention can be inferred. Until one is established, use concise Conventional Commit subjects such as `docs: clarify event lifecycle` or `feat: add filing ingestion`.
+Use concise Conventional Commit subjects such as `docs: clarify event lifecycle` or `feat: add filing ingestion`.
 
 Pull requests should describe scope, affected modules, validation performed, and any schema or architecture decisions. Link relevant issues; include screenshots for UI changes and sample payloads for API changes. Never commit credentials, licensed source content, or generated runtime data.
