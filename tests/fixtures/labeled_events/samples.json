@@ -1,0 +1,456 @@
+{
+  "schema_version": "labeled-events-v1",
+  "description": "五类 MVP 事件标注样本，用于离线评估分类/实体/key_fields/引用质量。每条样本含 expected 期望与 category(positive/negative/boundary)。",
+  "samples": [
+    {
+      "id": "eg_pos_001",
+      "category": "positive",
+      "title": "示例公司（000001.SZ）2026年半年度业绩预告",
+      "content": "公司预计2026年半年度归属于上市公司股东的净利润16000万元至19000万元，同比增长20%至30%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [
+          "000001.SZ"
+        ],
+        "key_fields_present": [
+          "period",
+          "range",
+          "change_rate",
+          "profit_metric"
+        ]
+      }
+    },
+    {
+      "id": "eg_pos_002",
+      "category": "positive",
+      "title": "某科技公司（002415.SZ）发布业绩快报",
+      "content": "公司2026年第一季度业绩快报，预计净利润同比增长15%至25%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [
+          "002415.SZ"
+        ],
+        "key_fields_present": [
+          "period",
+          "change_rate"
+        ]
+      }
+    },
+    {
+      "id": "eg_pos_003",
+      "category": "positive",
+      "title": "某医药公司（300001.SZ）业绩预告",
+      "content": "公司预计2026年年度净利润5亿元至7亿元，同比增长30%至50%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [
+          "300001.SZ"
+        ],
+        "key_fields_present": [
+          "period",
+          "range",
+          "change_rate",
+          "profit_metric"
+        ]
+      }
+    },
+    {
+      "id": "eg_pos_004",
+      "category": "positive",
+      "title": "某制造企业（600005.SH）半年度业绩预告",
+      "content": "公司预计2026年半年度净利润同比下降10%至20%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [
+          "600005.SH"
+        ],
+        "key_fields_present": [
+          "period",
+          "change_rate"
+        ]
+      }
+    },
+    {
+      "id": "eg_pos_005",
+      "category": "positive",
+      "title": "某新能源公司（300750.SZ）业绩预告",
+      "content": "公司预计2026年一季度净利润8000万元至12000万元，同比增长50%至80%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [
+          "300750.SZ"
+        ],
+        "key_fields_present": [
+          "period",
+          "range",
+          "change_rate",
+          "profit_metric"
+        ]
+      }
+    },
+    {
+      "id": "eg_bdy_001",
+      "category": "boundary",
+      "title": "某公司半年度业绩预告",
+      "content": "公司预计净利润同比增长20%至30%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [],
+        "key_fields_present": [
+          "change_rate"
+        ]
+      }
+    },
+    {
+      "id": "eg_bdy_002",
+      "category": "boundary",
+      "title": "某公司业绩预告",
+      "content": "公司预计2026年半年度净利润同比增长20%至30%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "earnings_guidance",
+        "entity_codes": [],
+        "key_fields_present": [
+          "period",
+          "change_rate"
+        ]
+      }
+    },
+    {
+      "id": "eg_neg_001",
+      "category": "negative",
+      "title": "某公司日常公告",
+      "content": "公司将于下周召开投资者交流活动。",
+      "source_tier": "A",
+      "expected": {
+        "event_type": "general_market_news",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "mc_pos_001",
+      "category": "positive",
+      "title": "示例公司（000002.SZ）重大合同公告",
+      "content": "公司与中国移动通信集团有限公司签订重大合同，合同金额为15000万元，合同期限2年。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "major_contract",
+        "entity_codes": [
+          "000002.SZ"
+        ],
+        "key_fields_present": [
+          "amount",
+          "currency",
+          "counterparties",
+          "duration"
+        ]
+      }
+    },
+    {
+      "id": "mc_pos_002",
+      "category": "positive",
+      "title": "某建筑公司（601668.SH）中标公告",
+      "content": "公司中标某基础设施项目，中标金额3.5亿元。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "major_contract",
+        "entity_codes": [
+          "601668.SH"
+        ],
+        "key_fields_present": [
+          "amount",
+          "currency"
+        ]
+      }
+    },
+    {
+      "id": "mc_pos_003",
+      "category": "positive",
+      "title": "某科技公司（000063.SZ）合同公告",
+      "content": "公司与海外客户签订重大合同，合同金额2亿元。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "major_contract",
+        "entity_codes": [
+          "000063.SZ"
+        ],
+        "key_fields_present": [
+          "amount",
+          "currency"
+        ]
+      }
+    },
+    {
+      "id": "mc_bdy_001",
+      "category": "boundary",
+      "title": "某公司合同公告",
+      "content": "公司签订合同，合同金额为5000万元。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "major_contract",
+        "entity_codes": [],
+        "key_fields_present": [
+          "amount",
+          "currency"
+        ]
+      }
+    },
+    {
+      "id": "mc_neg_001",
+      "category": "negative",
+      "title": "某公司采购公告",
+      "content": "公司拟采购一批办公设备。",
+      "source_tier": "A",
+      "expected": {
+        "event_type": "out_of_scope",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "ma_pos_001",
+      "category": "positive",
+      "title": "示例公司（000333.SZ）并购重组公告",
+      "content": "公司拟收购星河科技有限公司的股权，交易对价5亿元，交易方式为现金收购。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "merger_acquisition",
+        "entity_codes": [
+          "000333.SZ"
+        ],
+        "key_fields_present": [
+          "valuation",
+          "target",
+          "transaction_type",
+          "stage"
+        ]
+      }
+    },
+    {
+      "id": "ma_pos_002",
+      "category": "positive",
+      "title": "某能源公司（601857.SH）重组公告",
+      "content": "公司拟通过资产重组方式收购标的资产，交易对价10亿元。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "merger_acquisition",
+        "entity_codes": [
+          "601857.SH"
+        ],
+        "key_fields_present": [
+          "valuation"
+        ]
+      }
+    },
+    {
+      "id": "ma_pos_003",
+      "category": "positive",
+      "title": "某医药公司（600276.SH）收购公告",
+      "content": "公司拟收购某标的公司全部股权，交易方式为发行股份购买资产。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "merger_acquisition",
+        "entity_codes": [
+          "600276.SH"
+        ],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "ma_bdy_001",
+      "category": "boundary",
+      "title": "某公司重组公告",
+      "content": "公司拟进行资产重组。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "merger_acquisition",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "ma_neg_001",
+      "category": "negative",
+      "title": "某公司资产评估公告",
+      "content": "公司对部分资产进行评估。",
+      "source_tier": "A",
+      "expected": {
+        "event_type": "out_of_scope",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "sr_pos_001",
+      "category": "positive",
+      "title": "示例公司（000725.SZ）股东减持公告",
+      "content": "控股股东李某某计划减持不超过5%股份，计划通过集中竞价方式减持。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "shareholder_reduction",
+        "entity_codes": [
+          "000725.SZ"
+        ],
+        "key_fields_present": [
+          "ownership_ratio",
+          "shareholder",
+          "stage"
+        ]
+      }
+    },
+    {
+      "id": "sr_pos_002",
+      "category": "positive",
+      "title": "某公司（002230.SZ）股份减持公告",
+      "content": "持股5%以上股东拟减持公司股份，减持比例不超过3%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "shareholder_reduction",
+        "entity_codes": [
+          "002230.SZ"
+        ],
+        "key_fields_present": [
+          "ownership_ratio"
+        ]
+      }
+    },
+    {
+      "id": "sr_pos_003",
+      "category": "positive",
+      "title": "某科技公司（000538.SZ）股东减持",
+      "content": "控股股东拟减持股份，减持比例不超过2%。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "shareholder_reduction",
+        "entity_codes": [
+          "000538.SZ"
+        ],
+        "key_fields_present": [
+          "ownership_ratio"
+        ]
+      }
+    },
+    {
+      "id": "sr_bdy_001",
+      "category": "boundary",
+      "title": "某公司减持公告",
+      "content": "股东拟减持公司股份。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "shareholder_reduction",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "sr_neg_001",
+      "category": "negative",
+      "title": "某公司股东增持公告",
+      "content": "控股股东拟增持公司股份。",
+      "source_tier": "A",
+      "expected": {
+        "event_type": "out_of_scope",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "rp_pos_001",
+      "category": "positive",
+      "title": "示例公司（601318.SH）收到监管处罚",
+      "content": "公司近日收到证监会下发的行政处罚决定书，因信息披露违规被处罚。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "regulatory_penalty",
+        "entity_codes": [
+          "601318.SH"
+        ],
+        "key_fields_present": [
+          "authority",
+          "penalty"
+        ]
+      }
+    },
+    {
+      "id": "rp_pos_002",
+      "category": "positive",
+      "title": "某公司（000776.SZ）监管措施公告",
+      "content": "公司收到证监局采取的监管措施决定书。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "regulatory_penalty",
+        "entity_codes": [
+          "000776.SZ"
+        ],
+        "key_fields_present": [
+          "authority"
+        ]
+      }
+    },
+    {
+      "id": "rp_pos_003",
+      "category": "positive",
+      "title": "某公司（002594.SZ）收到警示函",
+      "content": "公司收到交易所出具的警示函监管措施。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "regulatory_penalty",
+        "entity_codes": [
+          "002594.SZ"
+        ],
+        "key_fields_present": [
+          "authority",
+          "penalty"
+        ]
+      }
+    },
+    {
+      "id": "rp_pos_004",
+      "category": "positive",
+      "title": "某公司（600030.SH）行政处罚",
+      "content": "公司因违规被证监会立案调查并给予行政处罚。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "regulatory_penalty",
+        "entity_codes": [
+          "600030.SH"
+        ],
+        "key_fields_present": [
+          "authority",
+          "penalty"
+        ]
+      }
+    },
+    {
+      "id": "rp_bdy_001",
+      "category": "boundary",
+      "title": "某公司监管公告",
+      "content": "公司收到监管处罚。",
+      "source_tier": "S",
+      "expected": {
+        "event_type": "regulatory_penalty",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    },
+    {
+      "id": "rp_neg_001",
+      "category": "negative",
+      "title": "某公司合规培训公告",
+      "content": "公司组织员工开展合规培训。",
+      "source_tier": "A",
+      "expected": {
+        "event_type": "out_of_scope",
+        "entity_codes": [],
+        "key_fields_present": []
+      }
+    }
+  ]
+}

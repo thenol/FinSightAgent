@@ -1,0 +1,124 @@
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
+
+DEFAULT_JWT_SECRET = "development-only-secret-change-me-32-bytes"
+PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+
+
+@dataclass(frozen=True)
+class Settings:
+    environment: str
+    repository: str
+    database_url: str
+    redis_url: str
+    artifact_root: str
+    jwt_secret: str
+    bootstrap_admin_username: str
+    bootstrap_admin_password: str
+    settings_fernet_key: str = ""
+
+    default_rate_limit_per_minute: int = 10
+    rsshub_base_url: str = "http://127.0.0.1:1200"
+    fetch_timeout_seconds: float = 60.0
+    ingest_max_items_per_sync: int = 20
+    source_auto_disable_failures: int = 5
+    robots_enabled: bool = True
+    # Minimum seconds a document must remain soft-deleted before purge (default 7d).
+    document_purge_min_age_seconds: int = 7 * 24 * 60 * 60
+    # Auto-purge worker interval (default 1h); 0 disables the scheduled job.
+    document_purge_interval_seconds: int = 3600
+    document_purge_batch_size: int = 100
+    # 当事件重要度 >= 该阈值时，主水线自动为其创建工作流（进入 pending）。
+    workflow_auto_importance_threshold: float = 0.70
+    # 自动触发开关；false 时仍创建事件/卡片，但不自动排队研究工作流。
+    workflow_auto_trigger_enabled: bool = True
+
+    def validate(self) -> "Settings":
+        if self.environment not in {"development", "test", "staging", "production", "prod"}:
+            raise ValueError("FINSIGHT_ENV_INVALID")
+        if self.repository not in {"memory", "postgresql"}:
+            raise ValueError("FINSIGHT_REPOSITORY_INVALID")
+        if self.repository == "postgresql":
+            parsed = urlparse(self.database_url)
+            if parsed.scheme not in {"postgresql", "postgresql+psycopg"} or not parsed.hostname:
+                raise ValueError("FINSIGHT_DATABASE_URL_INVALID")
+        if not urlparse(self.redis_url).scheme.startswith("redis"):
+            raise ValueError("FINSIGHT_REDIS_URL_INVALID")
+        artifact_root = Path(self.artifact_root)
+        if not artifact_root.is_absolute() and self.environment in PRODUCTION_ENVIRONMENTS:
+            raise ValueError("FINSIGHT_ARTIFACT_ROOT_MUST_BE_ABSOLUTE")
+        if self.environment in PRODUCTION_ENVIRONMENTS and (
+            self.jwt_secret == DEFAULT_JWT_SECRET or len(self.jwt_secret) < 32
+        ):
+            raise ValueError("FINSIGHT_JWT_SECRET_REQUIRED")
+        if self.environment in PRODUCTION_ENVIRONMENTS:
+            if not self.settings_fernet_key or len(self.settings_fernet_key) < 32:
+                raise ValueError("FINSIGHT_SETTINGS_FERNET_KEY_REQUIRED")
+            if self.settings_fernet_key == self.jwt_secret:
+                raise ValueError("FINSIGHT_SETTINGS_FERNET_KEY_MUST_DIFFER_FROM_JWT")
+        if bool(self.bootstrap_admin_username) != bool(self.bootstrap_admin_password):
+            raise ValueError("FINSIGHT_BOOTSTRAP_ADMIN_CREDENTIALS_REQUIRED")
+        if self.bootstrap_admin_username and len(self.bootstrap_admin_username) > 128:
+            raise ValueError("FINSIGHT_BOOTSTRAP_ADMIN_USERNAME_INVALID")
+        if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 8:
+            raise ValueError("FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD_TOO_SHORT")
+        max_purge_age = 365 * 24 * 60 * 60
+        if (
+            self.document_purge_min_age_seconds < 0
+            or self.document_purge_min_age_seconds > max_purge_age
+        ):
+            raise ValueError("FINSIGHT_DOCUMENT_PURGE_MIN_AGE_SECONDS_INVALID")
+        if self.document_purge_interval_seconds < 0:
+            raise ValueError("FINSIGHT_DOCUMENT_PURGE_INTERVAL_SECONDS_INVALID")
+        if self.document_purge_batch_size < 1 or self.document_purge_batch_size > 10000:
+            raise ValueError("FINSIGHT_DOCUMENT_PURGE_BATCH_SIZE_INVALID")
+        if not 0.0 <= self.workflow_auto_importance_threshold <= 1.0:
+            raise ValueError("FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD_INVALID")
+        return self
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        return cls(
+            environment=os.getenv("FINSIGHT_ENV", "development"),
+            repository=os.getenv("FINSIGHT_REPOSITORY", "memory"),
+            database_url=os.getenv(
+                "FINSIGHT_DATABASE_URL",
+                "postgresql+psycopg://finsight:finsight@localhost:5432/finsight",
+            ),
+            redis_url=os.getenv("FINSIGHT_REDIS_URL", "redis://localhost:6379/0"),
+            artifact_root=os.getenv("FINSIGHT_ARTIFACT_ROOT", ".data/artifacts"),
+            jwt_secret=os.getenv(
+                "FINSIGHT_JWT_SECRET",
+                DEFAULT_JWT_SECRET,
+            ),
+            bootstrap_admin_username=os.getenv("FINSIGHT_BOOTSTRAP_ADMIN_USERNAME", ""),
+            bootstrap_admin_password=os.getenv("FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD", ""),
+            settings_fernet_key=os.getenv("FINSIGHT_SETTINGS_FERNET_KEY", ""),
+            default_rate_limit_per_minute=int(
+                os.getenv("FINSIGHT_DEFAULT_RATE_LIMIT_PER_MINUTE", "10")
+            ),
+            rsshub_base_url=os.getenv("FINSIGHT_RSSHUB_BASE_URL", "http://127.0.0.1:1200"),
+            fetch_timeout_seconds=float(os.getenv("FINSIGHT_FETCH_TIMEOUT_SECONDS", "60")),
+            ingest_max_items_per_sync=int(os.getenv("FINSIGHT_INGEST_MAX_ITEMS_PER_SYNC", "20")),
+            source_auto_disable_failures=int(
+                os.getenv("FINSIGHT_SOURCE_AUTO_DISABLE_FAILURES", "5")
+            ),
+            robots_enabled=os.getenv("FINSIGHT_ROBOTS_ENABLED", "true").lower()
+            in {"1", "true", "yes"},
+            document_purge_min_age_seconds=int(
+                os.getenv("FINSIGHT_DOCUMENT_PURGE_MIN_AGE_SECONDS", str(7 * 24 * 60 * 60))
+            ),
+            document_purge_interval_seconds=int(
+                os.getenv("FINSIGHT_DOCUMENT_PURGE_INTERVAL_SECONDS", "3600")
+            ),
+            document_purge_batch_size=int(os.getenv("FINSIGHT_DOCUMENT_PURGE_BATCH_SIZE", "100")),
+            workflow_auto_importance_threshold=float(
+                os.getenv("FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD", "0.70")
+            ),
+            workflow_auto_trigger_enabled=os.getenv(
+                "FINSIGHT_WORKFLOW_AUTO_TRIGGER_ENABLED", "true"
+            ).lower()
+            in {"1", "true", "yes"},
+        ).validate()

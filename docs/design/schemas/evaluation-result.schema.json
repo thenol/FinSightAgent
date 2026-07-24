@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/evaluation-result/1.0.0",
+  "title": "EvaluationResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evaluation_run_id", "dataset_version", "as_of", "status", "metrics", "sample_count", "failed_sample_count"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "evaluation_run_id": {"type": "string"},
+    "dataset_version": {"type": "string", "minLength": 1},
+    "as_of": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["complete", "partial", "failed"]},
+    "sample_count": {"type": "integer", "minimum": 0},
+    "failed_sample_count": {"type": "integer", "minimum": 0},
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value", "numerator", "denominator"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "value": {"type": ["number", "null"]},
+          "numerator": {"type": ["integer", "null"]},
+          "denominator": {"type": ["integer", "null"]},
+          "dimensions": {"type": "object"},
+          "confidence_interval": {
+            "type": ["object", "null"],
+            "properties": {"low": {"type": "number"}, "high": {"type": "number"}}
+          }
+        }
+      }
+    }
+  }
+}

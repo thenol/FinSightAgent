@@ -1,0 +1,61 @@
+{
+  "description": "Local-only quality contract for citation consistency / unsourced facts / rumor mislabel. Not a production human label set; DOC05-Q-* gates must stay NOT_PRODUCTION_VALIDATED.",
+  "frozen_set": {
+    "version": "local-quality-contract-v1",
+    "reviewers": ["local-contract"],
+    "reviewed_at": "2026-07-22T00:00:00+00:00",
+    "production_validated": false
+  },
+  "samples": [
+    {
+      "id": "lqc-consistent",
+      "event_type": "earnings_guidance",
+      "evidence": [{"id": "evd-lqc-1", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-lqc-1",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-lqc-1"],
+          "supported_evidence_ids": ["evd-lqc-1"]
+        }
+      ],
+      "workflow": {"started": true, "status": "succeeded", "explicitly_degraded": false},
+      "report": {"fingerprint": "lqc-report-1"}
+    },
+    {
+      "id": "lqc-rumor-labeled",
+      "event_type": "major_contract",
+      "evidence": [{"id": "evd-lqc-2", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-lqc-2",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-lqc-2"],
+          "supported_evidence_ids": ["evd-lqc-2"],
+          "is_rumor": true,
+          "labeled_as_rumor": true
+        }
+      ],
+      "workflow": {"started": true, "status": "succeeded", "explicitly_degraded": false},
+      "report": {"fingerprint": "lqc-report-2"}
+    },
+    {
+      "id": "lqc-sourced-fact",
+      "event_type": "regulatory_penalty",
+      "evidence": [{"id": "evd-lqc-3", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-lqc-3",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-lqc-3"],
+          "supported_evidence_ids": ["evd-lqc-3"]
+        }
+      ],
+      "workflow": {"started": true, "status": "succeeded", "explicitly_degraded": false},
+      "report": {"fingerprint": "lqc-report-3"}
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/review-decision/1.0.0",
+  "title": "ReviewDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "review_task_id", "expected_version", "decision", "reason"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "review_task_id": {"type": "string"},
+    "expected_version": {"type": "integer", "minimum": 1},
+    "decision": {"enum": ["approve", "return_for_supplement", "downgrade_to_fact_card", "reject", "withdraw"]},
+    "reason": {"type": "string", "minLength": 1},
+    "resume_from": {"type": ["string", "null"]},
+    "supplemental_object_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  }
+}

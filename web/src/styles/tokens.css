@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light;
+
+  --color-canvas: #f4f6f9;
+  --color-sidebar: #0f1b2d;
+  --color-sidebar-text: #c5d0de;
+  --color-sidebar-muted: #8a97a8;
+  --color-sidebar-hover: rgb(255 255 255 / 6%);
+  --color-sidebar-active: rgb(61 139 253 / 18%);
+  --color-sidebar-border: rgb(255 255 255 / 8%);
+
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f7f9fc;
+  --color-surface-3: #eef2f7;
+  --color-surface-raised: #ffffff;
+  --color-overlay: rgb(15 27 45 / 48%);
+
+  --color-text: #243044;
+  --color-text-strong: #0f1b2d;
+  --color-text-muted: #667788;
+  --color-text-faint: #8b97a6;
+
+  --color-border: #e2e8f0;
+  --color-border-strong: #c9d4e1;
+  --color-blue: #1f6feb;
+  --color-blue-soft: rgb(31 111 235 / 10%);
+  --color-amber: #b7791f;
+  --color-amber-soft: rgb(183 121 31 / 12%);
+  --color-green: #1f8a5b;
+  --color-green-soft: rgb(31 138 91 / 12%);
+  --color-red: #c53d3d;
+  --color-red-soft: rgb(197 61 61 / 10%);
+
+  --font-sans: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo,
+    monospace;
+
+  --sidebar-width: 15.5rem;
+  --sidebar-collapsed-width: 4.5rem;
+  --topbar-height: 3.5rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --shadow-sm: 0 1px 2px rgb(15 27 45 / 6%);
+  --shadow-md: 0 8px 24px rgb(15 27 45 / 8%);
+  --focus-ring: 0 0 0 3px rgb(31 111 235 / 22%);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}

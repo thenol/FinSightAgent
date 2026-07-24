@@ -1,0 +1,41 @@
+# Local development data plane: PostgreSQL + Redis with host ports.
+# Used by ./scripts/start.sh --dev when FINSIGHT_REPOSITORY=postgresql.
+# Shares Compose project "deploy" with the full stack file so volumes stay consistent
+# when only the data services are running.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finsight}
+      POSTGRES_USER: ${POSTGRES_USER:-finsight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finsight}
+    ports:
+      - "${FINSIGHT_DEV_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - finsight_dev_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "${FINSIGHT_DEV_REDIS_PORT:-6380}:6379"
+    volumes:
+      - finsight_dev_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  finsight_dev_postgres:
+  finsight_dev_redis:

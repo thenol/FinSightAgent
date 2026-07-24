@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/fact-check-output/1.0.0",
+  "title": "FactCheckOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claims",
+    "conflicts",
+    "unverified_items",
+    "completion"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_ref",
+          "subject",
+          "predicate",
+          "object",
+          "qualifiers",
+          "evidence"
+        ],
+        "properties": {
+          "claim_ref": {"type": "string", "pattern": "^claim_[a-zA-Z0-9_-]+$"},
+          "subject": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text"],
+            "properties": {
+              "entity_id": {"type": ["string", "null"]},
+              "text": {"type": "string", "minLength": 1}
+            }
+          },
+          "predicate": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "object": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"enum": ["string", "decimal", "range", "date", "boolean", "entity"]}
+            }
+          },
+          "qualifiers": {"type": "object"},
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["revision_id", "block_id", "char_start", "char_end", "stance"],
+              "properties": {
+                "revision_id": {"type": "string"},
+                "block_id": {"type": "string"},
+                "char_start": {"type": "integer", "minimum": 0},
+                "char_end": {"type": "integer", "minimum": 1},
+                "stance": {"enum": ["support", "refute", "context"]}
+              }
+            }
+          },
+          "agent_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "notes": {"type": "string"}
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_refs", "conflict_type", "severity", "summary"],
+        "properties": {
+          "claim_refs": {
+            "type": "array",
+            "minItems": 2,
+            "items": {"type": "string"},
+            "uniqueItems": true
+          },
+          "conflict_type": {"enum": ["value", "unit", "period", "subject", "time", "scope", "semantic"]},
+          "severity": {"enum": ["minor", "major", "critical"]},
+          "summary": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "unverified_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "reason_code"],
+        "properties": {
+          "statement": {"type": "string", "minLength": 1},
+          "reason_code": {
+            "enum": [
+              "NO_DIRECT_EVIDENCE",
+              "LOW_TIER_ONLY",
+              "ENTITY_UNRESOLVED",
+              "PREDICATE_UNSUPPORTED",
+              "SEARCH_BUDGET_EXHAUSTED"
+            ]
+          },
+          "requested_source_type": {"type": "string"}
+        }
+      }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"enum": ["complete", "partial", "needs_review"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

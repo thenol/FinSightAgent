@@ -1,0 +1,59 @@
+{
+  "frozen_set": {
+    "version": "mvp-frozen-v1",
+    "reviewers": ["reviewer-alpha", "reviewer-beta"],
+    "reviewed_at": "2026-07-20T10:00:00+08:00"
+  },
+  "samples": [
+    {
+      "id": "eval-001",
+      "event_type": "earnings_guidance",
+      "evidence": [{"id": "evd-001", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-001",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-001"],
+          "supported_evidence_ids": ["evd-001"]
+        }
+      ],
+      "workflow": {"started": true, "status": "succeeded", "explicitly_degraded": false},
+      "report": {"fingerprint": "report-001"}
+    },
+    {
+      "id": "eval-002",
+      "event_type": "major_contract",
+      "evidence": [{"id": "evd-002", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-002",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-002"],
+          "supported_evidence_ids": ["evd-002"],
+          "is_rumor": true,
+          "labeled_as_rumor": true
+        }
+      ],
+      "workflow": {"started": true, "status": "failed", "explicitly_degraded": true},
+      "report": {"fingerprint": "report-002"}
+    },
+    {
+      "id": "eval-003",
+      "event_type": "regulatory_penalty",
+      "evidence": [{"id": "evd-003", "valid": true}],
+      "claims": [
+        {
+          "id": "clm-003",
+          "is_fact": true,
+          "is_critical": true,
+          "evidence_ids": ["evd-003"],
+          "supported_evidence_ids": ["evd-003"]
+        }
+      ],
+      "workflow": {"started": true, "status": "succeeded", "explicitly_degraded": false},
+      "report": {"fingerprint": "report-003"}
+    }
+  ]
+}

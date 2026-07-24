@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: uv sync --extra dev --extra postgres
+      - name: Frontend lint, test, and build
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+      - run: uv run ruff check .
+      - run: uv run pytest
+      - name: Orphan reference audit (empty memory repository)
+        env:
+          FINSIGHT_REPOSITORY: memory
+        run: uv run python scripts/orphan_audit.py --fail-on-findings
+      - name: Verify a clean Alembic upgrade
+        run: |
+          FINSIGHT_DATABASE_URL=sqlite:////tmp/finsight-migration.db uv run alembic upgrade head
+          FINSIGHT_DATABASE_URL=sqlite:////tmp/finsight-migration.db uv run alembic downgrade base
+      - name: Check Markdown links
+        run: uv run python scripts/check_markdown_links.py
+      - name: Validate Compose configuration
+        env:
+          FINSIGHT_JWT_SECRET: ci-only-secret-that-is-longer-than-32-bytes
+          FINSIGHT_COMPOSE_DATABASE_URL: postgresql+psycopg://finsight:ci@postgres:5432/finsight
+          FINSIGHT_COMPOSE_REDIS_URL: redis://redis:6379/0
+          POSTGRES_PASSWORD: ci
+        run: docker compose -f deploy/docker-compose.yml config --quiet

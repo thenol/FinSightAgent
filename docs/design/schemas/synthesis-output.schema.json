@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/synthesis-output/1.0.0",
+  "title": "SynthesisOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "signal",
+    "confidence",
+    "horizon",
+    "summary",
+    "key_fact_claim_ids",
+    "supporting_points",
+    "counter_points",
+    "watch_items",
+    "reanalysis_triggers",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "status": {"enum": ["complete", "partial", "fact_only", "needs_review"]},
+    "signal": {"enum": ["strongly_positive", "moderately_positive", "neutral", "mixed", "moderately_negative", "strongly_negative", "uncertain"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "horizon": {"enum": ["immediate", "short_term", "medium_term", "long_term", "uncertain"]},
+    "summary": {"type": "string", "minLength": 1},
+    "key_fact_claim_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "supporting_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "claim_ids", "analysis_refs"],
+        "properties": {
+          "statement": {"type": "string", "minLength": 1},
+          "claim_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "analysis_refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "counter_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "counter_argument_ids"],
+        "properties": {
+          "statement": {"type": "string", "minLength": 1},
+          "counter_argument_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "watch_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["indicator", "reason", "horizon"],
+        "properties": {
+          "indicator": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1},
+          "horizon": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "reanalysis_triggers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger_type", "condition", "affected_nodes"],
+        "properties": {
+          "trigger_type": {"enum": ["new_filing", "claim_change", "financial_metric", "price_move", "regulatory_action", "manual"]},
+          "condition": {"type": "string", "minLength": 1},
+          "affected_nodes": {
+            "type": "array",
+            "items": {"enum": ["fact_check", "company_analysis", "skeptic_review", "synthesize", "validate_guardrails"]},
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "confidence_factors": {"type": "array", "items": {"type": "string"}}
+  }
+}

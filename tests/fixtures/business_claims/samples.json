@@ -1,0 +1,32 @@
+[
+  {
+    "event_type": "earnings_guidance",
+    "title": "示例公司（000001.SZ）2026年半年度业绩预告",
+    "content": "公司预计2026年半年度归属于上市公司股东的净利润16000万元至19000万元，同比增长20%至30%。",
+    "predicates": ["expects_net_profit", "expects_net_profit_change"]
+  },
+  {
+    "event_type": "major_contract",
+    "title": "示例公司（000001.SZ）重大合同公告",
+    "content": "公司与北京甲公司签订重大合同，合同金额为15000万元，合同期限为三年。",
+    "predicates": ["signs_major_contract"]
+  },
+  {
+    "event_type": "merger_acquisition",
+    "title": "示例公司（000001.SZ）并购重组公告",
+    "content": "公司拟收购北京目标科技有限公司股权，交易对价5亿元。",
+    "predicates": ["announces_merger_acquisition"]
+  },
+  {
+    "event_type": "shareholder_reduction",
+    "title": "示例公司（000001.SZ）股东减持公告",
+    "content": "控股股东张三计划减持不超过500万股股份，占公司总股本5%。",
+    "predicates": ["reduces_holding", "reduces_holding_ratio"]
+  },
+  {
+    "event_type": "regulatory_penalty",
+    "title": "示例公司（000001.SZ）收到行政处罚",
+    "content": "北京示例公司因信息披露违法，收到中国证监会下发的行政处罚决定书。",
+    "predicates": ["penalized_by_regulator"]
+  }
+]

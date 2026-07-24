@@ -1,0 +1,161 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_ARTIFACT_ROOT: /data/artifacts
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+      FINSIGHT_BOOTSTRAP_ADMIN_USERNAME: ${FINSIGHT_BOOTSTRAP_ADMIN_USERNAME:-}
+      FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD: ${FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  outbox-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "outbox"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  workflow-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "workflow"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_ARTIFACT_ROOT: /data/artifacts
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+      FINSIGHT_WORKFLOW_STALE_SECONDS: ${FINSIGHT_WORKFLOW_STALE_SECONDS:-300}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  source-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "source"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_ARTIFACT_ROOT: /data/artifacts
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finsight}
+      POSTGRES_USER: ${POSTGRES_USER:-finsight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  artifacts:
+  postgres-data:
+  redis-data:

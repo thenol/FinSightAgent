@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/company-analysis-output/1.0.0",
+  "title": "CompanyAnalysisOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "direction",
+    "impact_horizon",
+    "assumptions",
+    "financial_impacts",
+    "scenarios",
+    "risks",
+    "confidence"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "status": {"enum": ["complete", "partial", "insufficient_data"]},
+    "direction": {"enum": ["positive", "negative", "mixed", "neutral", "uncertain"]},
+    "impact_horizon": {"enum": ["immediate", "short_term", "medium_term", "long_term", "uncertain"]},
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assumption_id", "statement", "importance", "supporting_claim_ids"],
+        "properties": {
+          "assumption_id": {"type": "string", "pattern": "^asm_[a-zA-Z0-9_-]+$"},
+          "statement": {"type": "string", "minLength": 1},
+          "importance": {"enum": ["low", "medium", "high", "critical"]},
+          "supporting_claim_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "financial_impacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "direction", "period", "basis", "claim_ids", "tool_result_ids"],
+        "properties": {
+          "metric": {"enum": ["revenue", "gross_margin", "operating_profit", "net_profit", "eps", "cash_flow", "other"]},
+          "direction": {"enum": ["increase", "decrease", "unchanged", "uncertain"]},
+          "period": {"type": "string", "minLength": 1},
+          "basis": {"type": "string", "minLength": 1},
+          "estimated_change": {
+            "type": ["object", "null"],
+            "properties": {
+              "min": {"type": "string"},
+              "max": {"type": "string"},
+              "unit": {"type": "string"}
+            }
+          },
+          "claim_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "tool_result_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "assumption_ids", "outcome", "probability_label"],
+        "properties": {
+          "name": {"enum": ["bear", "base", "bull"]},
+          "assumption_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "outcome": {"type": "string", "minLength": 1},
+          "probability_label": {"enum": ["low", "medium", "high", "not_assessed"]}
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk_id", "statement", "severity", "monitoring_indicator"],
+        "properties": {
+          "risk_id": {"type": "string", "pattern": "^risk_[a-zA-Z0-9_-]+$"},
+          "statement": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["low", "medium", "high", "critical"]},
+          "monitoring_indicator": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "missing_data": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "confidence_factors": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "version": "shadow-samples-v1",
+  "samples": [
+    {
+      "id": "shadow-earnings-001",
+      "event_type": "earnings_guidance",
+      "source_id": "shadow-official",
+      "source_tier": "S",
+      "published_at": "2026-07-10T01:00:00+00:00",
+      "available_at": "2026-07-10T01:05:00+00:00",
+      "title": "平安银行2026年半年度业绩预告",
+      "content": "公司预计2026年半年度净利润10000万元至12000万元，同比增长20%至30%。"
+    },
+    {
+      "id": "shadow-contract-001",
+      "event_type": "major_contract",
+      "source_id": "shadow-official",
+      "source_tier": "S",
+      "published_at": "2026-07-11T02:00:00+00:00",
+      "available_at": "2026-07-11T02:03:00+00:00",
+      "title": "万科企业签订重大合同公告",
+      "content": "公司与城市建设集团签订重大合同，合同金额8亿元，履行期限为三年。"
+    },
+    {
+      "id": "shadow-merger-001",
+      "event_type": "merger_acquisition",
+      "source_id": "shadow-official",
+      "source_tier": "S",
+      "published_at": "2026-07-12T03:00:00+00:00",
+      "available_at": "2026-07-12T03:02:00+00:00",
+      "title": "招商银行筹划重大资产重组",
+      "content": "公司拟收购华南科技有限公司股权，交易估值10亿元，目前处于筹划阶段。"
+    },
+    {
+      "id": "shadow-reduction-001",
+      "event_type": "shareholder_reduction",
+      "source_id": "shadow-official",
+      "source_tier": "S",
+      "published_at": "2026-07-13T04:00:00+00:00",
+      "available_at": "2026-07-13T04:01:00+00:00",
+      "title": "格力电器股东减持计划公告",
+      "content": "股东珠海投资计划减持不超过500万股，占公司总股本1%。"
+    },
+    {
+      "id": "shadow-penalty-001",
+      "event_type": "regulatory_penalty",
+      "source_id": "shadow-official",
+      "source_tier": "S",
+      "published_at": "2026-07-14T05:00:00+00:00",
+      "available_at": "2026-07-14T05:04:00+00:00",
+      "title": "监管处罚公告",
+      "content": "公司因信息披露不及时，被中国证监会处以行政处罚并责令改正。"
+    },
+    {
+      "id": "shadow-future-001",
+      "event_type": "major_contract",
+      "published_at": "2026-08-01T00:00:00+00:00",
+      "available_at": "2026-08-01T00:01:00+00:00",
+      "title": "该字段在截止时间后不得被处理",
+      "content": "未来数据。"
+    }
+  ]
+}

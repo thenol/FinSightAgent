@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finsight.local/schemas/fact-check-input/1.0.0",
+  "title": "FactCheckInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workflow_id",
+    "event",
+    "as_of",
+    "sources",
+    "document_blocks"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "workflow_id": {"type": "string", "pattern": "^wfr_"},
+    "as_of": {"type": "string", "format": "date-time"},
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "event_type", "title", "entity_ids"],
+      "properties": {
+        "event_id": {"type": "string", "pattern": "^evt_"},
+        "event_type": {
+          "enum": [
+            "earnings_guidance",
+            "major_contract",
+            "merger_acquisition",
+            "shareholder_reduction",
+            "regulatory_penalty"
+          ]
+        },
+        "title": {"type": "string", "minLength": 1},
+        "entity_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_id", "trust_tier", "independence_key"],
+        "properties": {
+          "source_id": {"type": "string"},
+          "trust_tier": {"enum": ["S", "A", "B", "C"]},
+          "independence_key": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "document_blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "document_id",
+          "revision_id",
+          "source_id",
+          "block_id",
+          "block_type",
+          "text",
+          "locator"
+        ],
+        "properties": {
+          "document_id": {"type": "string", "pattern": "^doc_"},
+          "revision_id": {"type": "string"},
+          "source_id": {"type": "string"},
+          "block_id": {"type": "string", "minLength": 1},
+          "block_type": {"enum": ["heading", "paragraph", "table", "footnote"]},
+          "text": {"type": "string"},
+          "locator": {"type": "object"}
+        }
+      }
+    },
+    "existing_claims": {
+      "type": "array",
+      "default": [],
+      "items": {"type": "object"}
+    },
+    "allowed_predicates": {
+      "type": "array",
+      "default": [],
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+      "uniqueItems": true
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_search_calls": {"type": "integer", "minimum": 0},
+        "max_output_claims": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}
