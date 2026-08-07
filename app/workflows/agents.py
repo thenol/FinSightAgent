@@ -13,16 +13,29 @@ Blackboard（DD-50 §11）。MVP 阶段输出由确定性逻辑基于 Blackboard
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from app.model_gateway.service import ModelGateway, ModelRequest
 from app.platform.asof import ensure_within_as_of
 from app.research.tools.gateway import ToolGateway
 from app.workflows.schemas import (
     CompanyAnalysisOutput,
+    FinancialImpact,
     SkepticOutput,
     SynthesisOutput,
 )
 
 AGENT_SCHEMA_VERSION = "v1"
+
+
+def _try_parse_payload(payload: Any, schema: type[BaseModel]) -> BaseModel | None:
+    if not payload or not isinstance(payload, dict):
+        return None
+    try:
+        return schema.model_validate(payload)
+    except ValidationError:
+        return None
+
 
 
 def _parse_as_of(state: dict[str, Any]) -> datetime:
@@ -108,49 +121,77 @@ class CompanyAnalystAgent:
         )
 
         direction = self._direction(event)
-        output = CompanyAnalysisOutput(
-            model_run_id=response.run_id,
-            status="complete" if claim_ids else "partial",
-            direction=direction,
-            impact_horizon="short_term",
-            assumptions=[
-                {
-                    "assumption_id": "asm_001",
-                    "statement": "公告披露的业绩区间可信",
-                    "importance": "high",
-                    "supporting_claim_ids": claim_ids[:1],
-                }
-            ],
-            financial_impacts=[
-                {
-                    "metric": "net_profit",
-                    "direction": "increase" if direction == "positive" else "uncertain",
-                    "period": event.key_fields.get("period", "unknown") if event else "unknown",
-                    "basis": "公告业绩预告",
-                    "estimated_change": event.key_fields.get("change_rate") if event else None,
-                    "claim_ids": claim_ids,
-                    "tool_result_ids": tool_result_ids,
-                }
-            ],
-            scenarios=[
-                {
-                    "name": "base",
-                    "assumption_ids": ["asm_001"],
-                    "outcome": "增长部分持续",
-                    "probability_label": "medium",
-                }
-            ],
-            risks=[
-                {
-                    "risk_id": "risk_001",
-                    "statement": "市场可能已提前定价",
-                    "severity": "medium",
-                    "monitoring_indicator": "公告后5日相对收益",
-                }
-            ],
-            confidence=0.65 if claim_ids else 0.40,
-            confidence_factors=["verified_claim_count", "source_tier"],
-        )
+        parsed = _try_parse_payload(response.payload, CompanyAnalysisOutput)
+        if parsed is not None:
+            if not parsed.financial_impacts:
+                parsed = parsed.model_copy(
+                    update={
+                        "financial_impacts": [
+                            FinancialImpact(
+                                metric="net_profit",
+                                direction=(
+                                    "increase" if direction == "positive" else "uncertain"
+                                ),
+                                period=(
+                                    event.key_fields.get("period", "unknown")
+                                    if event
+                                    else "unknown"
+                                ),
+                                basis="公告披露",
+                                estimated_change=(
+                                    event.key_fields.get("change_rate") if event else None
+                                ),
+                                claim_ids=claim_ids,
+                                tool_result_ids=tool_result_ids,
+                            )
+                        ]
+                    }
+                )
+            output = parsed.model_copy(update={"model_run_id": response.run_id})
+        else:
+            output = CompanyAnalysisOutput(
+                model_run_id=response.run_id,
+                status="complete" if claim_ids else "partial",
+                direction=direction,
+                impact_horizon="short_term",
+                assumptions=[
+                    {
+                        "assumption_id": "asm_001",
+                        "statement": "公告披露的业绩区间可信",
+                        "importance": "high",
+                        "supporting_claim_ids": claim_ids[:1],
+                    }
+                ],
+                financial_impacts=[
+                    {
+                        "metric": "net_profit",
+                        "direction": "increase" if direction == "positive" else "uncertain",
+                        "period": event.key_fields.get("period", "unknown") if event else "unknown",
+                        "basis": "公告业绩预告",
+                        "estimated_change": event.key_fields.get("change_rate") if event else None,
+                        "claim_ids": claim_ids,
+                        "tool_result_ids": tool_result_ids,
+                    }
+                ],
+                scenarios=[
+                    {
+                        "name": "base",
+                        "assumption_ids": ["asm_001"],
+                        "outcome": "增长部分持续",
+                        "probability_label": "medium",
+                    }
+                ],
+                risks=[
+                    {
+                        "risk_id": "risk_001",
+                        "statement": "市场可能已提前定价",
+                        "severity": "medium",
+                        "monitoring_indicator": "公告后5日相对收益",
+                    }
+                ],
+                confidence=0.65 if claim_ids else 0.40,
+                confidence_factors=["verified_claim_count", "source_tier"],
+            )
         return {"company_analysis": output.model_dump()}
 
     def _direction(self, event) -> str:
@@ -188,34 +229,42 @@ class SkepticAgent:
                 },
             )
         )
-        output = SkepticOutput(
-            model_run_id=response.run_id,
-            status="complete" if claim_ids else "insufficient_evidence",
-            counter_arguments=[
-                {
-                    "argument_id": "ctr_001",
-                    "statement": "股价可能已在公告前反映利好",
-                    "severity": "medium",
-                    "claim_ids": claim_ids[:1],
-                    "targets": ["asm_001"],
-                }
-            ],
-            fragile_assumptions=[
-                {"assumption_id": "asm_001", "failure_mode": "增长不持续", "materiality": "high"}
-            ],
-            thesis_breakers=[
-                {
-                    "condition": "下一季度毛利率低于阈值",
-                    "indicator": "主营业务毛利率",
-                    "threshold": "18%",
-                    "horizon": "1 quarter",
-                }
-            ],
-            direction_assessment="weakens",
-            recommended_confidence=0.55,
-            confidence_reasons=["公告前涨幅未纳入", "一次性收益占比待核"],
-            review_required=False,
-        )
+        parsed = _try_parse_payload(response.payload, SkepticOutput)
+        if parsed is not None:
+            output = parsed.model_copy(update={"model_run_id": response.run_id})
+        else:
+            output = SkepticOutput(
+                model_run_id=response.run_id,
+                status="complete" if claim_ids else "insufficient_evidence",
+                counter_arguments=[
+                    {
+                        "argument_id": "ctr_001",
+                        "statement": "股价可能已在公告前反映利好",
+                        "severity": "medium",
+                        "claim_ids": claim_ids[:1],
+                        "targets": ["asm_001"],
+                    }
+                ],
+                fragile_assumptions=[
+                    {
+                        "assumption_id": "asm_001",
+                        "failure_mode": "增长不持续",
+                        "materiality": "high",
+                    }
+                ],
+                thesis_breakers=[
+                    {
+                        "condition": "下一季度毛利率低于阈值",
+                        "indicator": "主营业务毛利率",
+                        "threshold": "18%",
+                        "horizon": "1 quarter",
+                    }
+                ],
+                direction_assessment="weakens",
+                recommended_confidence=0.55,
+                confidence_reasons=["公告前涨幅未纳入", "一次性收益占比待核"],
+                review_required=False,
+            )
         return {"counter_analysis": output.model_dump()}
 
 
@@ -245,50 +294,61 @@ class SynthesizerAgent:
                 },
             )
         )
-        output = SynthesisOutput(
-            model_run_id=response.run_id,
-            status="complete" if key_facts else "fact_only",
-            signal="moderately_positive" if company.get("direction") == "positive" else "uncertain",
-            confidence=min(
-                company.get("confidence", 0.4), counter.get("recommended_confidence", 0.5)
-            ),
-            horizon=company.get("impact_horizon", "uncertain"),
-            summary=f"基于 {len(key_facts)} 条已验证事实合成结论。",
-            key_fact_claim_ids=key_facts,
-            supporting_points=[
-                {
-                    "statement": company.get("financial_impacts", [{}])[0].get("basis", "公告披露"),
-                    "claim_ids": key_facts[:1],
-                    "analysis_refs": ["company_analysis"],
-                }
-            ]
-            if key_facts
-            else [],
-            counter_points=[
-                {
-                    "statement": counter.get("counter_arguments", [{}])[0].get(
-                        "statement", "无反证"
-                    ),
-                    "counter_argument_ids": ["ctr_001"],
-                }
-            ]
-            if counter
-            else [],
-            watch_items=[
-                {
-                    "indicator": "主营业务毛利率",
-                    "reason": "判断增长持续性",
-                    "horizon": "1 quarter",
-                }
-            ],
-            reanalysis_triggers=[
-                {
-                    "trigger_type": "new_filing",
-                    "condition": "公司发布业绩修正公告",
-                    "affected_nodes": ["fact_check", "company_analysis", "synthesize"],
-                }
-            ],
-            limitations=["MVP 阶段未接入市场预期与定价分析"],
-            confidence_factors=["verified_claims", "skeptic_adjustment"],
-        )
+        parsed = _try_parse_payload(response.payload, SynthesisOutput)
+        if parsed is not None:
+            output = parsed.model_copy(update={"model_run_id": response.run_id})
+        else:
+            signal = (
+                "moderately_positive"
+                if company.get("direction") == "positive"
+                else "uncertain"
+            )
+            output = SynthesisOutput(
+                model_run_id=response.run_id,
+                status="complete" if key_facts else "fact_only",
+                signal=signal,
+                confidence=min(
+                    company.get("confidence", 0.4), counter.get("recommended_confidence", 0.5)
+                ),
+                horizon=company.get("impact_horizon", "uncertain"),
+                summary=f"基于 {len(key_facts)} 条已验证事实合成结论。",
+                key_fact_claim_ids=key_facts,
+                supporting_points=[
+                    {
+                        "statement": company.get("financial_impacts", [{}])[0].get(
+                            "basis", "公告披露"
+                        ),
+                        "claim_ids": key_facts[:1],
+                        "analysis_refs": ["company_analysis"],
+                    }
+                ]
+                if key_facts
+                else [],
+                counter_points=[
+                    {
+                        "statement": counter.get("counter_arguments", [{}])[0].get(
+                            "statement", "无反证"
+                        ),
+                        "counter_argument_ids": ["ctr_001"],
+                    }
+                ]
+                if counter
+                else [],
+                watch_items=[
+                    {
+                        "indicator": "主营业务毛利率",
+                        "reason": "判断增长持续性",
+                        "horizon": "1 quarter",
+                    }
+                ],
+                reanalysis_triggers=[
+                    {
+                        "trigger_type": "new_filing",
+                        "condition": "公司发布业绩修正公告",
+                        "affected_nodes": ["fact_check", "company_analysis", "synthesize"],
+                    }
+                ],
+                limitations=["MVP 阶段未接入市场预期与定价分析"],
+                confidence_factors=["verified_claims", "skeptic_adjustment"],
+            )
         return {"synthesis": output.model_dump()}

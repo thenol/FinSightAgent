@@ -43,7 +43,8 @@ def current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="AUTH_REQUIRED")
     payload = request.app.state.token_manager.decode(authorization[7:])
-    user = request.app.state.repository.get_user(str(payload.get("sub", "")))
+    user_id = str(payload.get("sub", ""))
+    user = request.app.state.repository.get_user(user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=401, detail="AUTH_USER_INACTIVE")
     return user

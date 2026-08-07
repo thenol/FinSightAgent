@@ -5,7 +5,7 @@ from app.platform.repository import InMemoryRepository
 from app.workflows.service import WorkflowService
 
 
-def test_langgraph_research_workflow_runs_to_draft() -> None:
+def test_langgraph_research_workflow_blocked_when_guardrail_fails() -> None:
     repository = InMemoryRepository()
     repository.save_event(
         Event(
@@ -23,7 +23,9 @@ def test_langgraph_research_workflow_runs_to_draft() -> None:
     service = WorkflowService(repository)
     run = service.create("evt-workflow", "manual")
     result = service.run(run.id)
-    assert result.status == "succeeded"
+    assert result.status == "failed"
+    assert result.error_code.startswith("GUARDRAIL_")
+    # draft 已装配，只是未通过校验
     assert result.blackboard["report_draft_ref"] == "workflow:evt-workflow"
 
 

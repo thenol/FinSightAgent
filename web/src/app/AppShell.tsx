@@ -70,6 +70,11 @@ const ICONS = {
       <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Zm0 2.2 6 2.25V11c0 3.9-2.5 7.4-6 8.8-3.5-1.4-6-4.9-6-8.8V6.45l6-2.25Zm-1 4.3v5l4 2 .9-1.5-3.1-1.55V8.5H11Z" />
     </svg>
   ),
+  merge: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm8 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM8 11h8v2H8v-2Zm3 3h2v6h-2v-6Zm-3 2h2v4H8v-4Zm6 0h2v4h-2v-4Z" />
+    </svg>
+  ),
 } as const;
 
 const NAV_GROUPS: NavGroup[] = [
@@ -78,6 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/", label: "总览", end: true, icon: ICONS.overview },
       { to: "/reviews", label: "审核中心", badge: "reviews", icon: ICONS.reviews },
+      { to: "/merge-reviews", label: "事件合并审核", icon: ICONS.merge },
       { to: "/events", label: "事件证据", icon: ICONS.events },
       { to: "/reports", label: "研究报告", icon: ICONS.reports },
     ],
@@ -104,6 +110,11 @@ function titleFor(pathname: string): { crumbs: string[]; title: string } {
     return pathname === "/reviews"
       ? { crumbs: ["审核中心"], title: "审核中心" }
       : { crumbs: ["审核中心", "任务详情"], title: "审核任务" };
+  }
+  if (isDetailPath(pathname, "/merge-reviews")) {
+    return pathname === "/merge-reviews"
+      ? { crumbs: ["事件合并审核"], title: "事件合并审核" }
+      : { crumbs: ["事件合并审核", "任务详情"], title: "合并审核任务" };
   }
   if (isDetailPath(pathname, "/events")) {
     return pathname === "/events"
@@ -144,6 +155,16 @@ export function AppShell() {
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    function onResize() {
+      if (window.matchMedia("(min-width: 961px)").matches) {
+        setMobileOpen(false);
+      }
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const sourcesQuery = useQuery({
     queryKey: ["sources"],
@@ -187,11 +208,13 @@ export function AppShell() {
 
   return (
     <div className={`app-shell${collapsed ? " is-collapsed" : ""}${mobileOpen ? " is-mobile-open" : ""}`}>
-      <div
-        className="sidebar-backdrop"
-        aria-hidden={!mobileOpen}
-        onClick={() => setMobileOpen(false)}
-      />
+      {mobileOpen ? (
+        <div
+          className="sidebar-backdrop"
+          aria-hidden="true"
+          onClick={() => setMobileOpen(false)}
+        />
+      ) : null}
       <aside className="sidebar" aria-label="管理导航">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">

@@ -33,7 +33,7 @@ def _verified_claim(event_id: str) -> Claim:
         object_value={"type": "string", "value": "earnings_guidance"},
         status="verified",
         confidence=0.9,
-        evidence_ids=[],
+        evidence_ids=[new_id("evd")],
         as_of=datetime.now(timezone.utc),
     )
 

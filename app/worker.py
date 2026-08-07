@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.analysis.worker import ImpactAnalysisWorker
 from app.application.pipeline import EventResearchPipeline
 from app.ingestion.artifacts import LocalArtifactStore
 from app.ingestion.rss import RssFeedClient
@@ -70,6 +71,19 @@ async def run_workflow() -> None:
             await asyncio.wait_for(stop.wait(), timeout=1.0)
         except asyncio.TimeoutError:
             pass
+
+
+async def run_impact_analysis() -> None:
+    settings = Settings.from_environment()
+    if settings.repository != "postgresql":
+        raise RuntimeError("Impact analysis worker requires FINSIGHT_REPOSITORY=postgresql")
+    repository = SqlAlchemyRepository(settings.database_url)
+    worker = ImpactAnalysisWorker(repository, settings)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for event in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(event, stop.set)
+    await worker.run(stop, poll_interval=1.0)
 
 
 async def run_source() -> None:
@@ -171,7 +185,7 @@ def _workflow_lock_key(workflow_id: str) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FinSightAgent background worker")
-    parser.add_argument("worker", choices=["outbox", "workflow", "source"])
+    parser.add_argument("worker", choices=["outbox", "workflow", "source", "impact-analysis"])
     arguments = parser.parse_args()
     if arguments.worker == "outbox":
         asyncio.run(run_outbox())
@@ -179,6 +193,8 @@ def main() -> None:
         asyncio.run(run_workflow())
     if arguments.worker == "source":
         asyncio.run(run_source())
+    if arguments.worker == "impact-analysis":
+        asyncio.run(run_impact_analysis())
 
 
 if __name__ == "__main__":

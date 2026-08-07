@@ -9,6 +9,8 @@ AS_OF = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
 
 
 def _seed_event(repository: InMemoryRepository) -> Event:
+    from app.domain import EvidenceSpan
+
     event = Event(
         id="evt_workflow_provenance",
         event_type="earnings_guidance",
@@ -22,6 +24,21 @@ def _seed_event(repository: InMemoryRepository) -> Event:
         key_fields={"period": "2026-H1"},
     )
     repository.save_event(event)
+    evidence_id = "evd_workflow_provenance"
+    repository.save_evidence(
+        EvidenceSpan(
+            id=evidence_id,
+            document_id="doc_1",
+            revision_id="rev_1",
+            locator={"type": "html", "block_id": "body-p-001", "char_start": 0, "char_end": 10},
+            excerpt="公司披露业绩预告",
+            excerpt_hash="hash",
+            locator_type="html",
+            extraction_method="parser",
+            extraction_version="html-blocks-v1",
+            created_at=AS_OF,
+        )
+    )
     repository.save_claim(
         Claim(
             id="clm_workflow_provenance",
@@ -31,7 +48,7 @@ def _seed_event(repository: InMemoryRepository) -> Event:
             object_value={"type": "string", "value": "earnings_guidance"},
             status="verified",
             confidence=0.9,
-            evidence_ids=[],
+            evidence_ids=[evidence_id],
             as_of=AS_OF,
         )
     )

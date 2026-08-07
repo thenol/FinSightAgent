@@ -135,8 +135,17 @@ class ModelRun:
 
 LLM_PROTOCOLS = frozenset({"openai_compatible", "anthropic", "deterministic"})
 LLM_AGENT_KEYS = frozenset(
-    {"fact_check", "company_analysis", "skeptic_review", "synthesize"}
+    {
+        "fact_check",
+        "company_analysis",
+        "skeptic_review",
+        "synthesize",
+        "default_reviewer",
+        "impact_analysis",
+    }
 )
+
+DEFAULT_REVIEWER_ID = "agent:default_reviewer"
 
 
 @dataclass(frozen=True)
@@ -256,6 +265,99 @@ class DocumentRevision:
 
 
 @dataclass(frozen=True)
+class ParsedDocument:
+    """一次解析运行的结构化输出，连接 Document/Revision 与 Block/Chunk。"""
+
+    id: str
+    document_id: str
+    revision_id: str
+    parser_version: str
+    parser_run_id: str
+    language: str
+    title: str
+    block_ids: list[str]
+    summary: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DocumentBlock:
+    """文档中的稳定内容块，支持 HTML/文本/PDF 多种来源的统一定位。"""
+
+    id: str
+    parsed_document_id: str
+    revision_id: str
+    block_type: str  # paragraph | table | heading | footer | unknown
+    block_id: str
+    text: str
+    char_start: int
+    char_end: int
+    order_index: int
+    dom_path: Optional[str] = None
+    page_no: Optional[int] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DocumentChunk:
+    """带金融语义类型的检索单元，可独立生成 embedding。"""
+
+    id: str
+    block_id: str
+    chunk_type: str  # event_description | financial_impact | risk | footnote | background
+    text: str
+    char_start: int
+    char_end: int
+    content_hash: str
+    embedding_model_version: str = ""
+    embedding: Optional[list[float]] = None
+    as_of: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class EmbeddingRecord:
+    """DocumentChunk 的 Embedding 生命周期记录，支持幂等生成与版本管理。"""
+
+    id: str
+    chunk_id: str
+    embedding_model_version: str
+    embedding: list[float]
+    content_hash: str
+    status: str  # pending | completed | failed
+    error_code: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DisclosureGroup:
+    """同一披露在不同来源/格式下的聚合组，用于跨渠道去重和事件聚类。"""
+
+    id: str
+    canonical_content_hash: str
+    canonical_document_id: Optional[str] = None
+    entity_ids: list[str] = field(default_factory=list)
+    event_type_hints: list[str] = field(default_factory=list)
+    representative_embedding: Optional[list[float]] = None
+    embedding_model_version: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DisclosureGroupMembership:
+    """Document 与 DisclosureGroup 的多对多关系，记录加入原因。"""
+
+    id: str
+    disclosure_group_id: str
+    document_id: str
+    source_tier: str
+    reason: str  # exact_hash | minhash | external_id | manual
+    joined_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class Event:
     id: str
     event_type: str
@@ -266,6 +368,7 @@ class Event:
     importance: float
     urgency: str
     occurred_at: datetime
+    disclosure_group_id: Optional[str] = None
     version: int = 1
     entity_links: list["EntityLink"] = field(default_factory=list)
     key_fields: dict[str, Any] = field(default_factory=dict)
@@ -456,6 +559,27 @@ class FactCard:
 
 
 @dataclass(frozen=True)
+class ImpactAnalysis:
+    """事件影响分析：预测性传导推理，与 FactCard（已验证事实）分域存储。"""
+
+    id: str
+    event_id: str
+    version: int
+    status: str  # draft / approved / superseded
+    event_title_snapshot: str
+    summary: str
+    transmission_chains: list[dict[str, Any]]
+    impacts: list[dict[str, Any]]
+    macro_assumptions: list[str]
+    watch_items: list[str]
+    generated_by: str
+    model_run_id: Optional[str] = None
+    degraded: bool = False
+    supersedes_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class BriefEntry:
     """简报中的一条候选，含排序分项。"""
 
@@ -493,3 +617,71 @@ class PipelineResult:
     claim: Claim
     fact_card: FactCard
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CitationCandidate:
+    """检索结果的可引用来源信息。"""
+
+    document_id: str
+    chunk_id: str
+    excerpt: str
+    locator: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RetrievedItem:
+    """Hybrid Retrieval 返回的单个检索单元。"""
+
+    chunk_id: str
+    document_id: str
+    source_tier: str
+    chunk_type: str
+    text: str
+    score: float
+    citation: CitationCandidate
+    backend: str = "vector"  # "vector" | "lexical" | "hybrid"
+    backend_scores: dict[str, float] = field(default_factory=dict)
+    embedding_model_version: str = ""
+    retrieved_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class RetrievalRequest:
+    """统一检索请求契约。"""
+
+    query: str
+    embedding_model_version: Optional[str] = None
+    top_k: int = 10
+    as_of: Optional[datetime] = None
+    chunk_types: Optional[list[str]] = None
+    source_tiers: Optional[list[str]] = None
+    min_score: float = 0.0
+    retrieval_mode: str = "vector"  # "vector" | "lexical" | "hybrid"
+
+
+@dataclass(frozen=True)
+class FusionConfig:
+    """多路检索融合策略与上下文预算。"""
+
+    method: str = "rrf"  # "rrf" | "weighted"
+    rrf_k: int = 60
+    weights: dict[str, float] = field(default_factory=lambda: {"vector": 1.0, "lexical": 1.0})
+    per_backend_top_k: Optional[int] = None
+    max_items: Optional[int] = None
+    max_tokens: Optional[int] = None
+    diversity_min_backends: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class RetrievalTrace:
+    """检索过程审计：请求、过滤、候选集与最终结果。"""
+
+    request: RetrievalRequest
+    embedding_model_version: str
+    filters: dict[str, Any]
+    candidate_count: int
+    items: list[RetrievedItem]
+    fusion_method: Optional[str] = None
+    backend_coverage: dict[str, int] = field(default_factory=dict)
+    generated_at: Optional[datetime] = None

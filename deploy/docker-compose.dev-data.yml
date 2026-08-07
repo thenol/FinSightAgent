@@ -4,7 +4,7 @@
 # when only the data services are running.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-finsight}
       POSTGRES_USER: ${POSTGRES_USER:-finsight}

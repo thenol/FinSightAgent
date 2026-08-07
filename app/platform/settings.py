@@ -3,6 +3,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+# 本地开发时自动加载 .env；生产环境由 shell/容器注入变量，可安全忽略。
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+except Exception:
+    pass
+
 DEFAULT_JWT_SECRET = "development-only-secret-change-me-32-bytes"
 PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
@@ -34,6 +42,16 @@ class Settings:
     workflow_auto_importance_threshold: float = 0.70
     # 自动触发开关；false 时仍创建事件/卡片，但不自动排队研究工作流。
     workflow_auto_trigger_enabled: bool = True
+    # 哪些审核任务类型启用自动审核（report / claim_conflict / merge_review / workflow）。
+    auto_review_enabled_types: frozenset[str] = frozenset({"report", "claim_conflict"})
+    # 自动审核最低置信度；规则层返回 1.0，LLM 层必须 >= 该值才生效。
+    auto_review_min_confidence: float = 0.85
+    # 规则无法判断时是否允许调用 LLM 兜底。
+    auto_review_llm_fallback: bool = True
+    # 已发布事实卡片是否自动生成影响分析。
+    auto_impact_analysis_enabled: bool = True
+    # 自动生成影响分析的最小事件重要度。
+    auto_impact_analysis_importance_threshold: float = 0.70
 
     def validate(self) -> "Settings":
         if self.environment not in {"development", "test", "staging", "production", "prod"}:
@@ -76,6 +94,8 @@ class Settings:
             raise ValueError("FINSIGHT_DOCUMENT_PURGE_BATCH_SIZE_INVALID")
         if not 0.0 <= self.workflow_auto_importance_threshold <= 1.0:
             raise ValueError("FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD_INVALID")
+        if not 0.0 <= self.auto_impact_analysis_importance_threshold <= 1.0:
+            raise ValueError("FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD_INVALID")
         return self
 
     @classmethod
@@ -121,4 +141,25 @@ class Settings:
                 "FINSIGHT_WORKFLOW_AUTO_TRIGGER_ENABLED", "true"
             ).lower()
             in {"1", "true", "yes"},
+            auto_review_enabled_types=frozenset(
+                t.strip()
+                for t in os.getenv(
+                    "FINSIGHT_AUTO_REVIEW_ENABLED_TYPES", "report,claim_conflict"
+                ).split(",")
+                if t.strip()
+            ),
+            auto_review_min_confidence=float(
+                os.getenv("FINSIGHT_AUTO_REVIEW_MIN_CONFIDENCE", "0.85")
+            ),
+            auto_review_llm_fallback=os.getenv(
+                "FINSIGHT_AUTO_REVIEW_LLM_FALLBACK", "true"
+            ).lower()
+            in {"1", "true", "yes"},
+            auto_impact_analysis_enabled=os.getenv(
+                "FINSIGHT_AUTO_IMPACT_ANALYSIS_ENABLED", "true"
+            ).lower()
+            in {"1", "true", "yes"},
+            auto_impact_analysis_importance_threshold=float(
+                os.getenv("FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD", "0.70")
+            ),
         ).validate()

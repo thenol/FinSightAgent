@@ -26,6 +26,7 @@ SCHEMA_MAP = {
     "evidence": None,
     "publishing": None,
     "platform": None,
+    "analysis": None,
 }
 
 

@@ -20,13 +20,19 @@ from app.domain import (
     Claim,
     ClaimEvidenceRelation,
     ConflictRecord,
+    DisclosureGroup,
+    DisclosureGroupMembership,
     Document,
+    DocumentBlock,
+    DocumentChunk,
     DocumentRevision,
+    EmbeddingRecord,
     Entity,
     EntityLink,
     Event,
     EvidenceSpan,
     FactCard,
+    ImpactAnalysis,
     IngestRun,
     LlmAgentBinding,
     LlmProviderConfig,
@@ -34,6 +40,7 @@ from app.domain import (
     MergeReviewTask,
     ModelRun,
     NodeAttempt,
+    ParsedDocument,
     QuarantineItem,
     ReviewTask,
     Security,
@@ -52,14 +59,20 @@ from app.platform.db_models import (
     ClaimEvidenceRelationModel,
     ClaimModel,
     ConflictModel,
+    DisclosureGroupMembershipModel,
+    DisclosureGroupModel,
+    DocumentBlockModel,
+    DocumentChunkModel,
     DocumentModel,
     DocumentRevisionModel,
+    EmbeddingRecordModel,
     EntityModel,
     EventEntityModel,
     EventModel,
     EvidenceSpanModel,
     FactCardModel,
     IdempotencyModel,
+    ImpactAnalysisModel,
     InboxModel,
     IngestRunModel,
     LlmAgentBindingModel,
@@ -69,6 +82,7 @@ from app.platform.db_models import (
     ModelRunModel,
     NodeAttemptModel,
     OutboxModel,
+    ParsedDocumentModel,
     QuarantineItemModel,
     ReviewTaskModel,
     SecurityModel,
@@ -305,6 +319,16 @@ class Repository(Protocol):
 
     def retry_outbox(self, outbox_id: str) -> None: ...
 
+    def list_pending_outbox(
+        self, limit: int, now: Optional[datetime] = None
+    ) -> list[OutboxMessage]: ...
+
+    def list_pending_outbox_by_event_type(
+        self, event_type: str, limit: int, now: Optional[datetime] = None
+    ) -> list[OutboxMessage]: ...
+
+    def mark_outbox_published(self, message_id: str, published_at: datetime) -> None: ...
+
     def find_document(
         self, source_id: str, external_id: Optional[str], content_hash: str
     ) -> Optional[Document]: ...
@@ -322,6 +346,86 @@ class Repository(Protocol):
     def get_latest_revision(
         self, document_id: str, as_of: Optional[datetime] = None
     ) -> Optional[DocumentRevision]: ...
+
+    def save_parsed_document(self, parsed: ParsedDocument) -> None: ...
+
+    def get_parsed_document_by_document(
+        self, document_id: str
+    ) -> Optional[ParsedDocument]: ...
+
+    def get_parsed_document_by_revision(
+        self, revision_id: str
+    ) -> Optional[ParsedDocument]: ...
+
+    def save_document_block(self, block: DocumentBlock) -> None: ...
+
+    def get_document_block(self, block_id: str) -> Optional[DocumentBlock]: ...
+
+    def get_document_blocks_for_revision(self, revision_id: str) -> list[DocumentBlock]: ...
+
+    def save_document_chunk(self, chunk: DocumentChunk) -> None: ...
+
+    def get_document_chunks_for_block(self, block_id: str) -> list[DocumentChunk]: ...
+
+    def save_embedding_record(self, record: EmbeddingRecord) -> None: ...
+
+    def get_embedding_record(self, record_id: str) -> Optional[EmbeddingRecord]: ...
+
+    def find_embedding_record_by_chunk_and_model(
+        self, chunk_id: str, model_version: str
+    ) -> Optional[EmbeddingRecord]: ...
+
+    def list_embedding_records_by_chunks(
+        self, chunk_ids: list[str]
+    ) -> list[EmbeddingRecord]: ...
+
+    def find_similar_document_chunks(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]: ...
+
+    def find_document_chunks_by_keywords(
+        self,
+        keywords: list[str],
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]: ...
+
+    def list_disclosure_groups_with_embeddings(
+        self, model_version: str
+    ) -> list[DisclosureGroup]: ...
+
+    def find_similar_disclosure_groups(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+    ) -> list[tuple[DisclosureGroup, float]]: ...
+
+    def save_disclosure_group(self, group: DisclosureGroup) -> None: ...
+
+    def get_disclosure_group(self, group_id: str) -> Optional[DisclosureGroup]: ...
+
+    def find_disclosure_group_by_content_hash(
+        self, canonical_content_hash: str
+    ) -> Optional[DisclosureGroup]: ...
+
+    def save_disclosure_group_membership(self, membership: DisclosureGroupMembership) -> None: ...
+
+    def list_disclosure_group_members(
+        self, group_id: str
+    ) -> list[DisclosureGroupMembership]: ...
+
+    def get_disclosure_group_for_document(
+        self, document_id: str
+    ) -> Optional[DisclosureGroup]: ...
 
     def save_event(self, event: Event) -> None: ...
 
@@ -341,6 +445,17 @@ class Repository(Protocol):
 
     def save_merge_review_task(self, task: MergeReviewTask) -> None: ...
 
+    def get_merge_review_task(self, task_id: str) -> Optional[MergeReviewTask]: ...
+
+    def list_merge_review_tasks(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[MergeReviewTask]: ...
+
+    def update_merge_review_task(self, task: MergeReviewTask) -> None: ...
+
     def save_match_decision(self, decision: MatchDecision) -> None: ...
 
     def list_match_decisions(self, document_id: str) -> list[MatchDecision]: ...
@@ -348,6 +463,8 @@ class Repository(Protocol):
     def save_evidence(self, evidence: EvidenceSpan) -> None: ...
 
     def save_claim(self, claim: Claim) -> None: ...
+
+    def update_claim(self, claim: Claim) -> None: ...
 
     def count_claims(self) -> int: ...
 
@@ -360,6 +477,10 @@ class Repository(Protocol):
     def save_claim_evidence(self, relation: "ClaimEvidenceRelation") -> None: ...
 
     def save_conflict(self, conflict: "ConflictRecord") -> None: ...
+
+    def get_conflict(self, conflict_id: str) -> Optional["ConflictRecord"]: ...
+
+    def update_conflict(self, conflict: "ConflictRecord") -> None: ...
 
     def list_claim_evidence(self, claim_id: str) -> list["ClaimEvidenceRelation"]: ...
 
@@ -434,6 +555,20 @@ class Repository(Protocol):
     ) -> list[FactCard]: ...
 
     def list_published_reports(self, start: datetime, end: datetime) -> list[FactCard]: ...
+
+    def save_impact_analysis(self, impact_analysis: "ImpactAnalysis") -> None: ...
+
+    def get_impact_analysis(self, impact_analysis_id: str) -> Optional["ImpactAnalysis"]: ...
+
+    def get_latest_impact_analysis_for_event(
+        self, event_id: str
+    ) -> Optional["ImpactAnalysis"]: ...
+
+    def list_impact_analyses_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list["ImpactAnalysis"]: ...
+
+    def update_impact_analysis(self, impact_analysis: "ImpactAnalysis") -> None: ...
 
     def save_brief(self, brief: Brief) -> None: ...
 
@@ -537,7 +672,14 @@ class InMemoryRepository:
         self.claim_evidence: dict[str, list[ClaimEvidenceRelation]] = {}
         self.conflicts: list[ConflictRecord] = []
         self.fact_cards: dict[str, FactCard] = {}
+        self.impact_analyses: dict[str, ImpactAnalysis] = {}
         self.briefs: dict[str, Brief] = {}
+        self.parsed_documents: dict[str, ParsedDocument] = {}
+        self.document_blocks: dict[str, DocumentBlock] = {}
+        self.document_chunks: dict[str, DocumentChunk] = {}
+        self.embedding_records: dict[str, EmbeddingRecord] = {}
+        self.disclosure_groups: dict[str, DisclosureGroup] = {}
+        self.disclosure_group_memberships: list[DisclosureGroupMembership] = []
         self.outbox: list[dict] = []
         self.inbox: set[tuple[str, str]] = set()
         self._document_keys: dict[tuple[str, str], str] = {}
@@ -882,6 +1024,226 @@ class InMemoryRepository:
         ]
         return max(values, key=lambda value: value.revision_no) if values else None
 
+    def save_parsed_document(self, parsed: ParsedDocument) -> None:
+        self.parsed_documents[parsed.id] = parsed
+
+    def get_parsed_document_by_document(
+        self, document_id: str
+    ) -> Optional[ParsedDocument]:
+        values = [
+            value
+            for value in self.parsed_documents.values()
+            if value.document_id == document_id
+        ]
+        return max(values, key=lambda value: value.created_at or _MIN_TIMESTAMP) if values else None
+
+    def get_parsed_document_by_revision(
+        self, revision_id: str
+    ) -> Optional[ParsedDocument]:
+        values = [
+            value
+            for value in self.parsed_documents.values()
+            if value.revision_id == revision_id
+        ]
+        return max(values, key=lambda value: value.created_at or _MIN_TIMESTAMP) if values else None
+
+    def save_document_block(self, block: DocumentBlock) -> None:
+        self.document_blocks[block.id] = block
+
+    def get_document_block(self, block_id: str) -> Optional[DocumentBlock]:
+        return self.document_blocks.get(block_id)
+
+    def get_document_blocks_for_revision(self, revision_id: str) -> list[DocumentBlock]:
+        return sorted(
+            (value for value in self.document_blocks.values() if value.revision_id == revision_id),
+            key=lambda value: value.order_index,
+        )
+
+    def save_document_chunk(self, chunk: DocumentChunk) -> None:
+        self.document_chunks[chunk.id] = chunk
+
+    def get_document_chunks_for_block(self, block_id: str) -> list[DocumentChunk]:
+        return sorted(
+            (value for value in self.document_chunks.values() if value.block_id == block_id),
+            key=lambda value: value.char_start,
+        )
+
+    def save_embedding_record(self, record: EmbeddingRecord) -> None:
+        self.embedding_records[record.id] = record
+
+    def get_embedding_record(self, record_id: str) -> Optional[EmbeddingRecord]:
+        return self.embedding_records.get(record_id)
+
+    def find_embedding_record_by_chunk_and_model(
+        self, chunk_id: str, model_version: str
+    ) -> Optional[EmbeddingRecord]:
+        return next(
+            (
+                value
+                for value in self.embedding_records.values()
+                if value.chunk_id == chunk_id and value.embedding_model_version == model_version
+            ),
+            None,
+        )
+
+    def list_embedding_records_by_chunks(
+        self, chunk_ids: list[str]
+    ) -> list[EmbeddingRecord]:
+        ids = set(chunk_ids)
+        return [value for value in self.embedding_records.values() if value.chunk_id in ids]
+
+    def find_similar_document_chunks(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        from app.document_intelligence.embeddings import cosine_similarity
+
+        chunk_type_set = set(chunk_types) if chunk_types else None
+        source_tier_set = set(source_tiers) if source_tiers else None
+        scored: list[tuple[DocumentChunk, float]] = []
+
+        for record in self.embedding_records.values():
+            if record.embedding_model_version != model_version:
+                continue
+            if record.status != "completed":
+                continue
+            chunk = self.document_chunks.get(record.chunk_id)
+            if chunk is None:
+                continue
+            if as_of is not None and chunk.as_of is not None and chunk.as_of > as_of:
+                continue
+            if chunk_type_set is not None and chunk.chunk_type not in chunk_type_set:
+                continue
+            block = self.document_blocks.get(chunk.block_id)
+            if block is None:
+                continue
+            parsed = self.parsed_documents.get(block.parsed_document_id)
+            if parsed is None:
+                continue
+            document = self.documents.get(parsed.document_id)
+            if document is None:
+                continue
+            if source_tier_set is not None and document.source_tier not in source_tier_set:
+                continue
+            score = cosine_similarity(query_embedding, record.embedding)
+            scored.append((chunk, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:top_k]
+
+    def find_document_chunks_by_keywords(
+        self,
+        keywords: list[str],
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        from app.retrieval.lexical import score_chunk_text
+
+        if not keywords:
+            return []
+
+        chunk_type_set = set(chunk_types) if chunk_types else None
+        source_tier_set = set(source_tiers) if source_tiers else None
+        scored: list[tuple[DocumentChunk, float]] = []
+
+        for chunk in self.document_chunks.values():
+            if as_of is not None and chunk.as_of is not None and chunk.as_of > as_of:
+                continue
+            if chunk_type_set is not None and chunk.chunk_type not in chunk_type_set:
+                continue
+            block = self.document_blocks.get(chunk.block_id)
+            if block is None:
+                continue
+            parsed = self.parsed_documents.get(block.parsed_document_id)
+            if parsed is None:
+                continue
+            document = self.documents.get(parsed.document_id)
+            if document is None:
+                continue
+            if source_tier_set is not None and document.source_tier not in source_tier_set:
+                continue
+            score = score_chunk_text(chunk.text, keywords)
+            if score > 0:
+                scored.append((chunk, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:top_k]
+
+    def list_disclosure_groups_with_embeddings(
+        self, model_version: str
+    ) -> list[DisclosureGroup]:
+        return [
+            value
+            for value in self.disclosure_groups.values()
+            if value.embedding_model_version == model_version
+            and value.representative_embedding is not None
+        ]
+
+    def find_similar_disclosure_groups(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+    ) -> list[tuple[DisclosureGroup, float]]:
+        from app.document_intelligence.embeddings import cosine_similarity
+
+        scored: list[tuple[DisclosureGroup, float]] = []
+        for group in self.disclosure_groups.values():
+            if group.embedding_model_version != model_version:
+                continue
+            if group.representative_embedding is None:
+                continue
+            score = cosine_similarity(query_embedding, group.representative_embedding)
+            scored.append((group, score))
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:top_k]
+
+    def save_disclosure_group(self, group: DisclosureGroup) -> None:
+        self.disclosure_groups[group.id] = group
+
+    def get_disclosure_group(self, group_id: str) -> Optional[DisclosureGroup]:
+        return self.disclosure_groups.get(group_id)
+
+    def find_disclosure_group_by_content_hash(
+        self, canonical_content_hash: str
+    ) -> Optional[DisclosureGroup]:
+        return next(
+            (
+                value
+                for value in self.disclosure_groups.values()
+                if value.canonical_content_hash == canonical_content_hash
+            ),
+            None,
+        )
+
+    def save_disclosure_group_membership(self, membership: DisclosureGroupMembership) -> None:
+        self.disclosure_group_memberships.append(membership)
+
+    def list_disclosure_group_members(self, group_id: str) -> list[DisclosureGroupMembership]:
+        return [
+            value
+            for value in self.disclosure_group_memberships
+            if value.disclosure_group_id == group_id
+        ]
+
+    def get_disclosure_group_for_document(self, document_id: str) -> Optional[DisclosureGroup]:
+        memberships = [
+            value
+            for value in self.disclosure_group_memberships
+            if value.document_id == document_id
+        ]
+        if not memberships:
+            return None
+        latest = max(memberships, key=lambda value: value.joined_at or _MIN_TIMESTAMP)
+        return self.disclosure_groups.get(latest.disclosure_group_id)
+
     def save_event(self, event: Event) -> None:
         self.events[event.id] = event
 
@@ -970,6 +1332,27 @@ class InMemoryRepository:
     def save_merge_review_task(self, task: MergeReviewTask) -> None:
         self.merge_review_tasks.append(task)
 
+    def get_merge_review_task(self, task_id: str) -> Optional[MergeReviewTask]:
+        return next((t for t in self.merge_review_tasks if t.id == task_id), None)
+
+    def list_merge_review_tasks(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[MergeReviewTask]:
+        del cursor
+        tasks = [t for t in self.merge_review_tasks if status is None or t.status == status]
+        tasks.sort(key=lambda t: (t.created_at or datetime.min, t.id))
+        if limit:
+            tasks = tasks[:limit]
+        return tasks
+
+    def update_merge_review_task(self, task: MergeReviewTask) -> None:
+        self.merge_review_tasks = [
+            task if t.id == task.id else t for t in self.merge_review_tasks
+        ]
+
     def save_match_decision(self, decision: MatchDecision) -> None:
         self.match_decisions.append(decision)
 
@@ -982,6 +1365,9 @@ class InMemoryRepository:
         self.evidence[evidence.id] = evidence
 
     def save_claim(self, claim: Claim) -> None:
+        self.claims[claim.id] = claim
+
+    def update_claim(self, claim: Claim) -> None:
         self.claims[claim.id] = claim
 
     def count_claims(self) -> int:
@@ -1010,6 +1396,14 @@ class InMemoryRepository:
     def save_conflict(self, conflict: ConflictRecord) -> None:
         self.conflicts.append(conflict)
 
+    def get_conflict(self, conflict_id: str) -> Optional[ConflictRecord]:
+        return next((c for c in self.conflicts if c.id == conflict_id), None)
+
+    def update_conflict(self, conflict: ConflictRecord) -> None:
+        self.conflicts = [
+            conflict if c.id == conflict.id else c for c in self.conflicts
+        ]
+
     def list_claim_evidence(self, claim_id: str) -> list[ClaimEvidenceRelation]:
         return list(self.claim_evidence.get(claim_id, []))
 
@@ -1030,6 +1424,46 @@ class InMemoryRepository:
         ):
             raise ReportVersionConflict("REPORT_VERSION_CONFLICT")
         self.fact_cards[fact_card.id] = fact_card
+
+    def save_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
+        existing = self.impact_analyses.get(impact_analysis.id)
+        if existing is not None:
+            raise ReportVersionConflict("IMPACT_ANALYSIS_IMMUTABLE")
+        if any(
+            ia.event_id == impact_analysis.event_id and ia.version == impact_analysis.version
+            for ia in self.impact_analyses.values()
+        ):
+            raise ReportVersionConflict("IMPACT_ANALYSIS_VERSION_CONFLICT")
+        self.impact_analyses[impact_analysis.id] = impact_analysis
+
+    def get_impact_analysis(self, impact_analysis_id: str) -> Optional[ImpactAnalysis]:
+        return self.impact_analyses.get(impact_analysis_id)
+
+    def get_latest_impact_analysis_for_event(
+        self, event_id: str
+    ) -> Optional[ImpactAnalysis]:
+        versions = [
+            ia for ia in self.impact_analyses.values()
+            if ia.event_id == event_id and ia.status != "superseded"
+        ]
+        if not versions:
+            return None
+        return max(versions, key=lambda ia: (ia.version, ia.created_at or datetime.min))
+
+    def list_impact_analyses_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[ImpactAnalysis]:
+        items = sorted(
+            (ia for ia in self.impact_analyses.values() if ia.event_id == event_id),
+            key=lambda ia: (ia.version, ia.created_at or datetime.min),
+            reverse=True,
+        )
+        return items[:limit] if limit is not None else items
+
+    def update_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
+        if impact_analysis.id not in self.impact_analyses:
+            raise KeyError(f"impact_analysis not found: {impact_analysis.id}")
+        self.impact_analyses[impact_analysis.id] = impact_analysis
 
     def list_events(
         self,
@@ -1261,6 +1695,30 @@ class InMemoryRepository:
             for value in pending
         ]
 
+    def list_pending_outbox_by_event_type(
+        self, event_type: str, limit: int, now: Optional[datetime] = None
+    ) -> list[OutboxMessage]:
+        current = now or datetime.now(timezone.utc)
+        pending = [
+            value
+            for value in self.outbox
+            if value["event_type"] == event_type
+            and value["published_at"] is None
+            and value["dead_lettered_at"] is None
+            and (value["next_attempt_at"] is None or value["next_attempt_at"] <= current)
+        ][:limit]
+        return [
+            OutboxMessage(
+                id=value["id"],
+                event_type=value["event_type"],
+                aggregate_id=value["aggregate_id"],
+                payload=value["payload"],
+                trace_id=value["trace_id"],
+                attempts=value["attempts"],
+            )
+            for value in pending
+        ]
+
     def mark_outbox_published(self, message_id: str, published_at: datetime) -> None:
         with self._lock:
             message = next(value for value in self.outbox if value["id"] == message_id)
@@ -1336,6 +1794,31 @@ class SqlAlchemyRepository:
     def get_fact_card(self, fact_card_id: str) -> Optional[FactCard]:
         return self._read(lambda repository: repository.get_fact_card(fact_card_id))
 
+    def save_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
+        with self.transaction() as repository:
+            repository.save_impact_analysis(impact_analysis)
+
+    def get_impact_analysis(self, impact_analysis_id: str) -> Optional[ImpactAnalysis]:
+        return self._read(lambda repository: repository.get_impact_analysis(impact_analysis_id))
+
+    def get_latest_impact_analysis_for_event(
+        self, event_id: str
+    ) -> Optional[ImpactAnalysis]:
+        return self._read(
+            lambda repository: repository.get_latest_impact_analysis_for_event(event_id)
+        )
+
+    def list_impact_analyses_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[ImpactAnalysis]:
+        return self._read(
+            lambda repository: repository.list_impact_analyses_for_event(event_id, limit)
+        )
+
+    def update_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
+        with self.transaction() as repository:
+            repository.update_impact_analysis(impact_analysis)
+
     def get_review_task(self, task_id: str) -> Optional[ReviewTask]:
         return self._read(lambda repository: repository.get_review_task(task_id))
 
@@ -1404,11 +1887,39 @@ class SqlAlchemyRepository:
             lambda repository: repository.list_fact_cards(event_id, status, limit, cursor)
         )
 
+    def save_fact_card(self, fact_card: FactCard) -> None:
+        with self.transaction() as repository:
+            repository.save_fact_card(fact_card)
+
     def count_claims(self) -> int:
         return self._read(lambda repository: repository.count_claims())
 
     def count_claims_with_evidence(self) -> int:
         return self._read(lambda repository: repository.count_claims_with_evidence())
+
+    def get_conflict(self, conflict_id: str) -> Optional[ConflictRecord]:
+        return self._read(lambda repository: repository.get_conflict(conflict_id))
+
+    def update_conflict(self, conflict: ConflictRecord) -> None:
+        with self.transaction() as repository:
+            repository.update_conflict(conflict)
+
+    def get_merge_review_task(self, task_id: str) -> Optional[MergeReviewTask]:
+        return self._read(lambda repository: repository.get_merge_review_task(task_id))
+
+    def list_merge_review_tasks(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[MergeReviewTask]:
+        return self._read(
+            lambda repository: repository.list_merge_review_tasks(status, limit, cursor)
+        )
+
+    def update_merge_review_task(self, task: MergeReviewTask) -> None:
+        with self.transaction() as repository:
+            repository.update_merge_review_task(task)
 
     def get_api_idempotent(self, key: str) -> Optional[ApiIdempotencyRecord]:
         return self._read(lambda repository: repository.get_api_idempotent(key))
@@ -1421,6 +1932,13 @@ class SqlAlchemyRepository:
         self, limit: int, now: Optional[datetime] = None
     ) -> list[OutboxMessage]:
         return self._read(lambda repository: repository.list_pending_outbox(limit, now))
+
+    def list_pending_outbox_by_event_type(
+        self, event_type: str, limit: int, now: Optional[datetime] = None
+    ) -> list[OutboxMessage]:
+        return self._read(
+            lambda repository: repository.list_pending_outbox_by_event_type(event_type, limit, now)
+        )
 
     def mark_outbox_published(self, message_id: str, published_at: datetime) -> None:
         with self.transaction() as repository:
@@ -1625,6 +2143,158 @@ class SqlAlchemyRepository:
     def get_brief_by_date(self, brief_date: str) -> Optional[Brief]:
         return self._read(lambda repository: repository.get_brief_by_date(brief_date))
 
+    # --- Document Intelligence ---
+    def save_parsed_document(self, parsed: ParsedDocument) -> None:
+        with self.transaction() as repository:
+            repository.save_parsed_document(parsed)
+
+    def get_parsed_document_by_document(
+        self, document_id: str
+    ) -> Optional[ParsedDocument]:
+        return self._read(
+            lambda repository: repository.get_parsed_document_by_document(document_id)
+        )
+
+    def get_parsed_document_by_revision(
+        self, revision_id: str
+    ) -> Optional[ParsedDocument]:
+        return self._read(
+            lambda repository: repository.get_parsed_document_by_revision(revision_id)
+        )
+
+    def save_document_block(self, block: DocumentBlock) -> None:
+        with self.transaction() as repository:
+            repository.save_document_block(block)
+
+    def get_document_block(self, block_id: str) -> Optional[DocumentBlock]:
+        return self._read(lambda repository: repository.get_document_block(block_id))
+
+    def get_document_blocks_for_revision(self, revision_id: str) -> list[DocumentBlock]:
+        return self._read(
+            lambda repository: repository.get_document_blocks_for_revision(revision_id)
+        )
+
+    def save_document_chunk(self, chunk: DocumentChunk) -> None:
+        with self.transaction() as repository:
+            repository.save_document_chunk(chunk)
+
+    def get_document_chunks_for_block(self, block_id: str) -> list[DocumentChunk]:
+        return self._read(
+            lambda repository: repository.get_document_chunks_for_block(block_id)
+        )
+
+    def save_embedding_record(self, record: EmbeddingRecord) -> None:
+        with self.transaction() as repository:
+            repository.save_embedding_record(record)
+
+    def get_embedding_record(self, record_id: str) -> Optional[EmbeddingRecord]:
+        return self._read(lambda repository: repository.get_embedding_record(record_id))
+
+    def find_embedding_record_by_chunk_and_model(
+        self, chunk_id: str, model_version: str
+    ) -> Optional[EmbeddingRecord]:
+        return self._read(
+            lambda repository: repository.find_embedding_record_by_chunk_and_model(
+                chunk_id, model_version
+            )
+        )
+
+    def list_embedding_records_by_chunks(
+        self, chunk_ids: list[str]
+    ) -> list[EmbeddingRecord]:
+        return self._read(
+            lambda repository: repository.list_embedding_records_by_chunks(chunk_ids)
+        )
+
+    def find_similar_document_chunks(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        return self._read(
+            lambda repository: repository.find_similar_document_chunks(
+                query_embedding,
+                model_version,
+                top_k=top_k,
+                as_of=as_of,
+                chunk_types=chunk_types,
+                source_tiers=source_tiers,
+            )
+        )
+
+    def find_document_chunks_by_keywords(
+        self,
+        keywords: list[str],
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        return self._read(
+            lambda repository: repository.find_document_chunks_by_keywords(
+                keywords,
+                top_k=top_k,
+                as_of=as_of,
+                chunk_types=chunk_types,
+                source_tiers=source_tiers,
+            )
+        )
+
+    def list_disclosure_groups_with_embeddings(
+        self, model_version: str
+    ) -> list[DisclosureGroup]:
+        return self._read(
+            lambda repository: repository.list_disclosure_groups_with_embeddings(model_version)
+        )
+
+    def find_similar_disclosure_groups(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+    ) -> list[tuple[DisclosureGroup, float]]:
+        return self._read(
+            lambda repository: repository.find_similar_disclosure_groups(
+                query_embedding, model_version, top_k
+            )
+        )
+
+    def save_disclosure_group(self, group: DisclosureGroup) -> None:
+        with self.transaction() as repository:
+            repository.save_disclosure_group(group)
+
+    def get_disclosure_group(self, group_id: str) -> Optional[DisclosureGroup]:
+        return self._read(lambda repository: repository.get_disclosure_group(group_id))
+
+    def find_disclosure_group_by_content_hash(
+        self, canonical_content_hash: str
+    ) -> Optional[DisclosureGroup]:
+        return self._read(
+            lambda repository: repository.find_disclosure_group_by_content_hash(
+                canonical_content_hash
+            )
+        )
+
+    def save_disclosure_group_membership(self, membership: DisclosureGroupMembership) -> None:
+        with self.transaction() as repository:
+            repository.save_disclosure_group_membership(membership)
+
+    def list_disclosure_group_members(self, group_id: str) -> list[DisclosureGroupMembership]:
+        return self._read(
+            lambda repository: repository.list_disclosure_group_members(group_id)
+        )
+
+    def get_disclosure_group_for_document(
+        self, document_id: str
+    ) -> Optional[DisclosureGroup]:
+        return self._read(
+            lambda repository: repository.get_disclosure_group_for_document(document_id)
+        )
+
     # --- 文档 / 证据（API 直读 Provider，必须代理；否则 GET /evidence 500）---
     def get_document(
         self, document_id: str, *, include_deleted: bool = False
@@ -1708,7 +2378,7 @@ class SqlAlchemyTransaction:
         return _user(model) if model else None
 
     def get_user(self, user_id: str) -> Optional[User]:
-        model = self.session.get(UserModel, user_id)
+        model = self.session.scalar(select(UserModel).where(UserModel.id == user_id))
         return _user(model) if model else None
 
     def list_users(self) -> list[User]:
@@ -2236,6 +2906,365 @@ class SqlAlchemyTransaction:
         model = self.session.scalar(statement)
         return _revision(model) if model else None
 
+    def save_parsed_document(self, value: ParsedDocument) -> None:
+        data = value.__dict__.copy()
+        if not data.get("created_at"):
+            data["created_at"] = datetime.now(timezone.utc)
+        self.session.add(ParsedDocumentModel(**data))
+        self.session.flush()
+
+    def get_parsed_document_by_document(
+        self, document_id: str
+    ) -> Optional[ParsedDocument]:
+        model = self.session.scalar(
+            select(ParsedDocumentModel)
+            .where(ParsedDocumentModel.document_id == document_id)
+            .order_by(ParsedDocumentModel.created_at.desc())
+        )
+        return _parsed_document(model) if model else None
+
+    def get_parsed_document_by_revision(
+        self, revision_id: str
+    ) -> Optional[ParsedDocument]:
+        model = self.session.scalar(
+            select(ParsedDocumentModel)
+            .where(ParsedDocumentModel.revision_id == revision_id)
+            .order_by(ParsedDocumentModel.created_at.desc())
+        )
+        return _parsed_document(model) if model else None
+
+    def save_document_block(self, value: DocumentBlock) -> None:
+        data = value.__dict__.copy()
+        if not data.get("created_at"):
+            data["created_at"] = datetime.now(timezone.utc)
+        data["metadata_json"] = data.pop("metadata", {})
+        self.session.add(DocumentBlockModel(**data))
+        self.session.flush()
+
+    def get_document_block(self, block_id: str) -> Optional[DocumentBlock]:
+        model = self.session.get(DocumentBlockModel, block_id)
+        return _document_block(model) if model else None
+
+    def get_document_blocks_for_revision(self, revision_id: str) -> list[DocumentBlock]:
+        models = self.session.scalars(
+            select(DocumentBlockModel)
+            .where(DocumentBlockModel.revision_id == revision_id)
+            .order_by(DocumentBlockModel.order_index.asc())
+        )
+        return [_document_block(model) for model in models]
+
+    def save_document_chunk(self, value: DocumentChunk) -> None:
+        data = value.__dict__.copy()
+        if not data.get("created_at"):
+            data["created_at"] = datetime.now(timezone.utc)
+        self.session.add(DocumentChunkModel(**data))
+        self.session.flush()
+
+    def get_document_chunks_for_block(self, block_id: str) -> list[DocumentChunk]:
+        models = self.session.scalars(
+            select(DocumentChunkModel)
+            .where(DocumentChunkModel.block_id == block_id)
+            .order_by(DocumentChunkModel.char_start.asc())
+        )
+        return [_document_chunk(model) for model in models]
+
+    def save_embedding_record(self, value: EmbeddingRecord) -> None:
+        data = value.__dict__.copy()
+        if not data.get("created_at"):
+            data["created_at"] = datetime.now(timezone.utc)
+        self.session.add(EmbeddingRecordModel(**data))
+        self.session.flush()
+
+    def get_embedding_record(self, record_id: str) -> Optional[EmbeddingRecord]:
+        model = self.session.get(EmbeddingRecordModel, record_id)
+        return _embedding_record(model) if model else None
+
+    def find_embedding_record_by_chunk_and_model(
+        self, chunk_id: str, model_version: str
+    ) -> Optional[EmbeddingRecord]:
+        model = self.session.scalar(
+            select(EmbeddingRecordModel)
+            .where(EmbeddingRecordModel.chunk_id == chunk_id)
+            .where(EmbeddingRecordModel.embedding_model_version == model_version)
+        )
+        return _embedding_record(model) if model else None
+
+    def list_embedding_records_by_chunks(
+        self, chunk_ids: list[str]
+    ) -> list[EmbeddingRecord]:
+        if not chunk_ids:
+            return []
+        models = self.session.scalars(
+            select(EmbeddingRecordModel)
+            .where(EmbeddingRecordModel.chunk_id.in_(chunk_ids))
+        )
+        return [_embedding_record(model) for model in models]
+
+    def find_similar_document_chunks(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        # SQLite 测试路径没有 pgvector，回退到应用层 brute-force。
+        if self.session.bind.dialect.name == "sqlite":
+            from app.document_intelligence.embeddings import cosine_similarity
+
+            scored: list[tuple[DocumentChunk, float]] = []
+            models = self.session.scalars(
+                select(EmbeddingRecordModel)
+                .where(EmbeddingRecordModel.embedding_model_version == model_version)
+                .where(EmbeddingRecordModel.status == "completed")
+            )
+            for record_model in models:
+                chunk_model = self.session.get(DocumentChunkModel, record_model.chunk_id)
+                if chunk_model is None:
+                    continue
+                if (
+                    as_of is not None
+                    and chunk_model.as_of is not None
+                    and chunk_model.as_of > as_of
+                ):
+                    continue
+                if chunk_types is not None and chunk_model.chunk_type not in chunk_types:
+                    continue
+                block_model = self.session.get(DocumentBlockModel, chunk_model.block_id)
+                if block_model is None:
+                    continue
+                parsed_model = self.session.get(
+                    ParsedDocumentModel, block_model.parsed_document_id
+                )
+                if parsed_model is None:
+                    continue
+                document_model = self.session.get(DocumentModel, parsed_model.document_id)
+                if document_model is None:
+                    continue
+                if source_tiers is not None and document_model.source_tier not in source_tiers:
+                    continue
+                score = cosine_similarity(query_embedding, record_model.embedding)
+                scored.append((_document_chunk(chunk_model), score))
+            scored.sort(key=lambda item: item[1], reverse=True)
+            return scored[:top_k]
+
+        # PostgreSQL + pgvector 路径：通过 JOIN 一次性过滤并排序。
+        distance_expr = EmbeddingRecordModel.embedding.cosine_distance(query_embedding).label(
+            "distance"
+        )
+        stmt = (
+            select(DocumentChunkModel, distance_expr)
+            .join(EmbeddingRecordModel, EmbeddingRecordModel.chunk_id == DocumentChunkModel.id)
+            .join(DocumentBlockModel, DocumentChunkModel.block_id == DocumentBlockModel.id)
+            .join(
+                ParsedDocumentModel,
+                DocumentBlockModel.parsed_document_id == ParsedDocumentModel.id,
+            )
+            .join(DocumentModel, ParsedDocumentModel.document_id == DocumentModel.id)
+            .where(EmbeddingRecordModel.embedding_model_version == model_version)
+            .where(EmbeddingRecordModel.status == "completed")
+            .order_by(distance_expr.asc())
+            .limit(top_k)
+        )
+        if as_of is not None:
+            stmt = stmt.where(
+                (DocumentChunkModel.as_of.is_(None)) | (DocumentChunkModel.as_of <= as_of)
+            )
+        if chunk_types:
+            stmt = stmt.where(DocumentChunkModel.chunk_type.in_(chunk_types))
+        if source_tiers:
+            stmt = stmt.where(DocumentModel.source_tier.in_(source_tiers))
+
+        rows = self.session.execute(stmt)
+        return [(_document_chunk(model), round(1.0 - distance, 6)) for model, distance in rows]
+
+    def find_document_chunks_by_keywords(
+        self,
+        keywords: list[str],
+        top_k: int = 10,
+        as_of: Optional[datetime] = None,
+        chunk_types: Optional[list[str]] = None,
+        source_tiers: Optional[list[str]] = None,
+    ) -> list[tuple[DocumentChunk, float]]:
+        # SQLite 测试路径没有 PostgreSQL full-text，回退到应用层 brute-force。
+        if self.session.bind.dialect.name == "sqlite":
+            from app.retrieval.lexical import score_chunk_text
+
+            scored: list[tuple[DocumentChunk, float]] = []
+            if not keywords:
+                return scored
+
+            chunk_type_set = set(chunk_types) if chunk_types else None
+            source_tier_set = set(source_tiers) if source_tiers else None
+
+            for chunk_model in self.session.scalars(select(DocumentChunkModel)):
+                if (
+                    as_of is not None
+                    and chunk_model.as_of is not None
+                    and chunk_model.as_of > as_of
+                ):
+                    continue
+                if chunk_type_set is not None and chunk_model.chunk_type not in chunk_type_set:
+                    continue
+                block_model = self.session.get(DocumentBlockModel, chunk_model.block_id)
+                if block_model is None:
+                    continue
+                parsed_model = self.session.get(
+                    ParsedDocumentModel, block_model.parsed_document_id
+                )
+                if parsed_model is None:
+                    continue
+                document_model = self.session.get(DocumentModel, parsed_model.document_id)
+                if document_model is None:
+                    continue
+                if (
+                    source_tier_set is not None
+                    and document_model.source_tier not in source_tier_set
+                ):
+                    continue
+                score = score_chunk_text(chunk_model.text, keywords)
+                if score > 0:
+                    scored.append((_document_chunk(chunk_model), score))
+            scored.sort(key=lambda item: item[1], reverse=True)
+            return scored[:top_k]
+
+        from app.retrieval.lexical import build_tsquery
+
+        tsquery_str = build_tsquery(keywords)
+        if not tsquery_str:
+            return []
+
+        tsvector_expr = func.to_tsvector("simple", DocumentChunkModel.text)
+        tsquery_expr = func.to_tsquery("simple", tsquery_str)
+        rank_expr = func.ts_rank_cd(tsvector_expr, tsquery_expr).label("rank")
+
+        stmt = (
+            select(DocumentChunkModel, rank_expr)
+            .join(DocumentBlockModel, DocumentChunkModel.block_id == DocumentBlockModel.id)
+            .join(
+                ParsedDocumentModel,
+                DocumentBlockModel.parsed_document_id == ParsedDocumentModel.id,
+            )
+            .join(DocumentModel, ParsedDocumentModel.document_id == DocumentModel.id)
+            .where(tsvector_expr.op("@@")(tsquery_expr))
+            .order_by(rank_expr.desc())
+            .limit(top_k)
+        )
+        if as_of is not None:
+            stmt = stmt.where(
+                (DocumentChunkModel.as_of.is_(None)) | (DocumentChunkModel.as_of <= as_of)
+            )
+        if chunk_types:
+            stmt = stmt.where(DocumentChunkModel.chunk_type.in_(chunk_types))
+        if source_tiers:
+            stmt = stmt.where(DocumentModel.source_tier.in_(source_tiers))
+
+        rows = self.session.execute(stmt)
+        return [(_document_chunk(model), float(rank)) for model, rank in rows]
+
+    def list_disclosure_groups_with_embeddings(
+        self, model_version: str
+    ) -> list[DisclosureGroup]:
+        models = self.session.scalars(
+            select(DisclosureGroupModel)
+            .where(DisclosureGroupModel.embedding_model_version == model_version)
+            .where(DisclosureGroupModel.representative_embedding.isnot(None))
+        )
+        return [_disclosure_group(model) for model in models]
+
+    def find_similar_disclosure_groups(
+        self,
+        query_embedding: list[float],
+        model_version: str,
+        top_k: int = 10,
+    ) -> list[tuple[DisclosureGroup, float]]:
+        # SQLite 测试路径没有 pgvector 扩展，回退到应用层 brute-force。
+        if self.session.bind.dialect.name == "sqlite":
+            from app.document_intelligence.embeddings import cosine_similarity
+
+            scored: list[tuple[DisclosureGroup, float]] = []
+            models = self.session.scalars(
+                select(DisclosureGroupModel)
+                .where(DisclosureGroupModel.embedding_model_version == model_version)
+                .where(DisclosureGroupModel.representative_embedding.isnot(None))
+            )
+            for model in models:
+                if model.representative_embedding is None:
+                    continue
+                score = cosine_similarity(query_embedding, model.representative_embedding)
+                scored.append((_disclosure_group(model), score))
+            scored.sort(key=lambda item: item[1], reverse=True)
+            return scored[:top_k]
+
+        # pgvector cosine_distance 返回 1 - cosine_similarity。
+        distance_expr = DisclosureGroupModel.representative_embedding.cosine_distance(
+            query_embedding
+        ).label("distance")
+        rows = self.session.execute(
+            select(DisclosureGroupModel, distance_expr)
+            .where(DisclosureGroupModel.embedding_model_version == model_version)
+            .where(DisclosureGroupModel.representative_embedding.isnot(None))
+            .order_by(distance_expr.asc())
+            .limit(top_k)
+        )
+        return [
+            (_disclosure_group(model), round(1.0 - distance, 6))
+            for model, distance in rows
+        ]
+
+    def save_disclosure_group(self, value: DisclosureGroup) -> None:
+        data = value.__dict__.copy()
+        now = datetime.now(timezone.utc)
+        if not data.get("created_at"):
+            data["created_at"] = now
+        if not data.get("updated_at"):
+            data["updated_at"] = now
+        self.session.add(DisclosureGroupModel(**data))
+        self.session.flush()
+
+    def get_disclosure_group(self, group_id: str) -> Optional[DisclosureGroup]:
+        model = self.session.get(DisclosureGroupModel, group_id)
+        return _disclosure_group(model) if model else None
+
+    def find_disclosure_group_by_content_hash(
+        self, canonical_content_hash: str
+    ) -> Optional[DisclosureGroup]:
+        model = self.session.scalar(
+            select(DisclosureGroupModel).where(
+                DisclosureGroupModel.canonical_content_hash == canonical_content_hash
+            )
+        )
+        return _disclosure_group(model) if model else None
+
+    def save_disclosure_group_membership(self, value: DisclosureGroupMembership) -> None:
+        data = value.__dict__.copy()
+        if not data.get("joined_at"):
+            data["joined_at"] = datetime.now(timezone.utc)
+        self.session.add(DisclosureGroupMembershipModel(**data))
+        self.session.flush()
+
+    def list_disclosure_group_members(self, group_id: str) -> list[DisclosureGroupMembership]:
+        models = self.session.scalars(
+            select(DisclosureGroupMembershipModel)
+            .where(DisclosureGroupMembershipModel.disclosure_group_id == group_id)
+            .order_by(DisclosureGroupMembershipModel.joined_at.desc())
+        )
+        return [_disclosure_group_membership(model) for model in models]
+
+    def get_disclosure_group_for_document(
+        self, document_id: str
+    ) -> Optional[DisclosureGroup]:
+        model = self.session.scalar(
+            select(DisclosureGroupMembershipModel)
+            .where(DisclosureGroupMembershipModel.document_id == document_id)
+            .order_by(DisclosureGroupMembershipModel.joined_at.desc())
+        )
+        if model is None:
+            return None
+        group_model = self.session.get(DisclosureGroupModel, model.disclosure_group_id)
+        return _disclosure_group(group_model) if group_model else None
+
     def save_event(self, value: Event) -> None:
         data = value.__dict__.copy()
         data.pop("entity_links", None)
@@ -2252,6 +3281,7 @@ class SqlAlchemyTransaction:
         model.title = value.title
         model.entity_ids = value.entity_ids
         model.document_ids = value.document_ids
+        model.disclosure_group_id = value.disclosure_group_id
         model.importance = Decimal(str(value.importance))
         model.urgency = value.urgency
         model.occurred_at = value.occurred_at
@@ -2322,6 +3352,45 @@ class SqlAlchemyTransaction:
         self.session.add(MergeReviewTaskModel(**value.__dict__))
         self.session.flush()
 
+    def get_merge_review_task(self, task_id: str) -> Optional[MergeReviewTask]:
+        model = self.session.get(MergeReviewTaskModel, task_id)
+        return _merge_review_task(model) if model else None
+
+    def list_merge_review_tasks(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[MergeReviewTask]:
+        statement = select(MergeReviewTaskModel).order_by(
+            MergeReviewTaskModel.created_at, MergeReviewTaskModel.id
+        )
+        if status:
+            statement = statement.where(MergeReviewTaskModel.status == status)
+        if cursor:
+            created_at, task_id = decode_cursor(cursor)
+            statement = statement.where(
+                (MergeReviewTaskModel.created_at > created_at)
+                | (
+                    (MergeReviewTaskModel.created_at == created_at)
+                    & (MergeReviewTaskModel.id > task_id)
+                )
+            )
+        if limit:
+            statement = statement.limit(limit + 1)
+        models = self.session.scalars(statement)
+        return [_merge_review_task(model) for model in models]
+
+    def update_merge_review_task(self, value: MergeReviewTask) -> None:
+        model = self.session.get(MergeReviewTaskModel, value.id)
+        if not model:
+            raise KeyError(f"MergeReviewTask not found: {value.id}")
+        model.status = value.status
+        model.decision = value.decision
+        model.reviewer_id = value.reviewer_id
+        model.decided_at = value.decided_at
+        self.session.flush()
+
     def save_match_decision(self, value: MatchDecision) -> None:
         self.session.add(
             MatchDecisionModel(
@@ -2371,13 +3440,32 @@ class SqlAlchemyTransaction:
         self.session.add(ClaimModel(**data, version=1))
         self.session.flush()
 
+    def update_claim(self, value: Claim) -> None:
+        from sqlalchemy import update
+
+        self.session.execute(
+            update(ClaimModel)
+            .where(ClaimModel.id == value.id)
+            .values(
+                status=value.status,
+                confidence=Decimal(str(value.confidence)),
+                object_value=value.object_value,
+                qualifiers=value.qualifiers,
+                policy_version=value.policy_version or "policy-v1",
+            )
+        )
+        self.session.flush()
+
     def count_claims(self) -> int:
         return self.session.scalar(select(func.count(ClaimModel.id))) or 0
 
     def count_claims_with_evidence(self) -> int:
+        # PostgreSQL JSON 列不支持直接比较；使用 json_array_length 统计非空证据数组。
         return (
             self.session.scalar(
-                select(func.count(ClaimModel.id)).where(ClaimModel.evidence_ids != [])
+                select(func.count(ClaimModel.id)).where(
+                    func.json_array_length(ClaimModel.evidence_ids) > 0
+                )
             )
             or 0
         )
@@ -2421,6 +3509,19 @@ class SqlAlchemyTransaction:
                 version=value.version,
             )
         )
+        self.session.flush()
+
+    def get_conflict(self, conflict_id: str) -> Optional[ConflictRecord]:
+        model = self.session.get(ConflictModel, conflict_id)
+        return _conflict(model) if model else None
+
+    def update_conflict(self, value: ConflictRecord) -> None:
+        model = self.session.get(ConflictModel, value.id)
+        if not model:
+            raise KeyError(f"Conflict not found: {value.id}")
+        model.status = value.status
+        model.resolution = value.resolution
+        model.version = value.version
         self.session.flush()
 
     def list_claim_evidence(self, claim_id: str) -> list[ClaimEvidenceRelation]:
@@ -2473,6 +3574,54 @@ class SqlAlchemyTransaction:
         except IntegrityError as exc:
             # event_id/version 的数据库唯一约束是并发写入的最终保护。
             raise ReportVersionConflict("REPORT_VERSION_CONFLICT") from exc
+
+    def save_impact_analysis(self, value: ImpactAnalysis) -> None:
+        if self.session.get(ImpactAnalysisModel, value.id) is not None:
+            raise ReportVersionConflict("IMPACT_ANALYSIS_IMMUTABLE")
+        try:
+            with self.session.begin_nested():
+                self.session.add(ImpactAnalysisModel(**value.__dict__))
+                self.session.flush()
+        except IntegrityError as exc:
+            raise ReportVersionConflict("IMPACT_ANALYSIS_VERSION_CONFLICT") from exc
+
+    def get_impact_analysis(self, impact_analysis_id: str) -> Optional[ImpactAnalysis]:
+        model = self.session.get(ImpactAnalysisModel, impact_analysis_id)
+        return _impact_analysis(model) if model else None
+
+    def get_latest_impact_analysis_for_event(
+        self, event_id: str
+    ) -> Optional[ImpactAnalysis]:
+        statement = (
+            select(ImpactAnalysisModel)
+            .where(
+                ImpactAnalysisModel.event_id == event_id,
+                ImpactAnalysisModel.status != "superseded",
+            )
+            .order_by(ImpactAnalysisModel.version.desc(), ImpactAnalysisModel.created_at.desc())
+            .limit(1)
+        )
+        model = self.session.scalar(statement)
+        return _impact_analysis(model) if model else None
+
+    def list_impact_analyses_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[ImpactAnalysis]:
+        statement = (
+            select(ImpactAnalysisModel)
+            .where(ImpactAnalysisModel.event_id == event_id)
+            .order_by(ImpactAnalysisModel.version.desc(), ImpactAnalysisModel.created_at.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        models = self.session.scalars(statement)
+        return [_impact_analysis(model) for model in models]
+
+    def update_impact_analysis(self, value: ImpactAnalysis) -> None:
+        model = self.session.get(ImpactAnalysisModel, value.id)
+        if model is None:
+            raise KeyError(f"impact_analysis not found: {value.id}")
+        model.status = value.status
 
     def list_events(
         self,
@@ -2784,6 +3933,33 @@ class SqlAlchemyTransaction:
         current = now or datetime.now(timezone.utc)
         models = self.session.scalars(
             select(OutboxModel)
+            .where(OutboxModel.published_at.is_(None))
+            .where(OutboxModel.dead_lettered_at.is_(None))
+            .where(
+                (OutboxModel.next_attempt_at.is_(None)) | (OutboxModel.next_attempt_at <= current)
+            )
+            .order_by(OutboxModel.created_at)
+            .limit(limit)
+        )
+        return [
+            OutboxMessage(
+                id=value.id,
+                event_type=value.event_type,
+                aggregate_id=value.aggregate_id,
+                payload=value.payload,
+                trace_id=value.trace_id,
+                attempts=value.attempts,
+            )
+            for value in models
+        ]
+
+    def list_pending_outbox_by_event_type(
+        self, event_type: str, limit: int, now: Optional[datetime] = None
+    ) -> list[OutboxMessage]:
+        current = now or datetime.now(timezone.utc)
+        models = self.session.scalars(
+            select(OutboxModel)
+            .where(OutboxModel.event_type == event_type)
             .where(OutboxModel.published_at.is_(None))
             .where(OutboxModel.dead_lettered_at.is_(None))
             .where(
@@ -3172,6 +4348,95 @@ def _security(value: SecurityModel) -> Security:
     )
 
 
+def _parsed_document(value: ParsedDocumentModel) -> ParsedDocument:
+    return ParsedDocument(
+        id=value.id,
+        document_id=value.document_id,
+        revision_id=value.revision_id,
+        parser_version=value.parser_version,
+        parser_run_id=value.parser_run_id,
+        language=value.language,
+        title=value.title,
+        block_ids=value.block_ids if value.block_ids is not None else [],
+        summary=value.summary,
+        created_at=value.created_at,
+    )
+
+
+def _document_block(value: DocumentBlockModel) -> DocumentBlock:
+    return DocumentBlock(
+        id=value.id,
+        parsed_document_id=value.parsed_document_id,
+        revision_id=value.revision_id,
+        block_type=value.block_type,
+        block_id=value.block_id,
+        text=value.text,
+        char_start=value.char_start,
+        char_end=value.char_end,
+        order_index=value.order_index,
+        dom_path=value.dom_path,
+        page_no=value.page_no,
+        metadata=value.metadata_json if value.metadata_json is not None else {},
+        created_at=value.created_at,
+    )
+
+
+def _document_chunk(value: DocumentChunkModel) -> DocumentChunk:
+    return DocumentChunk(
+        id=value.id,
+        block_id=value.block_id,
+        chunk_type=value.chunk_type,
+        text=value.text,
+        char_start=value.char_start,
+        char_end=value.char_end,
+        content_hash=value.content_hash,
+        embedding_model_version=value.embedding_model_version or "",
+        embedding=value.embedding,
+        as_of=value.as_of,
+        created_at=value.created_at,
+    )
+
+
+def _disclosure_group(value: DisclosureGroupModel) -> DisclosureGroup:
+    return DisclosureGroup(
+        id=value.id,
+        canonical_content_hash=value.canonical_content_hash,
+        canonical_document_id=value.canonical_document_id,
+        entity_ids=value.entity_ids if value.entity_ids is not None else [],
+        event_type_hints=value.event_type_hints if value.event_type_hints is not None else [],
+        representative_embedding=value.representative_embedding,
+        embedding_model_version=value.embedding_model_version,
+        created_at=value.created_at,
+        updated_at=value.updated_at,
+    )
+
+
+def _embedding_record(value: EmbeddingRecordModel) -> EmbeddingRecord:
+    return EmbeddingRecord(
+        id=value.id,
+        chunk_id=value.chunk_id,
+        embedding_model_version=value.embedding_model_version,
+        embedding=value.embedding,
+        content_hash=value.content_hash,
+        status=value.status,
+        error_code=value.error_code,
+        created_at=value.created_at,
+    )
+
+
+def _disclosure_group_membership(
+    value: DisclosureGroupMembershipModel,
+) -> DisclosureGroupMembership:
+    return DisclosureGroupMembership(
+        id=value.id,
+        disclosure_group_id=value.disclosure_group_id,
+        document_id=value.document_id,
+        source_tier=value.source_tier,
+        reason=value.reason,
+        joined_at=value.joined_at,
+    )
+
+
 def _event(value: EventModel) -> Event:
     return Event(
         id=value.id,
@@ -3180,6 +4445,7 @@ def _event(value: EventModel) -> Event:
         title=value.title,
         entity_ids=value.entity_ids,
         document_ids=value.document_ids,
+        disclosure_group_id=value.disclosure_group_id,
         importance=float(value.importance),
         urgency=value.urgency,
         occurred_at=value.occurred_at,
@@ -3225,6 +4491,33 @@ def _claim(value: ClaimModel) -> Claim:
     )
 
 
+def _conflict(value: ConflictModel) -> ConflictRecord:
+    return ConflictRecord(
+        id=value.id,
+        event_id=value.event_id,
+        conflict_type=value.conflict_type,
+        severity=value.severity,
+        status=value.status,
+        summary=value.summary,
+        claim_ids=value.claim_ids,
+        resolution=value.resolution,
+        version=value.version,
+    )
+
+
+def _merge_review_task(value: MergeReviewTaskModel) -> MergeReviewTask:
+    return MergeReviewTask(
+        id=value.id,
+        document_id=value.document_id,
+        candidates=value.candidates,
+        status=value.status,
+        decision=value.decision,
+        reviewer_id=value.reviewer_id,
+        decided_at=value.decided_at,
+        created_at=value.created_at,
+    )
+
+
 def _fact_card(value: FactCardModel) -> FactCard:
     return FactCard(
         id=value.id,
@@ -3241,6 +4534,26 @@ def _fact_card(value: FactCardModel) -> FactCard:
         change_reason=value.change_reason,
         content=value.content or {},
         provenance=value.provenance or {},
+    )
+
+
+def _impact_analysis(value: ImpactAnalysisModel) -> ImpactAnalysis:
+    return ImpactAnalysis(
+        id=value.id,
+        event_id=value.event_id,
+        version=value.version,
+        status=value.status,
+        event_title_snapshot=value.event_title_snapshot,
+        summary=value.summary,
+        transmission_chains=value.transmission_chains or [],
+        impacts=value.impacts or [],
+        macro_assumptions=value.macro_assumptions or [],
+        watch_items=value.watch_items or [],
+        generated_by=value.generated_by,
+        model_run_id=value.model_run_id,
+        degraded=value.degraded or False,
+        supersedes_id=value.supersedes_id,
+        created_at=value.created_at,
     )
 
 

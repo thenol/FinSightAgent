@@ -11,6 +11,7 @@ from app.events.schemas import GENERAL_MARKET_NEWS, is_non_mvp_event_type
 from app.events.time_parser import DeterministicEventTimeParser, EventTimeResolution
 from app.platform.ids import new_id
 from app.platform.repository import Repository
+from app.review.service import AutoReviewService
 
 
 class EventService:
@@ -52,11 +53,17 @@ class EventService:
         document: Document,
         *,
         classification: Optional[ClassificationResult] = None,
+        disclosure_group_id: Optional[str] = None,
     ) -> Event:
         result = classification or self.classifier.classify(document)
-        return self._persist_event(document, result)
+        return self._persist_event(document, result, disclosure_group_id=disclosure_group_id)
 
-    def _persist_event(self, document: Document, result: ClassificationResult) -> Event:
+    def _persist_event(
+        self,
+        document: Document,
+        result: ClassificationResult,
+        disclosure_group_id: Optional[str] = None,
+    ) -> Event:
         time_resolution = self.resolve_event_time(
             document,
             result.event_type,
@@ -91,6 +98,7 @@ class EventService:
             title=document.title,
             entity_ids=market_codes,
             document_ids=[document.id],
+            disclosure_group_id=disclosure_group_id,
             importance=importance.importance,
             urgency=importance.urgency,
             occurred_at=time_resolution.occurred_at,
@@ -104,15 +112,15 @@ class EventService:
         self.repository.save_event(event)
         self.repository.save_event_entities(event.id, links)
         for candidate in ambiguous:
-            self.repository.save_merge_review_task(
-                MergeReviewTask(
-                    id=new_id("mrt"),
-                    document_id=document.id,
-                    candidates=[candidate.market_code],
-                    status="open",
-                    created_at=datetime.now(timezone.utc),
-                )
+            task = MergeReviewTask(
+                id=new_id("mrt"),
+                document_id=document.id,
+                candidates=[candidate.market_code],
+                status="open",
+                created_at=datetime.now(timezone.utc),
             )
+            self.repository.save_merge_review_task(task)
+            AutoReviewService(self.repository).attempt_merge_review(task)
         return event
 
     def attach_document_to_event(self, event: Event, document: Document) -> Event:

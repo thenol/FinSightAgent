@@ -71,7 +71,7 @@ class OpenAICompatibleProvider:
             "messages": [
                 {
                     "role": "system",
-                    "content": "Respond with valid JSON only.",
+                    "content": request.system_prompt,
                 },
                 {"role": "user", "content": _user_prompt(request)},
             ],
@@ -122,6 +122,7 @@ class AnthropicProvider:
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "system": request.system_prompt,
             "messages": [{"role": "user", "content": _user_prompt(request)}],
         }
         try:

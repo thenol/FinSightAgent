@@ -70,11 +70,12 @@ scripts/acceptance.sh
 
 ```bash
 docker compose -f deploy/docker-compose.yml ps
-docker compose -f deploy/docker-compose.yml logs --since=30m outbox-worker workflow-worker
+docker compose -f deploy/docker-compose.yml logs --since=30m outbox-worker workflow-worker impact-analysis-worker
 ```
 
 - `outbox-worker` 在 SIGTERM 后结束循环；未发布记录保留在 PostgreSQL，重启后按退避策略继续发布，Inbox 去重保护消费者。
 - `workflow-worker` 使用 PostgreSQL advisory lock。进程退出或连接断开时锁由 PostgreSQL释放；`pending` 任务可立即重新领取，旧 `running` 任务在 `FINSIGHT_WORKFLOW_STALE_SECONDS` 后成为恢复候选。
+- `impact-analysis-worker` 从事务 Outbox 消费 `impact_analysis.requested.v1`，生成结果后标记 `published_at`。失败按指数退避重试，达到最大次数后进入死信。前端在生成完成前显示 pending 状态。
 - 先确认 PostgreSQL、Redis healthy，再执行 `docker compose -f deploy/docker-compose.yml restart <worker>`。随后观察积压、重复副作用告警和工作流状态，不要直接批量改状态。
 
 ## 6. 应用回滚

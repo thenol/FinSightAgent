@@ -48,6 +48,22 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return body.data;
 }
 
+export async function apiGetWithStatus<T>(path: string): Promise<{ data: T; status: number }> {
+  const response = await fetch(path, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${getToken() || ""}` },
+  });
+  const body = (await response.json().catch(() => null)) as Envelope<T> | null;
+  if (!response.ok && response.status !== 202) {
+    const code = body?.error?.code || `HTTP_${response.status}`;
+    const message = body?.error?.message || code;
+    throw new ApiError(message, response.status, code);
+  }
+  if (!body || !("data" in body)) {
+    throw new ApiError("API_RESPONSE_INVALID", response.status, "API_RESPONSE_INVALID");
+  }
+  return { data: body.data, status: response.status };
+}
+
 export function apiGet<T>(path: string): Promise<T> {
   return apiRequest<T>(path);
 }

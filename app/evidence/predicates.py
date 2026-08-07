@@ -45,6 +45,10 @@ CONTROLLED_PREDICATES: dict[str, dict[str, str]] = {
         "object_type": "decimal",
         "summary": "股东减持持股比例",
     },
+    "adjusts_policy_rate": {
+        "object_type": "string",
+        "summary": "政策主体调整利率（加息/降息/维持）",
+    },
 }
 
 

@@ -13,7 +13,9 @@ from app.platform.asof import ensure_within_as_of
 from app.platform.ids import new_id
 from app.publishing.assembler import ReportAssembler
 from app.publishing.guardrail import GuardrailEngine
+from app.publishing.service import FactCardService
 from app.research.tools.gateway import ToolGateway
+from app.review.service import AutoReviewService
 from app.workflows.agents import (
     CompanyAnalystAgent,
     FactCheckerAgent,
@@ -135,16 +137,7 @@ class WorkflowService:
             self.repository.update_workflow_run(result)
             return result
         else:
-            state["provenance"] = self._collect_provenance(state)
-            result = replace(
-                run,
-                status="succeeded",
-                state_version=self._state_version(state),
-                blackboard=dict(state),
-                error_code=None,
-            )
-            self.repository.update_workflow_run(result)
-            return result
+            return self._finalize_success(run, state)
 
     def resume(
         self,
@@ -202,16 +195,8 @@ class WorkflowService:
             result = replace(updated, status="failed", error_code=error_code)
             self.repository.update_workflow_run(result)
             return result
-        state["provenance"] = self._collect_provenance(state)
-        result = replace(
-            updated,
-            status="succeeded",
-            state_version=self._state_version(state),
-            blackboard=dict(state),
-            error_code=None,
-        )
-        self.repository.update_workflow_run(result)
-        return result
+        else:
+            return self._finalize_success(updated, state)
 
     def cancel(self, workflow_id: str, *, reason: str) -> WorkflowRun:
         run = self.repository.get_workflow_run(workflow_id)
@@ -324,11 +309,86 @@ class WorkflowService:
             "version": "guardrail-v1",
             "rules": [],
         }
+        FactCardService(self.repository).create_from_draft(
+            event, run, draft, status="published"
+        )
         result = replace(
             run,
             status="succeeded",
             blackboard=blackboard,
             state_version=self._state_version(blackboard),
+            error_code=None,
+        )
+        self.repository.update_workflow_run(result)
+        return result
+
+    def _finalize_success(self, run: WorkflowRun, state: dict[str, Any]) -> WorkflowRun:
+        """Guardrail 通过后持久化报告；未通过则进入 waiting_review 或失败。"""
+        state["provenance"] = self._collect_provenance(state)
+        draft = state.get("report_draft") or {}
+        guardrail_result = state.get("guardrail_result") or {}
+        # 自定义/降级流程可能没有 report_draft，此时跳过 Guardrail 校验。
+        if draft and not guardrail_result.get("checked"):
+            result = replace(
+                run,
+                status="failed",
+                state_version=self._state_version(state),
+                blackboard=dict(state),
+                error_code="GUARDRAIL_NOT_CHECKED",
+            )
+            self.repository.update_workflow_run(result)
+            return result
+        if draft and not guardrail_result.get("passed"):
+            if guardrail_result.get("review_required"):
+                blackboard = dict(state)
+                blackboard["degradation_reason"] = "GUARDRAIL_REVIEW_REQUIRED"
+                return self._enter_waiting_review(
+                    run,
+                    blackboard,
+                    reason_code="GUARDRAIL_REVIEW_REQUIRED",
+                    error_code=None,
+                    resume_from="draft",
+                )
+            blocking = [
+                rule
+                for rule in guardrail_result.get("rules", [])
+                if rule.get("status") == "fail"
+            ]
+            error_code = (
+                f"GUARDRAIL_{blocking[0]['rule'].upper()}"
+                if blocking
+                else "GUARDRAIL_BLOCKED"
+            )
+            result = replace(
+                run,
+                status="failed",
+                state_version=self._state_version(state),
+                blackboard=dict(state),
+                error_code=error_code,
+            )
+            self.repository.update_workflow_run(result)
+            return result
+
+        event = self.repository.get_event(run.event_id)
+        if event and draft:
+            card = FactCardService(self.repository).create_from_draft(
+                event, run, draft, status="needs_review"
+            )
+            self.repository.save_review_task(
+                ReviewTask(
+                    id=new_id("rvt"),
+                    object_type="report",
+                    object_id=card.id,
+                    reason_code="REPORT_REVIEW_REQUIRED",
+                    allowed_decisions=["approve", "return", "reject"],
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+        result = replace(
+            run,
+            status="succeeded",
+            state_version=self._state_version(state),
+            blackboard=dict(state),
             error_code=None,
         )
         self.repository.update_workflow_run(result)
@@ -340,32 +400,33 @@ class WorkflowService:
         blackboard: dict[str, Any],
         *,
         reason_code: str,
-        error_code: str,
+        error_code: str | None,
         resume_from: str | None,
     ) -> WorkflowRun:
         blackboard = dict(blackboard)
-        blackboard["degradation_reason"] = error_code
+        if error_code:
+            blackboard["degradation_reason"] = error_code
         state_version = self._state_version(blackboard)
         result = replace(
             run,
             status="waiting_review",
             blackboard=blackboard,
             state_version=state_version,
-            error_code=error_code,
+            error_code=error_code or None,
         )
         self.repository.update_workflow_run(result)
-        self.repository.save_review_task(
-            ReviewTask(
-                id=new_id("rvt"),
-                object_type="workflow",
-                object_id=run.id,
-                reason_code=reason_code,
-                allowed_decisions=list(WORKFLOW_REVIEW_DECISIONS),
-                resume_from=resume_from,
-                blackboard_version=state_version,
-                created_at=datetime.now(timezone.utc),
-            )
+        task = ReviewTask(
+            id=new_id("rvt"),
+            object_type="workflow",
+            object_id=run.id,
+            reason_code=reason_code,
+            allowed_decisions=list(WORKFLOW_REVIEW_DECISIONS),
+            resume_from=resume_from,
+            blackboard_version=state_version,
+            created_at=datetime.now(timezone.utc),
         )
+        self.repository.save_review_task(task)
+        AutoReviewService(self.repository).attempt_workflow_review(task)
         return result
 
     @staticmethod

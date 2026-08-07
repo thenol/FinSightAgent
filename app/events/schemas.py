@@ -13,6 +13,27 @@ from typing import Optional
 
 SCHEMA_VERSION = "event-schema-v1"
 
+# 宏观政策类事件独立关键词，避免与公司事件混淆
+MACRO_POLICY_KEYWORDS = (
+    "加息",
+    "降息",
+    "利率",
+    "FOMC",
+    "美联储",
+    "央行",
+    "人民银行",
+    "欧洲央行",
+    "rate hike",
+    "rate cut",
+    "interest rate",
+    "LPR",
+    "存款准备金率",
+    "货币政策",
+    "利率决议",
+    "联邦基金利率",
+    "基准利率",
+)
+
 
 @dataclass(frozen=True)
 class FieldSpec:
@@ -49,6 +70,28 @@ class EventSchema:
 
 
 EVENT_SCHEMAS: dict[str, EventSchema] = {
+    "macro_policy": EventSchema(
+        event_type="macro_policy",
+        keywords=MACRO_POLICY_KEYWORDS,
+        importance=0.92,
+        fields=(
+            FieldSpec(
+                "policy_body", "string", required=True, description="政策主体，如 美联储/PBOC"
+            ),
+            FieldSpec(
+                "rate_decision", "string", required=True, description="利率决策，如 加息/降息/维持"
+            ),
+            FieldSpec("rate_change_bp", "decimal", description="基点变化幅度，如 25"),
+            FieldSpec("target_rate", "string", description="目标利率区间，如 5.25%-5.50%"),
+            FieldSpec("effective_date", "date", description="生效日期"),
+        ),
+        claim_predicate="adjusts_policy_rate",
+        claim_object_type="string",
+        claim_templates=(
+            ClaimTemplate("rate_decision", "adjusts_policy_rate", "string"),
+        ),
+        conflict_rules=("value", "scope", "unit"),
+    ),
     "earnings_guidance": EventSchema(
         event_type="earnings_guidance",
         keywords=("业绩预告", "预计净利润", "业绩快报", "预计报告期"),
@@ -138,9 +181,10 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
     ),
 }
 
-# 按优先级排序：监管处罚 > 并购重组 > 减持 > 重大合同 > 业绩预告
+# 按优先级排序：宏观政策 > 监管处罚 > 并购重组 > 减持 > 重大合同 > 业绩预告
 # （避免一篇同时含"重组"和"合同"的公告被误判为低优先级类型）
 EVENT_TYPE_PRIORITY = (
+    "macro_policy",
     "regulatory_penalty",
     "merger_acquisition",
     "shareholder_reduction",

@@ -2,11 +2,12 @@
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
 from app.api.auth import PASSWORD_HASH
-from app.domain import ModelRun, QuarantineItem, ReviewTask, Source, User, WorkflowRun
+from app.domain import Claim, ModelRun, QuarantineItem, ReviewTask, Source, User, WorkflowRun
 from app.main import create_app
 from app.platform.ids import new_id
 
@@ -96,6 +97,36 @@ def _seed_quarantine(repository, source_id: str) -> None:
     )
 
 
+def _seed_claims(repository, event_id: str) -> tuple[str, str]:
+    empty_claim = Claim(
+        id=new_id("clm"),
+        event_id=event_id,
+        subject_text="empty claim",
+        predicate="is",
+        object_value={"value": "x"},
+        fingerprint="fp-empty",
+        status="verified",
+        confidence=Decimal("0.9"),
+        evidence_ids=[],
+        as_of=datetime.now(timezone.utc),
+    )
+    evidence_claim = Claim(
+        id=new_id("clm"),
+        event_id=event_id,
+        subject_text="evidenced claim",
+        predicate="is",
+        object_value={"value": "y"},
+        fingerprint="fp-evidenced",
+        status="verified",
+        confidence=Decimal("0.9"),
+        evidence_ids=[new_id("evd")],
+        as_of=datetime.now(timezone.utc),
+    )
+    repository.save_claim(empty_claim)
+    repository.save_claim(evidence_claim)
+    return empty_claim.id, evidence_claim.id
+
+
 def test_admin_metrics_aggregation() -> None:
     with _admin_client() as (client, repository, token):
         source = Source(
@@ -113,6 +144,7 @@ def test_admin_metrics_aggregation() -> None:
         _seed_workflows(repository, "evt_no_event")
         _seed_model_runs(repository)
         _seed_reviews(repository)
+        _seed_claims(repository, "evt_no_event")
 
         response = client.get(
             "/api/v1/admin/metrics", headers={"Authorization": f"Bearer {token}"}
@@ -131,6 +163,9 @@ def test_admin_metrics_aggregation() -> None:
         assert data["reviews"]["decided"] == 1
         assert data["reviews"]["manual_review_rate"] == 1 / 3
         assert data["users"]["total"] >= 1
+        assert data["citations"]["total_claims"] == 2
+        assert data["citations"]["claims_with_evidence"] == 1
+        assert data["citations"]["completeness_rate"] == 0.5
 
 
 def test_admin_metrics_requires_admin() -> None:

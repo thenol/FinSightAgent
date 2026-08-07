@@ -1,19 +1,33 @@
 from dataclasses import replace
 from datetime import datetime, timezone
+from typing import Optional
 
+from app.analysis.service import ImpactAnalysisService
 from app.domain import Claim, Event, FactCard, ReviewTask, WorkflowRun
 from app.platform.ids import new_id
 from app.platform.repository import Repository
+from app.platform.settings import Settings
+from app.review.service import AutoReviewService
 
 
 class FactCardService:
-    def __init__(self, repository: Repository) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        settings: Optional[Settings] = None,
+        impact_service: Optional[ImpactAnalysisService] = None,
+    ) -> None:
         self.repository = repository
+        self.settings = settings or Settings.from_environment()
+        self.impact_service = impact_service
 
     def create(self, event: Event, claim: Claim) -> FactCard:
         if claim.status == "verified":
             summary = f"已通过原始来源确认：{claim.subject_text} 披露 {event.event_type} 事件。"
             status = "published"
+        elif claim.status == "conflicted":
+            summary = f"检测到 {event.event_type} 事件的关键事实存在冲突，需人工审核。"
+            status = "needs_review"
         else:
             summary = f"检测到 {event.event_type} 事件，但来源尚不足以完成事实验证。"
             status = "review_required"
@@ -29,17 +43,22 @@ class FactCardService:
             as_of=claim.as_of,
         )
         self.repository.save_fact_card(card)
-        if status == "review_required":
-            self.repository.save_review_task(
-                ReviewTask(
-                    id=new_id("rvt"),
-                    object_type="report",
-                    object_id=card.id,
-                    reason_code="REPORT_REVIEW_REQUIRED",
-                    allowed_decisions=["approve", "return", "reject"],
-                    created_at=datetime.now(timezone.utc),
-                )
+        if status in {"review_required", "needs_review"}:
+            reason_code = (
+                "CLAIM_CONFLICT" if claim.status == "conflicted" else "REPORT_REVIEW_REQUIRED"
             )
+            task = ReviewTask(
+                id=new_id("rvt"),
+                object_type="report",
+                object_id=card.id,
+                reason_code=reason_code,
+                allowed_decisions=["approve", "return", "reject"],
+                created_at=datetime.now(timezone.utc),
+            )
+            self.repository.save_review_task(task)
+            AutoReviewService(self.repository).attempt_report_review(task, card)
+        if card.status == "published":
+            self._maybe_trigger_impact_analysis(event.id)
         return card
 
     def create_from_draft(
@@ -74,6 +93,8 @@ class FactCardService:
             provenance=dict(draft.get("provenance") or {"workflow_run_id": run.id}),
         )
         self.repository.save_fact_card(card)
+        if card.status == "published":
+            self._maybe_trigger_impact_analysis(event.id)
         return card
 
     def transition(self, card: FactCard, status: str, reason: str) -> FactCard:
@@ -87,4 +108,37 @@ class FactCardService:
             change_reason=reason,
         )
         self.repository.save_fact_card(replacement)
+        if status == "published":
+            self._maybe_trigger_impact_analysis(card.event_id)
         return replacement
+
+    def _maybe_trigger_impact_analysis(self, event_id: str) -> None:
+        """事实卡片发布后，为高重要度事件自动生成影响分析。
+
+        PostgreSQL 环境下写入 Outbox 由异步 worker 消费；内存/测试环境下同步生成。
+        生成失败不会阻塞报告发布，由用户后续手动重新生成。
+        """
+        if not self.settings.auto_impact_analysis_enabled:
+            return
+        event = self.repository.get_event(event_id)
+        if event is None:
+            return
+        if event.status in {"dormant", "archived"}:
+            return
+        if event.importance < self.settings.auto_impact_analysis_importance_threshold:
+            return
+        if self.repository.get_latest_impact_analysis_for_event(event_id) is not None:
+            return
+        if self.settings.repository == "postgresql":
+            self.repository.add_outbox(
+                "impact_analysis.requested.v1",
+                event_id,
+                {"event_id": event_id, "trigger": "fact_card.published"},
+            )
+            return
+        service = self.impact_service or ImpactAnalysisService(self.repository, self.settings)
+        try:
+            service.generate(event_id, actor="system:auto")
+        except Exception:
+            # 自动生成失败不应阻塞发布流程；页面保留手动生成入口。
+            pass

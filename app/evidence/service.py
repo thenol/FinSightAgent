@@ -2,16 +2,26 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from app.domain import Claim, ClaimEvidenceRelation, Document, Event, EvidenceSpan
+from app.domain import (
+    Claim,
+    ClaimEvidenceRelation,
+    ConflictRecord,
+    Document,
+    Event,
+    EvidenceSpan,
+    ReviewTask,
+)
 from app.events.schemas import ClaimTemplate, get_schema
 from app.evidence.claims import (
     ClaimFingerprint,
     ClaimNormalizer,
 )
+from app.evidence.conflicts import ConflictDetector
 from app.evidence.policy import EvidencePolicyService, EvidenceRecord
 from app.ingestion.blocks import PARSER_VERSION, DocumentBlockReader
 from app.platform.ids import new_id
 from app.platform.repository import Repository
+from app.review.service import AutoReviewService
 
 EXCERPT_MAX_LENGTH = 500
 
@@ -36,6 +46,7 @@ class EvidenceService:
         self.normalizer = normalizer or ClaimNormalizer()
         self.fingerprinter = ClaimFingerprint()
         self.policy = policy or EvidencePolicyService()
+        self.conflict_detector = ConflictDetector()
 
     def register_event_disclosure(
         self, document: Document, event: Event
@@ -76,7 +87,73 @@ class EvidenceService:
             evidence = first_evidence or self._register_evidence(document)
             claims.append(self._persist_legacy_claim(document, event, evidence))
             first_evidence = evidence
+        self._apply_conflicts(event, claims)
         return first_evidence or self._register_evidence(document), claims
+
+    def _apply_conflicts(self, event: Event, new_claims: list[Claim]) -> None:
+        """检测新旧 Claim 之间的关键冲突，更新状态并持久化冲突记录。"""
+        if not new_claims:
+            return
+        new_ids = {c.id for c in new_claims}
+        all_claims = self.repository.get_claims_for_event(event.id)
+        normalized_cache: dict[str, Any] = {}
+
+        def _normalized(claim: Claim) -> Any:
+            if claim.id not in normalized_cache:
+                normalized_cache[claim.id] = self.normalizer.normalize(
+                    subject_text=claim.subject_text,
+                    subject_entity_id=claim.subject_entity_id,
+                    predicate=claim.predicate,
+                    object_value=claim.object_value,
+                    qualifiers=claim.qualifiers,
+                    as_of=claim.as_of.isoformat(),
+                )
+            return normalized_cache[claim.id]
+
+        conflicted_ids: set[str] = set()
+        for left in all_claims:
+            for right in all_claims:
+                if left.id >= right.id:
+                    continue
+                if left.id not in new_ids and right.id not in new_ids:
+                    continue
+                conflict = self.conflict_detector.detect(
+                    _normalized(left), _normalized(right), left.id, right.id
+                )
+                if conflict is None:
+                    continue
+                if conflict.severity != "critical":
+                    continue
+                conflicted_ids.add(left.id)
+                conflicted_ids.add(right.id)
+                conflict = ConflictRecord(
+                    id=new_id("cfl"),
+                    event_id=event.id,
+                    conflict_type=conflict.conflict_type,
+                    severity=conflict.severity,
+                    status="open",
+                    summary=conflict.summary,
+                    claim_ids=conflict.claim_ids,
+                )
+                self.repository.save_conflict(conflict)
+                task = ReviewTask(
+                    id=new_id("rvt"),
+                    object_type="claim_conflict",
+                    object_id=conflict.id,
+                    reason_code=f"CONFLICT_{conflict.conflict_type.upper()}",
+                    allowed_decisions=["approve", "reject"],
+                    status="pending",
+                )
+                self.repository.save_review_task(task)
+                AutoReviewService(self.repository).attempt_conflict_review(task, conflict)
+
+        for claim in all_claims:
+            if claim.id in conflicted_ids and claim.status != "conflicted":
+                self.repository.update_claim(
+                    claim.__class__(
+                        **{**claim.__dict__, "status": "conflicted", "confidence": 0.30}
+                    )
+                )
 
     def _register_evidence(
         self, document: Document, source_text: Optional[str] = None

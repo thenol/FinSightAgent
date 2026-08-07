@@ -18,6 +18,7 @@ class ModelRequest(BaseModel):
     payload: dict[str, Any]
     timeout_seconds: float = Field(default=15, gt=0, le=120)
     max_cost_usd: float = Field(default=0, ge=0)
+    system_prompt: str = Field(default="Respond with valid JSON only.", min_length=1)
 
 
 class ModelResponse(BaseModel):

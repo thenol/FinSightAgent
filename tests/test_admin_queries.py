@@ -13,6 +13,7 @@ SCHEMA_MAP = {
     "evidence": None,
     "publishing": None,
     "platform": None,
+    "analysis": None,
 }
 NOW = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
 

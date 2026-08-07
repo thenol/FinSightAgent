@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.document_intelligence.service import DocumentIntelligenceService
 from app.domain import AuditLog, MergeReviewTask, PipelineResult, WorkflowRun
 from app.events.matching import EventMatcher
 from app.events.router import EventRouter
@@ -15,6 +16,7 @@ from app.platform.ids import new_id
 from app.platform.repository import PipelineResultReference, RepositoryProvider
 from app.platform.settings import Settings
 from app.publishing.service import FactCardService
+from app.review.service import AutoReviewService
 
 
 class EventResearchPipeline:
@@ -117,7 +119,12 @@ class EventResearchPipeline:
             router = self._event_router_override or EventRouter(gateway)
             if existing_event:
                 event = events.attach_document_to_event(existing_event, document)
+                disclosure_group_id = event.disclosure_group_id
             else:
+                doc_intel = DocumentIntelligenceService(repository)
+                _, _, _, disclosure_group = doc_intel.process(document)
+                disclosure_group_id = disclosure_group.id
+
                 # 规则提名 → Router 确认 → 仅 accept 的五类进入可研究状态
                 rule_hint = router.propose(document)
                 router_decision = router.route(document, rule_hint=rule_hint)
@@ -126,23 +133,28 @@ class EventResearchPipeline:
                     document,
                     classification.event_type,
                     classification.key_fields,
+                    disclosure_group_id=disclosure_group_id,
                 )
                 decision = matcher.decide(features)
                 matcher.record_decision(document, candidate_event, features, decision)
                 if matched_event:
                     event = events.attach_document_to_event(matched_event, document)
                 else:
-                    event = events.create_event(document, classification=classification)
+                    event = events.create_event(
+                        document,
+                        classification=classification,
+                        disclosure_group_id=disclosure_group_id,
+                    )
                     is_new_event = True
                     if decision == "review" and candidate_event:
-                        repository.save_merge_review_task(
-                            MergeReviewTask(
-                                id=new_id("mrt"),
-                                document_id=document.id,
-                                candidates=[candidate_event.id],
-                                status="open",
-                            )
+                        task = MergeReviewTask(
+                            id=new_id("mrt"),
+                            document_id=document.id,
+                            candidates=[candidate_event.id],
+                            status="open",
                         )
+                        repository.save_merge_review_task(task)
+                        AutoReviewService(repository).attempt_merge_review(task)
                     repository.save_audit_log(
                         AuditLog(
                             id=new_id("aud"),

@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.analysis.service import ImpactAnalysisService
 from app.api.auth import PASSWORD_HASH, require_roles
 from app.api.errors import openapi_error_responses
 from app.api.schemas import (
@@ -17,12 +18,14 @@ from app.api.schemas import (
     BriefResponse,
     BudgetLedgerEntryResponse,
     ClaimResponse,
+    ConflictResponse,
     DataEnvelope,
     DocumentUpdateRequest,
     EventDetailResponse,
     EventResponse,
     EvidenceResponse,
     FactCardResponse,
+    ImpactAnalysisResponse,
     IngestDocumentRequest,
     IngestRunResponse,
     LlmAgentBindingBulkRequest,
@@ -32,12 +35,15 @@ from app.api.schemas import (
     LlmProviderUpdateRequest,
     LoginRequest,
     LoginResponse,
+    MergeReviewDecisionRequest,
+    MergeReviewTaskResponse,
     NodeAttemptResponse,
     PipelineResponse,
     ReportTransitionRequest,
     ReviewDecisionRequest,
     ReviewTaskResponse,
     SourceCreateRequest,
+    SourceHealthResponse,
     SourceResponse,
     SourceUpdateRequest,
     WorkflowCreateRequest,
@@ -560,6 +566,105 @@ def get_review(
     )
 
 
+@router.get("/api/v1/merge-reviews", response_model=DataEnvelope)
+def list_merge_reviews(
+    request: Request,
+    status_filter: Annotated[
+        Optional[str], Query(pattern="^(open|decided)$")
+    ] = None,
+    cursor: Optional[str] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status_filter", "cursor", "limit"})
+    _validate_cursor(cursor)
+    tasks = request.app.state.repository.list_merge_review_tasks(
+        status=status_filter, limit=limit + 1, cursor=cursor
+    )
+    values = [
+        MergeReviewTaskResponse.model_validate(task, from_attributes=True)
+        for task in tasks
+    ]
+    return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
+
+
+@router.get("/api/v1/merge-reviews/{task_id}", response_model=DataEnvelope)
+def get_merge_review(
+    task_id: str,
+    request: Request,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    task = request.app.state.repository.get_merge_review_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="MERGE_REVIEW_NOT_FOUND")
+    return envelope(
+        MergeReviewTaskResponse.model_validate(task, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.post(
+    "/api/v1/merge-reviews/{task_id}/decision",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def decide_merge_review(
+    task_id: str,
+    payload: MergeReviewDecisionRequest,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    operation = f"merge_review.decision:{task_id}"
+    storage_key, request_hash, replay = _idempotency_begin(
+        request, user, idempotency_key, operation, payload
+    )
+    if replay:
+        return replay
+    repository = request.app.state.repository
+    task = repository.get_merge_review_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="MERGE_REVIEW_NOT_FOUND")
+    if task.status != "open":
+        raise HTTPException(status_code=409, detail="MERGE_REVIEW_ALREADY_DECIDED")
+    if payload.decision not in {"merge", "new_event", "skip"}:
+        raise HTTPException(status_code=409, detail="MERGE_REVIEW_DECISION_INVALID")
+
+    updated = task.__class__(
+        **{
+            **task.__dict__,
+            "status": "decided",
+            "decision": payload.decision,
+            "reviewer_id": user.id,
+            "decided_at": datetime.now(timezone.utc),
+        }
+    )
+    repository.update_merge_review_task(updated)
+    repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="merge_review.decided",
+            object_type="merge_review_task",
+            object_id=task.id,
+            request_id=request.state.request_id,
+            details={
+                "decision": payload.decision,
+                "comment": payload.comment,
+                "candidates": task.candidates,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    response = envelope(
+        MergeReviewTaskResponse.model_validate(updated, from_attributes=True),
+        request.state.request_id,
+    )
+    return _idempotency_finish(
+        request, storage_key, request_hash, operation, updated.id, response
+    )
+
+
 @router.get("/api/v1/evidence/{evidence_id}", response_model=DataEnvelope)
 def get_evidence(
     evidence_id: str,
@@ -602,6 +707,26 @@ def get_evidence(
             document_content=document_content,
             display_scope=scope,
         ),
+        request.state.request_id,
+    )
+
+
+@router.get(
+    "/api/v1/conflicts/{conflict_id}",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(401, 404),
+)
+def get_conflict(
+    conflict_id: str,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    conflict = repository.get_conflict(conflict_id)
+    if not conflict:
+        raise HTTPException(status_code=404, detail="CONFLICT_NOT_FOUND")
+    return envelope(
+        ConflictResponse.model_validate(conflict, from_attributes=True),
         request.state.request_id,
     )
 
@@ -686,6 +811,30 @@ def decide_review(
         else:
             raise HTTPException(status_code=409, detail="REVIEW_DECISION_INVALID")
         response_payload = WorkflowResponse.model_validate(updated_run, from_attributes=True)
+    elif task.object_type == "claim_conflict":
+        if payload.decision not in {"approve", "reject"}:
+            raise HTTPException(status_code=409, detail="REVIEW_DECISION_INVALID")
+        conflict = repository.get_conflict(task.object_id)
+        if not conflict:
+            raise HTTPException(status_code=409, detail="REVIEW_OBJECT_NOT_FOUND")
+        claim_status = "verified" if payload.decision == "approve" else "rejected"
+        for claim_id in conflict.claim_ids:
+            claim = repository.get_claim(claim_id)
+            if claim and claim.status == "conflicted":
+                repository.update_claim(
+                    claim.__class__(**{**claim.__dict__, "status": claim_status})
+                )
+        repository.update_conflict(
+            conflict.__class__(
+                **{
+                    **conflict.__dict__,
+                    "status": "resolved",
+                    "resolution": payload.decision,
+                    "version": conflict.version + 1,
+                }
+            )
+        )
+        response_payload = {"conflict_id": conflict.id, "resolution": payload.decision}
     else:
         raise HTTPException(status_code=409, detail="REVIEW_OBJECT_UNSUPPORTED")
 
@@ -891,6 +1040,45 @@ def list_source_runs(
         )
     ]
     return _page_envelope(runs, limit, lambda value: value.started_at, request.state.request_id)
+
+
+@router.get(
+    "/api/v1/sources/{source_id}/health",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(401, 404),
+)
+def get_source_health(
+    source_id: str,
+    request: Request,
+    user: User = Depends(require_roles("admin", "researcher", "reviewer", "publisher")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    source = repository.get_source(source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="SOURCE_NOT_FOUND")
+
+    runs = repository.list_ingest_runs(source_id, limit=10)
+    recent_runs = [IngestRunResponse(**run.__dict__) for run in runs]
+    last_run = recent_runs[0] if recent_runs else None
+
+    if source.status == "disabled":
+        health = "disabled"
+    elif source.status == "degraded" or source.consecutive_failures > 0:
+        health = "degraded"
+    else:
+        health = "healthy"
+
+    return envelope(
+        SourceHealthResponse(
+            source=SourceResponse(**source.__dict__),
+            health=health,
+            consecutive_failures=source.consecutive_failures,
+            last_success_at=source.last_success_at,
+            last_run=last_run,
+            recent_runs=recent_runs,
+        ),
+        request.state.request_id,
+    )
 
 
 @router.patch(
@@ -1670,6 +1858,106 @@ def list_event_reports(
         raise HTTPException(status_code=404, detail="REPORT_NOT_FOUND")
     response = [FactCardResponse.model_validate(card, from_attributes=True) for card in cards]
     return _page_envelope(response, limit, lambda value: value.as_of, request.state.request_id)
+
+
+@router.post(
+    "/api/v1/events/{event_id}/impact-analysis",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409),
+)
+def generate_event_impact_analysis(
+    event_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    event = repository.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND")
+    try:
+        analysis = ImpactAnalysisService(repository).generate(event_id, actor=user.id)
+    except ReportVersionConflict as exc:
+        raise HTTPException(status_code=409, detail="IMPACT_ANALYSIS_VERSION_CONFLICT") from exc
+    return DataEnvelope(
+        data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/events/{event_id}/impact-analysis", response_model=DataEnvelope)
+def get_event_impact_analysis(
+    event_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope | JSONResponse:
+    repository = request.app.state.repository
+    event = repository.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND")
+    analysis = repository.get_latest_impact_analysis_for_event(event_id)
+    if analysis is not None:
+        return DataEnvelope(
+            data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+            meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+        )
+    if _has_pending_impact_analysis(repository, event_id):
+        return JSONResponse(
+            status_code=202,
+            content={
+                "data": {"status": "pending"},
+                "meta": {"request_id": request.state.request_id, "schema_version": "1.0"},
+            },
+        )
+    raise HTTPException(status_code=404, detail="IMPACT_ANALYSIS_NOT_FOUND")
+
+
+def _has_pending_impact_analysis(repository, event_id: str) -> bool:
+    list_pending = getattr(repository, "list_pending_outbox_by_event_type", None)
+    if not callable(list_pending):
+        return False
+    pending = list_pending("impact_analysis.requested.v1", limit=10)
+    return any(msg.payload.get("event_id") == event_id for msg in pending)
+
+
+@router.get(
+    "/api/v1/events/{event_id}/impact-analysis/versions", response_model=DataEnvelope
+)
+def list_event_impact_analysis_versions(
+    event_id: str,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    event = repository.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND")
+    analyses = repository.list_impact_analyses_for_event(event_id, limit=limit)
+    response = [ImpactAnalysisResponse.model_validate(a, from_attributes=True) for a in analyses]
+    return DataEnvelope(
+        data=response,
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "count": len(response),
+        },
+    )
+
+
+@router.get("/api/v1/impact-analyses/{impact_analysis_id}", response_model=DataEnvelope)
+def get_impact_analysis(
+    impact_analysis_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    analysis = repository.get_impact_analysis(impact_analysis_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="IMPACT_ANALYSIS_NOT_FOUND")
+    return DataEnvelope(
+        data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
 
 
 @router.post(

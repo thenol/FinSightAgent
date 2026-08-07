@@ -5,9 +5,13 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState, Skeleton } from "@/components/EmptyState";
 import { apiGet } from "@/lib/api";
 import { asList, formatDate, taskAge } from "@/lib/format";
-import type { ReviewTask, Source, Workflow } from "@/types/api";
+import type { AdminMetrics, ReviewTask, Source, Workflow } from "@/types/api";
 
 export function OverviewPage() {
+  const metricsQuery = useQuery({
+    queryKey: ["admin-metrics"],
+    queryFn: () => apiGet<AdminMetrics>("/api/v1/admin/metrics"),
+  });
   const sourcesQuery = useQuery({
     queryKey: ["sources"],
     queryFn: () => apiGet<Source[] | { items: Source[] }>("/api/v1/sources"),
@@ -22,21 +26,37 @@ export function OverviewPage() {
     queryFn: () => apiGet<Workflow[] | { items: Workflow[] }>("/api/v1/workflows?limit=200"),
   });
 
-  if (sourcesQuery.isLoading || reviewsQuery.isLoading || workflowsQuery.isLoading) {
+  if (
+    metricsQuery.isLoading ||
+    sourcesQuery.isLoading ||
+    reviewsQuery.isLoading ||
+    workflowsQuery.isLoading
+  ) {
     return <Skeleton />;
   }
 
+  const metrics = metricsQuery.data;
   const sources = asList<Source>(sourcesQuery.data);
   const reviews = asList<ReviewTask>(reviewsQuery.data);
   const workflows = asList<Workflow>(workflowsQuery.data);
   const waiting = workflows.filter((item) => item.status === "waiting_review");
-  const active = workflows.filter((item) =>
-    ["pending", "running", "waiting_review"].includes(item.status),
-  );
   const degraded = sources.filter((item) => item.status !== "active");
   const oldest = [...reviews].sort((a, b) =>
     String(a.created_at || "").localeCompare(String(b.created_at || "")),
   )[0];
+
+  const workflowSuccessRate =
+    metrics && typeof metrics.workflows.success_rate === "number"
+      ? `${Math.round(metrics.workflows.success_rate * 100)}%`
+      : "–";
+  const citationRate =
+    metrics && typeof metrics.citations.completeness_rate === "number"
+      ? `${Math.round(metrics.citations.completeness_rate * 100)}%`
+      : "–";
+  const modelLatency =
+    metrics && typeof metrics.models.avg_latency_ms === "number"
+      ? `${Math.round(metrics.models.avg_latency_ms)} ms`
+      : "–";
 
   return (
     <>
@@ -59,25 +79,33 @@ export function OverviewPage() {
       <section className="metric-strip" aria-label="运行概览">
         <article className="metric-card">
           <span>待审任务</span>
-          <strong>{reviews.length}</strong>
+          <strong>{metrics?.reviews.pending ?? reviews.length}</strong>
           <p>{oldest ? `最老 ${taskAge(oldest.created_at)}` : "队列为空"}</p>
         </article>
         <article className="metric-card">
           <span>异常来源</span>
-          <strong>{degraded.length}</strong>
-          <p>共 {sources.length} 个来源</p>
+          <strong>{metrics?.sources ? metrics.sources.total - (metrics.sources.by_status.active || 0) : degraded.length}</strong>
+          <p>共 {metrics?.sources.total ?? sources.length} 个来源</p>
         </article>
         <article className="metric-card">
-          <span>活跃工作流</span>
-          <strong>{active.length}</strong>
-          <p>{waiting.length} 个等待审核</p>
+          <span>工作流成功率</span>
+          <strong>{workflowSuccessRate}</strong>
+          <p>{metrics?.workflows.total ?? workflows.length} 个总运行</p>
         </article>
         <article className="metric-card">
-          <span>来源健康</span>
-          <strong>
-            {sources.length ? Math.round(((sources.length - degraded.length) / sources.length) * 100) : 0}%
-          </strong>
-          <p>{degraded.length ? "存在降级来源" : "全部正常"}</p>
+          <span>模型平均延迟</span>
+          <strong>{modelLatency}</strong>
+          <p>24h 内 {metrics?.models.last_24h_runs ?? 0} 次调用</p>
+        </article>
+        <article className="metric-card">
+          <span>引用完整率</span>
+          <strong>{citationRate}</strong>
+          <p>{metrics?.citations.claims_with_evidence ?? 0} / {metrics?.citations.total_claims ?? 0} Claim 含证据</p>
+        </article>
+        <article className="metric-card">
+          <span>Outbox 积压</span>
+          <strong>{metrics?.outbox.pending ?? 0}</strong>
+          <p>{metrics?.outbox.dead_lettered ?? 0} 条死信</p>
         </article>
       </section>
 

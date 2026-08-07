@@ -49,7 +49,15 @@ def admin_console() -> HTMLResponse:
 
 @router.get("/admin/assets/{asset_path:path}")
 def admin_assets(asset_path: str) -> FileResponse:
-    """Compatibility aliases used by older experience tests."""
+    """Serve Vite build assets from web/dist/assets, with legacy aliases fallback."""
+    spa_candidate = (_SPA_ROOT / "assets" / asset_path).resolve()
+    if str(spa_candidate).startswith(str((_SPA_ROOT / "assets").resolve())) and spa_candidate.is_file():
+        media = "text/css" if asset_path.endswith(".css") else "application/javascript"
+        return FileResponse(
+            spa_candidate,
+            media_type=media,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
     mapping = {
         "admin.css": _LEGACY_ROOT / "admin.css",
         "admin.js": _LEGACY_ROOT / "admin.js",

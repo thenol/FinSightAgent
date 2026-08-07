@@ -78,6 +78,7 @@ a:hover {
 
 .sidebar-backdrop {
   display: none;
+  pointer-events: none;
 }
 
 .sidebar {
@@ -240,6 +241,26 @@ a:hover {
 .badge.bad {
   background: rgb(240 120 120 / 20%);
   color: #f0a0a0;
+}
+
+.badge.positive {
+  background: rgb(22 163 74 / 20%);
+  color: #86efac;
+}
+
+.badge.negative {
+  background: rgb(220 38 38 / 20%);
+  color: #fca5a5;
+}
+
+.badge.neutral {
+  background: rgb(107 114 128 / 20%);
+  color: #d1d5db;
+}
+
+.badge.mixed {
+  background: rgb(217 119 6 / 20%);
+  color: #fcd34d;
 }
 
 .sidebar-footer {
@@ -552,6 +573,65 @@ button.button {
   cursor: default;
 }
 
+.button.sm {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.8125rem;
+}
+
+.button.icon-sm {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.35rem;
+}
+
+.button.icon-sm svg {
+  width: 1rem;
+  height: 1rem;
+  fill: currentColor;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.button-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.button-group .button {
+  border-radius: 0;
+}
+
+.button-group .button:first-child {
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+
+.button-group .button:last-child {
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+
+.button-group .button:not(:first-child) {
+  border-left: 0;
+}
+
+.button-group .button:focus-visible,
+.button-group .button:hover {
+  position: relative;
+  z-index: 1;
+}
+
 .form-field {
   display: flex;
   flex-direction: column;
@@ -562,6 +642,28 @@ button.button {
 .form-field label {
   color: var(--color-text-muted);
   font-size: 0.75rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.form-grid .form-field {
+  margin-bottom: 0;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.65rem;
+}
+
+.panel-header h3 {
+  margin: 0;
 }
 
 input,
@@ -798,7 +900,11 @@ textarea {
   color: var(--color-red);
 }
 
-.modal::backdrop {
+dialog:not([open]) {
+  display: none !important;
+}
+
+dialog::backdrop {
   background: var(--color-overlay);
 }
 
@@ -888,13 +994,6 @@ textarea {
     inset: 0;
     z-index: 35;
     background: var(--color-overlay);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms var(--ease-out);
-  }
-
-  .app-shell.is-mobile-open .sidebar-backdrop {
-    opacity: 1;
     pointer-events: auto;
   }
 

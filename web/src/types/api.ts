@@ -46,6 +46,15 @@ export type IngestRun = {
   request_id?: string | null;
 };
 
+export type SourceHealth = {
+  source: Source;
+  health: string;
+  consecutive_failures: number;
+  last_success_at?: string | null;
+  last_run?: IngestRun | null;
+  recent_runs: IngestRun[];
+};
+
 export type EventItem = {
   id: string;
   event_type: string;
@@ -71,6 +80,18 @@ export type Claim = {
   confidence: number;
   evidence_ids: string[];
   as_of: string;
+};
+
+export type Conflict = {
+  id: string;
+  event_id: string;
+  conflict_type: string;
+  severity: string;
+  status: string;
+  summary: string;
+  claim_ids: string[];
+  resolution?: string | null;
+  version: number;
 };
 
 export type EventDetail = EventItem & {
@@ -124,6 +145,17 @@ export type ReviewTask = {
   blackboard_version?: number | null;
   created_at?: string | null;
   decided_at?: string | null;
+};
+
+export type MergeReviewTask = {
+  id: string;
+  document_id: string;
+  candidates: string[];
+  status: string;
+  decision?: string | null;
+  reviewer_id?: string | null;
+  decided_at?: string | null;
+  created_at?: string | null;
 };
 
 export type Workflow = {
@@ -231,4 +263,86 @@ export type LlmAgentBinding = {
   provider_id?: string | null;
   model_override?: string | null;
   updated_at?: string | null;
+};
+
+export type AdminMetrics = {
+  workflows: {
+    total: number;
+    by_status: Record<string, number>;
+    success_rate: number | null;
+  };
+  models: {
+    total_runs: number;
+    failures: number;
+    total_cost_usd: number;
+    avg_latency_ms: number | null;
+    last_24h_runs: number;
+    last_24h_cost_usd: number;
+  };
+  sources: {
+    total: number;
+    by_status: Record<string, number>;
+    open_quarantine: number;
+  };
+  reviews: {
+    pending: number;
+    decided: number;
+    manual_review_rate: number;
+  };
+  outbox: {
+    pending: number;
+    dead_lettered: number;
+  };
+  users: {
+    total: number;
+    active: number;
+  };
+  citations: {
+    completeness_rate: number | null;
+    claims_with_evidence: number;
+    total_claims: number;
+  };
+};
+
+export type TransmissionStep = {
+  step: number;
+  description: string;
+};
+
+export type TransmissionChain = {
+  chain_id: string;
+  mechanism: string;
+  steps: TransmissionStep[];
+  confidence: number;
+};
+
+export type ImpactTarget = {
+  target_type: string;
+  target_name: string;
+  target_code?: string | null;
+  direction: string;
+  magnitude: string;
+  horizon: string;
+  confidence: number;
+  rationale: string;
+  chain_refs?: string[];
+  claim_ids?: string[];
+};
+
+export type ImpactAnalysis = {
+  id: string;
+  event_id: string;
+  version: number;
+  status: string;
+  event_title_snapshot: string;
+  summary: string;
+  transmission_chains: TransmissionChain[];
+  impacts: ImpactTarget[];
+  macro_assumptions: string[];
+  watch_items: string[];
+  generated_by: string;
+  model_run_id?: string | null;
+  degraded: boolean;
+  supersedes_id?: string | null;
+  created_at?: string | null;
 };

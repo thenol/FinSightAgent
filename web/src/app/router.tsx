@@ -12,6 +12,7 @@ import { BriefsPage } from "@/pages/BriefsPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { DocumentsPage } from "@/pages/DocumentsPage";
 import { AuditPage } from "@/pages/AuditPage";
+import { MergeReviewsPage } from "@/pages/MergeReviewsPage";
 
 function RequireAuth() {
   const { token } = useAuth();
@@ -31,6 +32,8 @@ export function AppRouter() {
           <Route index element={<OverviewPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
           <Route path="reviews/:taskId" element={<ReviewsPage />} />
+          <Route path="merge-reviews" element={<MergeReviewsPage />} />
+          <Route path="merge-reviews/:taskId" element={<MergeReviewsPage />} />
           <Route path="events" element={<EventsPage />} />
           <Route path="events/:eventId" element={<EventsPage />} />
           <Route path="reports" element={<ReportsPage />} />

@@ -1,0 +1,158 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImpactAnalysisOutput",
+  "description": "事件影响分析 Agent 的输出：传导链与受影响目标。对应 app/analysis/schemas.py 的 ImpactAnalysisOutput。",
+  "type": "object",
+  "required": ["schema_version", "summary", "impacts", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transmission_chains": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/TransmissionChain"
+      }
+    },
+    "impacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/ImpactTarget"
+      }
+    },
+    "macro_assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "watch_items": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "definitions": {
+    "TransmissionStep": {
+      "type": "object",
+      "required": ["step", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "TransmissionChain": {
+      "type": "object",
+      "required": ["chain_id", "mechanism", "steps", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "chain_id": {
+          "type": "string",
+          "pattern": "^chn_[a-zA-Z0-9_-]+$"
+        },
+        "mechanism": {
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/TransmissionStep"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "ImpactTarget": {
+      "type": "object",
+      "required": [
+        "target_type",
+        "target_name",
+        "direction",
+        "magnitude",
+        "horizon",
+        "confidence",
+        "rationale"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "target_type": {
+          "type": "string",
+          "enum": [
+            "sector",
+            "industry",
+            "company",
+            "macro_variable",
+            "market",
+            "asset_class"
+          ]
+        },
+        "target_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_code": {
+          "type": ["string", "null"]
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["positive", "negative", "neutral", "mixed"]
+        },
+        "magnitude": {
+          "type": "string",
+          "enum": ["strong", "moderate", "weak", "uncertain"]
+        },
+        "horizon": {
+          "type": "string",
+          "enum": ["short", "medium", "long", "uncertain"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chain_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "claim_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

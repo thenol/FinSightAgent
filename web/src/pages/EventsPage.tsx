@@ -6,6 +6,7 @@ import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState, ErrorState, Skeleton } from "@/components/EmptyState";
 import { EvidenceRail } from "@/features/EvidenceRail";
+import { ImpactAnalysisPanel } from "@/features/ImpactAnalysisPanel";
 import { apiGet } from "@/lib/api";
 import { asList, formatDate, matchesEventScope, type EventListScope } from "@/lib/format";
 import type { EventDetail, EventItem } from "@/types/api";
@@ -164,6 +165,9 @@ function EventDetailPage({ eventId }: { eventId: string }) {
         ) : (
           <EmptyState>无已生成报告</EmptyState>
         )}
+      </section>
+      <section style={{ marginTop: "0.75rem" }}>
+        <ImpactAnalysisPanel eventId={eventId} />
       </section>
     </>
   );

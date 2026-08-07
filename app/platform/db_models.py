@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -15,6 +16,9 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# 默认 Embedding 维度，与 OpenAI text-embedding-3-small 对齐。
+EMBEDDING_DIMENSION = 1536
 
 
 class Base(DeclarativeBase):
@@ -295,6 +299,123 @@ class DocumentRevisionModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ParsedDocumentModel(Base):
+    __tablename__ = "parsed_documents"
+    __table_args__ = (
+        Index("ix_parsed_documents_document_id", "document_id"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    document_id: Mapped[str] = mapped_column(String, index=True)
+    revision_id: Mapped[str] = mapped_column(String, index=True)
+    parser_version: Mapped[str] = mapped_column(String(50), default="doc-intel-v1")
+    parser_run_id: Mapped[str] = mapped_column(String)
+    language: Mapped[str] = mapped_column(String(16), default="zh")
+    title: Mapped[str] = mapped_column(Text)
+    block_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    summary: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentBlockModel(Base):
+    __tablename__ = "document_blocks"
+    __table_args__ = (
+        Index("ix_document_blocks_revision_id_order", "revision_id", "order_index"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    parsed_document_id: Mapped[str] = mapped_column(String, index=True)
+    revision_id: Mapped[str] = mapped_column(String, index=True)
+    block_type: Mapped[str] = mapped_column(String(24))
+    block_id: Mapped[str] = mapped_column(String(80))
+    text: Mapped[str] = mapped_column(Text)
+    char_start: Mapped[int] = mapped_column()
+    char_end: Mapped[int] = mapped_column()
+    order_index: Mapped[int] = mapped_column()
+    dom_path: Mapped[Optional[str]] = mapped_column(Text)
+    page_no: Mapped[Optional[int]] = mapped_column()
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentChunkModel(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (
+        Index("ix_document_chunks_block_id", "block_id"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    block_id: Mapped[str] = mapped_column(String, index=True)
+    chunk_type: Mapped[str] = mapped_column(String(32))
+    text: Mapped[str] = mapped_column(Text)
+    char_start: Mapped[int] = mapped_column()
+    char_end: Mapped[int] = mapped_column()
+    content_hash: Mapped[str] = mapped_column(String(64))
+    embedding_model_version: Mapped[str] = mapped_column(String(50), default="")
+    embedding: Mapped[Optional[list[float]]] = mapped_column(JSON, nullable=True)
+    as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EmbeddingRecordModel(Base):
+    __tablename__ = "embedding_records"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", "embedding_model_version", name="uq_embedding_chunk_model"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(String, index=True)
+    embedding_model_version: Mapped[str] = mapped_column(String(50))
+    # PostgreSQL 使用 pgvector vector 类型；SQLite 测试路径回退到 JSON。
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(EMBEDDING_DIMENSION).with_variant(JSON, "sqlite")
+    )
+    content_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16))
+    error_code: Mapped[Optional[str]] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DisclosureGroupModel(Base):
+    __tablename__ = "disclosure_groups"
+    __table_args__ = (
+        Index("ix_disclosure_groups_canonical_content_hash", "canonical_content_hash"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    canonical_content_hash: Mapped[str] = mapped_column(String(64))
+    canonical_document_id: Mapped[Optional[str]] = mapped_column(String)
+    entity_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    event_type_hints: Mapped[list[str]] = mapped_column(JSON, default=list)
+    representative_embedding: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(EMBEDDING_DIMENSION).with_variant(JSON, "sqlite"),
+        nullable=True,
+    )
+    embedding_model_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DisclosureGroupMembershipModel(Base):
+    __tablename__ = "disclosure_group_memberships"
+    __table_args__ = (
+        Index("ix_disclosure_group_memberships_document_id", "document_id"),
+        {"schema": "ingestion"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    disclosure_group_id: Mapped[str] = mapped_column(String, index=True)
+    document_id: Mapped[str] = mapped_column(String, index=True)
+    source_tier: Mapped[str] = mapped_column(String(1))
+    reason: Mapped[str] = mapped_column(String(32))
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class EventModel(Base):
     __tablename__ = "events"
     __table_args__ = (
@@ -309,6 +430,7 @@ class EventModel(Base):
     title: Mapped[str] = mapped_column(Text)
     entity_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     document_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    disclosure_group_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     importance: Mapped[Decimal] = mapped_column(Numeric(4, 3))
     urgency: Mapped[str] = mapped_column(String(16))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -501,6 +623,31 @@ class FactCardModel(Base):
     change_reason: Mapped[Optional[str]] = mapped_column(Text)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ImpactAnalysisModel(Base):
+    __tablename__ = "impact_analyses"
+    __table_args__ = (
+        UniqueConstraint("event_id", "version", name="uq_impact_analysis_event_version"),
+        Index("ix_impact_analyses_event_id_created_at", "event_id", "created_at"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16))
+    event_title_snapshot: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)
+    transmission_chains: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    impacts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    macro_assumptions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    watch_items: Mapped[list[str]] = mapped_column(JSON, default=list)
+    generated_by: Mapped[str] = mapped_column(String(100))
+    model_run_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    degraded: Mapped[bool] = mapped_column(Boolean, default=False)
+    supersedes_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class BriefModel(Base):

@@ -21,6 +21,7 @@ from app.events.schemas import (
     get_schema,
     is_mvp_event_type,
 )
+from app.model_gateway.providers import ProviderError
 from app.model_gateway.service import ModelGateway, ModelRequest
 
 ROUTER_SCHEMA_VERSION = "v1"
@@ -149,15 +150,15 @@ class EventRouter:
                 rule_hint_type=hint.event_type,
                 used_fallback=False,
             )
-        except (ValidationError, ValueError, KeyError, TypeError):
+        except (ValidationError, ValueError, KeyError, TypeError, ProviderError):
+            raw = deterministic_route_payload(payload)
+            parsed = RouterOutput.model_validate(raw)
             decision = RouterDecision(
-                decision="reject",
-                event_type=fallback_event_type(text)
-                if not is_mvp_event_type(hint.event_type)
-                else GENERAL_MARKET_NEWS,
-                confidence=min(hint.confidence, 0.45),
-                required_agents=(),
-                reason="router_fallback_on_error",
+                decision=parsed.decision,
+                event_type=parsed.event_type,
+                confidence=parsed.confidence,
+                required_agents=tuple(parsed.required_agents or ()),
+                reason=parsed.reason,
                 model_run_id=None,
                 rule_hint_type=hint.event_type,
                 used_fallback=True,

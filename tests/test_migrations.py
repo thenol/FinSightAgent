@@ -40,6 +40,7 @@ def test_alembic_adopts_complete_legacy_initial_schema(tmp_path) -> None:
             "evidence": None,
             "publishing": None,
             "platform": None,
+            "analysis": None,
         }
     )
     Base.metadata.create_all(engine)

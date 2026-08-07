@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-07-23（评估 Loop 核对）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-05（事件影响分析 Impact Analysis 进入实现）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -11,6 +11,9 @@
 - [x] 完成报告审核、评估和可观测详细设计。
 - [x] 建立 ADR，接受模块化单体、PostgreSQL 真值源和延后复杂基础设施等决策。
 - [-] RSS 采集、条件请求、域名白名单、HTML/PDF 解析和同步服务已实现；MarketMind 风格 Fetcher 工厂、RSS 种子源、robots/限速守卫与 RSSHub 路由已接入；HTML 正文抽取已改为 article/密度择优并清洗脚本噪音（`html_text`，证据 API 展示前 scrub）；修复 RSS 短摘要被 1.0 硬阈值误丢弃的回归 bug（`total_candidate_len < 200` 时保留全部候选）；首个交易所 S 级官方 API 与 OCR 方案仍待确认。
+- [x] Document Intelligence & Indexing 基础（WP-04）已落地：`ParsedDocument`/`DocumentBlock`/`DocumentChunk`/`DisclosureGroup` 领域模型、对应 PostgreSQL 表与 Alembic 迁移；`DocumentParser` 复用 `DocumentBlockReader` 生成结构化块；`SemanticChunker` 按 `event_description`/`financial_impact`/`risk`/`footnote`/`background` 切分；`EventMatcher` 使用 `disclosure_group_id` 作为优先召回信号；`EventResearchPipeline` 在文档入库后自动调用 `DocumentIntelligenceService.process()`。
+- [x] Embedding 生命周期与 pgvector 语义召回（DOC-003）已落地：`EmbeddingRecord` 领域模型与 `ingestion.embedding_records` 表；`EmbeddingService` 支持 `DeterministicEmbeddingProvider`（测试/离线）和 `OpenAIEmbeddingProvider`（生产）；按 `chunk_id` + `model_version` 幂等生成/复用；`DisclosureGroup` 新增 `representative_embedding` 与 `embedding_model_version`；`DisclosureGroupService` 在精确 canonical hash 未命中时，PostgreSQL 路径使用 pgvector `<=>` 余弦距离做 TOP-K 向量召回，SQLite/内存路径回退到应用层 brute-force；Docker Compose 改用 `pgvector/pgvector:pg16` 镜像。剩余：全量重建、蓝绿切换、失败恢复和版本回滚。
+- [x] Hybrid Retrieval 基础（RAG-001/002/003/005 部分）已落地：定义 `RetrievalRequest`/`RetrievedItem`/`CitationCandidate`/`RetrievalTrace` 领域契约，`RetrievalRequest` 新增 `retrieval_mode` 支持 `vector`/`lexical`/`hybrid`，`RetrievedItem` 新增 `backend`/`backend_scores`；`Repository.find_similar_document_chunks()` 支持 PostgreSQL pgvector JOIN 召回与 SQLite/内存 brute-force 降级；`Repository.find_document_chunks_by_keywords()` 支持 PostgreSQL `to_tsvector`/`ts_rank_cd`/GIN 索引与 SQLite/内存 brute-force 降级；`FusionService` 支持 RRF 与 weighted-score 融合、min-max 归一化、chunk_id 去重、来源多样性裁剪；`RetrievalService` 支持 hybrid 模式并行调用 vector/lexical 后走 Fusion。新增 `migrations/versions/20260730_0017_document_chunks_text_search_gin.py`。剩余：Graph/Structured SQL/Time-series 检索路、Query Understanding/Planner、Retrieval Control Plane、高级 Reranker/Cross-encoder。
 
 ## 2. 工程基础
 
@@ -42,17 +45,17 @@
 
 - [-] HTML 段落及文本型 PDF 的页码、0-based 偏移、归一化 BBox、原文一致性校验和 parser 版本绑定已完成；表格、OCR、PDF Revision 接入和实际来源验证仍待完成。
 - [-] Source 持久化、RSS 手动/定时同步、JWT 登录、角色校验、审计查询和用户 provisioning 命令已完成；`crawl_interval_seconds`、source worker（APScheduler 热重扫）、`ingest_runs` 与 sync-all/runs API 已落地；生产密钥、显式增量迁移和完整审核 API 仍待完成。
-- [-] 实现 ClaimNormalizer、ClaimMatcher 和 ConflictDetector；规范化、受控谓词、事实指纹、来源独立性、六类冲突与严重度已完成，EvidencePolicyService 决策与 claim_evidence/conflicts 表已落库，claim 指纹去重已生效。
+- [x] 实现 ClaimNormalizer、ClaimMatcher 和 ConflictDetector；规范化、受控谓词、事实指纹、来源独立性、六类冲突与严重度已完成，EvidencePolicyService 决策与 claim_evidence/conflicts 表已落库，claim 指纹去重已生效；**EvidenceService 在注册 Claim 后调用 ConflictDetector，critical 冲突更新双方 Claim 为 `conflicted` 并持久化 `ConflictRecord`，`FactCardService` 对冲突 Claim 生成 `needs_review` 报告及 `CLAIM_CONFLICT` 审核任务**。
 - [x] 实现确定性的 EvidencePolicyService。
 - [x] 接入 LangGraph Checkpointer 和 Blackboard Repository。
 - [-] 实现 Supervisor、预算账本、节点重试和局部重跑；LangGraph 图编排、确定性 Supervisor 路由、Blackboard 字段填充、6 维预算账本（reserve/settle/release 软硬阈值+节点上限）、节点幂等键 `workflow_id+node+input_hash`（重放复用不重复副作用）与 Blackboard 字段写入所有权乐观锁已完成；**节点重试退避**（`MODEL_TRANSIENT` 最多 2 次、`OUTPUT_SCHEMA_INVALID` 1 次、attempt_no 递增）与**局部重跑失效传播**（`invalidation.py` 映射表 + `invalidate_node_attempts` + `WorkflowService.resume`）已完成；2026-07-23：`POST /events/{id}/workflows` 默认 `execute=true` 同步跑图，并新增 `POST /workflows/{id}/run`（pending→执行）与 Admin「启动运行」；新增高重要度事件自动进入工作流：`EventResearchPipeline` 在创建事件后，若 `importance >= FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD`（默认 0.7）且非 dormant/archived，自动创建 `pending` workflow run（trigger_id=auto），由 worker 或 Admin 启动执行。
-- [x] 接入 Fact Checker、Company Analyst、Skeptic 和 Synthesizer（四个 Agent 节点已实化，输出经 Pydantic Schema 校验，区分事实/假设/推论，数值走工具）；2026-07-23：LLM 密钥解密失败时回退 DeterministicProvider 并审计，避免本机跑图卡死。
+- [x] 接入 Fact Checker、Company Analyst、Skeptic 和 Synthesizer（四个 Agent 节点已实化，输出经 Pydantic Schema 校验，区分事实/假设/推论，数值走工具）；2026-07-23：LLM 密钥解密失败时回退 DeterministicProvider 并审计，避免本机跑图卡死；**Company/Skeptic/Synthesizer 节点现在优先解析 LLM `response.payload` 到对应 Pydantic Schema，解析失败再回退原有确定性输出**。
 - [x] 实现 Agent 工具白名单、`as_of` 校验和调用审计（ToolGateway 按 DD-50 §12 鉴权、as_of 越界拒绝、正文当不可信数据隔离、tool_calls 审计表）。
 - [x] 实现事实卡片降级及人工审核恢复（预算硬限有 verified Claim → `degraded_mode=fact_only` 成功；否则 `waiting_review` + workflow ReviewTask；审核 approve/return/downgrade_to_fact_card/reject 可恢复或取消；预算 `adjust` 贷记）。
 
 ## 5. 报告、审核与产品输出
 
-- [x] 实现 ReportAssembler、CitationResolver 和 GuardrailEngine（ReportAssembler 从 Blackboard 投影 report-draft，摘要数字来自 verified Claim、核心判断关联 Analysis ID、fact_only 降级事实卡片；GuardrailEngine 6 条规则带 pass/fail/warn 与修复建议；CitationResolver 按角色与来源等级返回 full/excerpt/entry）。
+- [x] 实现 ReportAssembler、CitationResolver 和 GuardrailEngine（ReportAssembler 从 Blackboard 投影 report-draft，摘要数字来自 verified Claim、核心判断关联 Analysis ID、fact_only 降级事实卡片；GuardrailEngine 6 条规则带 pass/fail/warn 与修复建议；CitationResolver 按角色与来源等级返回 full/excerpt/entry）；**Guardrail 未通过且 `review_required=true` 时工作流进入 `waiting_review` 并创建 workflow 审核任务，阻断性失败标记 `failed`；通过后调用 `FactCardService.create_from_draft()` 持久化完整报告快照，fact_only 降级也会生成事实卡片**。
 - [-] 已实现事实卡片审核、发布、撤回状态转换、当前版本查询及角色分离；历史替代版本、批量审核和完整审核中心仍待完成。
 - [-] Review RBAC 已覆盖 reviewer/publisher/admin；职责分离的组织级策略和异常审批仍待完成。
 - [x] 实现每日 Top 10 简报和稳定重放（BriefService 按 brief_score 排序，同 Event 最新版本、同公司最多 2 条（critical 例外）、保存候选集/分数/规则版本/顺序不调 Agent；GET /api/v1/briefs/daily）。
@@ -61,7 +64,7 @@
 
 ## 6. 评估与上线准备
 
-- [x] 建立单元、API、Repository、消息、Revision、聚类、RSS、PDF、认证、审核、Agent、工具网关、预算、幂等、Blackboard、报告装配、Guardrail、每日简报、持久化代理、迁移、离线评估、安全基线、节点重试、工作流降级与恢复、Fetcher/种子源/守卫、管理后台 API、LLM 配置、来源调度等测试；`pytest --collect-only` 当前 **338** 项（2026-07-23，含 `tests/test_workflow_api.py`、新增 `tests/test_workflow_auto_trigger.py` 与 `tests/test_admin_metrics.py`）；`tests/conftest.py` 全局强制 `FINSIGHT_REPOSITORY=memory` 并默认关闭工作流自动触发，避免本机 postgresql 环境让 `create_app()` API 测试假红。
+- [x] 建立单元、API、Repository、消息、Revision、聚类、RSS、PDF、认证、审核、Agent、工具网关、预算、幂等、Blackboard、报告装配、Guardrail、每日简报、持久化代理、迁移、离线评估、安全基线、节点重试、工作流降级与恢复、Fetcher/种子源/守卫、管理后台 API、LLM 配置、来源调度、Document Parser、Semantic Chunker、Disclosure Group、Pipeline 文档智能接入、Embedding 生命周期与语义去重、pgvector 语义召回、Hybrid Retrieval 向量召回与过滤等测试；`uv run pytest` 当前 **394 passed，1 skipped**（2026-07-30，新增 `tests/test_fusion.py` 与 `tests/test_retrieval.py` hybrid 召回用例）；`tests/conftest.py` 全局强制 `FINSIGHT_REPOSITORY=memory` 并默认关闭工作流自动触发，避免本机 postgresql 环境让 `create_app()` API 测试假红。
 - [x] Ruff、JSON 语法、Markdown 链接和 Compose 配置检查通过。
 - [x] 完成 Uvicorn `/health` 烟雾测试。
 - [x] 建立五类事件标注集（29 条正/反/边界样本）与离线评估任务（Assessor 跑分类/实体/key_fields/引用四指标，当前标注集基线全部 PASS：分类 100%、实体 100%、字段召回 100%、引用 100%）。
@@ -106,6 +109,10 @@
 
 详细分析、优先级、建议方案和完成条件见[改进项 Backlog](./08-improvement-backlog.md)。当前需要纳入后续排期的重点：
 
+不受当前交付范围限制的金融智能平台目标、能力域和建设依赖见
+[平台待开发清单](./10-platform-development-backlog.md)；后续平台方案以该清单为长期规划基线，
+不因 MVP 或当前数据规模降低目标架构标准。
+
 - [-] P0：Alembic 已覆盖 MVP 表与迁移 parity；DD-30 §12 跨域/无物理 FK 清单与只读孤儿巡检已落地（CI memory `--fail-on-findings`）；§13 查询计划评审 + `ix_events_occurred_at_id`；§14 MVP ER 图（32 表、逻辑引用）；同 schema 物理 FK 可选补齐仍待完成（见 IMP-010）。
 - [-] P0：PostgreSQL 事务 Repository、Outbox/Inbox 已实现；生产 Compose 集成演练待可用 Docker daemon。
 - [-] P0：已完成错误信封、Request ID、请求 Hash、基础 RBAC、用户 provisioning、审计查询和报告状态转换；事件/报告/来源/`ingest_runs`/LLM providers 游标分页与过滤白名单已落地；OpenAPI 已含 DD-00 ErrorEnvelope、共享 Error* 组件，**全部写路径**（含 create workflow）已挂 `$ref` 错误响应；新增 `GET /api/v1/admin/metrics` 运营指标端点，聚合工作流成功率、模型调用成本/延迟、来源健康、人工审核率、死信/Outbox、用户与引用完整率（claims with evidence / total claims）；完整审核 API 仍待完成。
@@ -136,3 +143,50 @@
 - 任务范围变化时先更新需求、详细设计或 ADR，再调整清单。
 - 部分实现使用 `[-]`，并在同一项说明剩余工作。
 - 不把“已编写设计”标记为“已实现功能”。
+
+## 11. 下一交付批次：事件影响分析（Impact Analysis）
+
+目标：让系统能对宏观/重大事件做经济金融影响传导分析，并以图+表形式展现，例如“美联储加息 25BP”→ 影响链 → 银行/地产/成长股等板块方向与强度。
+
+### 11.1 后端
+
+- [x] 修复 `DefaultReviewerAgent.operation` 与 `LLM_AGENT_KEYS` 绑定 key 不一致 bug。
+- [x] 扩展事件类型词表：新增 `macro_policy`（利率决策/货币政策），支持加息/降息/FOMC/央行/LPR/存款准备金率等关键词，并添加对应 key_fields 抽取。
+- [x] 新增 `ImpactAnalysis` 领域模型、`impact_analyses` 表与 Alembic 迁移，版本链挂在 Event 上。
+- [x] 新增 `app/analysis/schemas.py`：版本化 `ImpactAnalysisOutput`（transmission_chains / impacts / macro_assumptions / watch_items / summary）。
+- [x] 新增 `ImpactAnalystAgent`（operation=`impact_analysis`）与 `ImpactAnalysisService`；LLM 失败时降级为规则模板输出并标记 `degraded=true`。
+- [x] 新增 API：`POST /api/v1/events/{id}/impact-analysis`、`GET .../impact-analysis`、按版本列表查询。
+- [x] `FactCardService` 在事实卡片发布（`published`）后自动为高重要度事件生成影响分析：
+  - 接入点覆盖 `create`（claim 已 verified 直接 published）、`create_from_draft`（workflow 降级为 fact_only 直接 published）和 `transition`（approved→published）。
+  - 触发条件：`FINSIGHT_AUTO_IMPACT_ANALYSIS_ENABLED=true`（默认）、事件 `importance >= FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD`（默认 0.7）、事件非 `dormant`/`archived`、且该事件尚无影响分析。
+  - PostgreSQL 环境下写入 Outbox（`impact_analysis.requested.v1`），由独立 `impact-analysis` worker 异步消费生成；内存/测试环境下保持同步生成。
+  - 生成失败被吞掉，不阻塞报告发布；异步路径支持指数退避与死信。
+- [x] 新增 `ImpactAnalysisWorker` 与 `uv run python -m app.worker impact-analysis` 命令。
+- [x] 修复 `LlmAgentBindingRequest` 的 `agent_key` pattern 未包含 `impact_analysis` / `default_reviewer` 的 bug。
+- [x] 优化 `ImpactAnalystAgent` system prompt：补充完整输出 schema、枚举值、约束与中文要求，提升真实 LLM 输出质量。
+- [x] 后端测试覆盖：macro_policy 分类、schema 校验、版本化、降级、API 权限、自动触发条件与防重复、低重要度/禁用/失败路径、异步 worker 消费与死信、API pending 202 状态。
+
+### 11.2 前端
+
+- [x] 引入 `echarts`。
+- [x] 事件详情页新增「影响分析」面板：
+  - 传导图：echarts `graph`（force layout），节点颜色映射利好/利空，节点大小映射强度，边标签显示传导机制。
+  - 板块影响表：对象/类型/方向/强度/时域/置信度/依据，按影响强度排序。
+  - 顶部 summary + watch_items + degraded 提示。
+- [x] 空状态提示：说明系统会在事实卡片发布后自动为高重要度事件生成影响分析，并提供手动生成按钮。
+- [x] 异步生成中状态：当后端返回 HTTP 202 `{"status":"pending"}` 时显示「系统正在自动生成影响分析，请稍候…」并每 3 秒轮询。
+- [x] 前端测试：ImpactAnalysis → echarts nodes/edges 的纯函数转换测试。
+
+### 11.3 文档
+
+- [x] 新增 `docs/design/schemas/impact-analysis-output.schema.json`。
+- [-] 更新 `AGENTS.md` 如模块约定有变化（模块边界未变，无需更新）。
+
+### 11.4 验证
+
+- [x] `uv run pytest -q` 全绿（新增 `tests/test_impact_analysis_worker.py` 5 个用例；当前 `tests/test_impact_analysis.py` 11 个用例 + `tests/test_impact_analysis_auto_trigger.py` 10 个用例）。
+- [x] `uv run ruff check .` 全绿。
+- [x] `cd web && npm run build && npm test -- --run` 全绿（echarts 引入后构建成功）。
+- [x] 手动验证：ingest“美联储加息 25BP”样例 → 事件分类为 `macro_policy` → FactCard published 后自动生成影响分析 → 前端展示传导图与板块影响表。
+
+完成条件：宏观事件可进入研究管道；影响分析可独立版本化生成；前端能用图+表展示事件对股市、板块、宏观变量的传导影响；所有变更通过测试与 lint。

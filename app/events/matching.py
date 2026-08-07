@@ -49,12 +49,24 @@ class EventMatcher:
         self.repository = repository
 
     def find_match(
-        self, document: Document, candidate_event_type: str, candidate_key_fields: dict[str, Any]
+        self,
+        document: Document,
+        candidate_event_type: str,
+        candidate_key_fields: dict[str, Any],
+        *,
+        disclosure_group_id: Optional[str] = None,
     ) -> tuple[Optional[Event], MatchFeatures, Optional[Event]]:
         """返回 (匹配到的事件或None, 特征, 最佳候选)。"""
         candidates = self._recall(document, candidate_event_type)
         if not candidates:
             return None, self._empty_features(), None
+
+        # 同一 DisclosureGroup 内优先合并，不受阈值限制。
+        if disclosure_group_id:
+            for candidate in candidates:
+                if candidate.disclosure_group_id == disclosure_group_id:
+                    features = self._score(document, candidate, candidate_key_fields)
+                    return candidate, features, candidate
 
         best_event: Optional[Event] = None
         best_features: Optional[MatchFeatures] = None

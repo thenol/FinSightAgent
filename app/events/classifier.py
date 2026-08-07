@@ -44,6 +44,8 @@ _PERIOD = re.compile(
 )
 # 比例：减持比例"不超过5%"、"计划减持6%"
 _RATIO = re.compile(r"(?:不超过|拟减持|减持|比例|占[^，。；]{0,20}?)\s*(\d+\.?\d*)\s*%")
+# 日期：YYYY年MM月DD日 或 YYYY-MM-DD
+_DATE = re.compile(r"(\d{4})\s*[-年]\s*(\d{1,2})\s*[-月]\s*(\d{1,2})\s*日?")
 _COUNTERPARTY = re.compile(
     r"与(?P<value>[^，。；]{2,50}?)(?:签订|订立|达成)(?:了)?[^，。；]{0,20}?合同"
 )
@@ -110,6 +112,8 @@ class EventClassifier:
         )
 
     def _extract_fields(self, schema: EventSchema, text: str) -> dict[str, Any]:
+        if schema.event_type == "macro_policy":
+            return self._extract_macro_policy(text)
         if schema.event_type == "earnings_guidance":
             return self._extract_earnings_guidance(text)
         if schema.event_type == "major_contract":
@@ -121,6 +125,52 @@ class EventClassifier:
         if schema.event_type == "regulatory_penalty":
             return self._extract_regulatory_penalty(text)
         return {}
+
+    def _extract_macro_policy(self, text: str) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        # 优先匹配更具体的机构名称，避免“央行”被误匹配到所有含央行字样的文本。
+        policy_bodies = (
+            ("Federal Reserve", "federal_reserve"),
+            ("美联储", "federal_reserve"),
+            ("FOMC", "federal_reserve"),
+            ("中国人民银行", "pboc"),
+            ("人民银行", "pboc"),
+            ("欧洲央行", "ecb"),
+            ("ECB", "ecb"),
+            ("英格兰银行", "boe"),
+            ("央行", "pboc"),
+        )
+        for name, code in policy_bodies:
+            if name in text:
+                fields["policy_body"] = code
+                break
+
+        if "加息" in text or "rate hike" in text.lower():
+            fields["rate_decision"] = "hike"
+        elif "降息" in text or "rate cut" in text.lower():
+            fields["rate_decision"] = "cut"
+        elif (
+            "维持" in text
+            or "不变" in text
+            or "hold" in text.lower()
+            or "unchanged" in text.lower()
+        ):
+            fields["rate_decision"] = "hold"
+
+        bp_match = re.search(r"(\d+\.?\d*)\s*(个基点|bp|BPS)", text, re.IGNORECASE)
+        if bp_match:
+            fields["rate_change_bp"] = self._decimal(bp_match.group(1))
+
+        target_rate = re.search(r"(\d+\.?\d*)%\s*[-~至]\s*(\d+\.?\d*)%", text)
+        if target_rate:
+            fields["target_rate"] = f"{target_rate.group(1)}%-{target_rate.group(2)}%"
+
+        date_match = _DATE.search(text)
+        if date_match:
+            year, month, day = date_match.group(1), date_match.group(2), date_match.group(3)
+            fields["effective_date"] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+        return fields
 
     def _extract_earnings_guidance(self, text: str) -> dict[str, Any]:
         fields: dict[str, Any] = {}

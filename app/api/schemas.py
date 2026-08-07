@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain import LLM_AGENT_KEYS
+
 
 class IngestDocumentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -120,6 +122,18 @@ class ModelRunResponse(BaseModel):
     created_at: Optional[datetime]
 
 
+class ConflictResponse(BaseModel):
+    id: str
+    event_id: str
+    conflict_type: str
+    severity: str
+    status: str
+    summary: str
+    claim_ids: list[str]
+    resolution: Optional[str]
+    version: int
+
+
 class SourceResponse(BaseModel):
     id: str
     code: str
@@ -153,6 +167,15 @@ class IngestRunResponse(BaseModel):
     quarantined: int
     message: Optional[str]
     request_id: Optional[str]
+
+
+class SourceHealthResponse(BaseModel):
+    source: SourceResponse
+    health: str = Field(description="healthy | degraded | disabled")
+    consecutive_failures: int
+    last_success_at: Optional[datetime]
+    last_run: Optional[IngestRunResponse]
+    recent_runs: list[IngestRunResponse]
 
 
 class LlmProviderCreateRequest(BaseModel):
@@ -195,9 +218,7 @@ class LlmProviderRotateKeyRequest(BaseModel):
 class LlmAgentBindingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_key: str = Field(
-        pattern="^(fact_check|company_analysis|skeptic_review|synthesize)$"
-    )
+    agent_key: str = Field(pattern="^(" + "|".join(sorted(LLM_AGENT_KEYS)) + ")$")
     provider_id: Optional[str] = None
     model_override: Optional[str] = Field(default=None, max_length=120)
 
@@ -247,6 +268,22 @@ class ReviewTaskResponse(BaseModel):
     blackboard_version: Optional[int] = None
     created_at: Optional[datetime]
     decided_at: Optional[datetime]
+
+
+class MergeReviewTaskResponse(BaseModel):
+    id: str
+    document_id: str
+    candidates: list[str]
+    status: str
+    decision: Optional[str]
+    reviewer_id: Optional[str]
+    decided_at: Optional[datetime]
+    created_at: Optional[datetime]
+
+
+class MergeReviewDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(merge|new_event|skip)$")
+    comment: str = Field(min_length=1, max_length=2000)
 
 
 class WorkflowCreateRequest(BaseModel):
@@ -378,6 +415,49 @@ class FactCardResponse(BaseModel):
     change_reason: Optional[str] = None
     content: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class TransmissionStepResponse(BaseModel):
+    step: int
+    description: str
+
+
+class TransmissionChainResponse(BaseModel):
+    chain_id: str
+    mechanism: str
+    steps: list[TransmissionStepResponse]
+    confidence: float
+
+
+class ImpactTargetResponse(BaseModel):
+    target_type: str
+    target_name: str
+    target_code: Optional[str] = None
+    direction: str
+    magnitude: str
+    horizon: str
+    confidence: float
+    rationale: str
+    chain_refs: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+
+
+class ImpactAnalysisResponse(BaseModel):
+    id: str
+    event_id: str
+    version: int
+    status: str
+    event_title_snapshot: str
+    summary: str
+    transmission_chains: list[TransmissionChainResponse]
+    impacts: list[ImpactTargetResponse]
+    macro_assumptions: list[str]
+    watch_items: list[str]
+    generated_by: str
+    model_run_id: Optional[str] = None
+    degraded: bool
+    supersedes_id: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class BriefEntryResponse(BaseModel):

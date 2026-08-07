@@ -10,7 +10,7 @@ import { EvidenceRail } from "@/features/EvidenceRail";
 import { useToast } from "@/components/Toast";
 import { apiGet, apiPost } from "@/lib/api";
 import { asList, decisionNames, formatDate, slaClass, taskAge } from "@/lib/format";
-import type { EventDetail, Report, ReviewTask, Workflow } from "@/types/api";
+import type { Conflict, EventDetail, Report, ReviewTask, Workflow } from "@/types/api";
 
 export function ReviewsPage() {
   const { taskId } = useParams();
@@ -152,6 +152,12 @@ function ReviewDetailPage({ taskId }: { taskId: string }) {
           report: await apiGet<Report>(`/api/v1/reports/${encodeURIComponent(task.object_id)}`),
         };
       }
+      if (task.object_type === "claim_conflict") {
+        return {
+          kind: "claim_conflict" as const,
+          conflict: await apiGet<Conflict>(`/api/v1/conflicts/${encodeURIComponent(task.object_id)}`),
+        };
+      }
       return {
         kind: "workflow" as const,
         workflow: await apiGet<Workflow>(`/api/v1/workflows/${encodeURIComponent(task.object_id)}`),
@@ -164,7 +170,9 @@ function ReviewDetailPage({ taskId }: { taskId: string }) {
       ? objectQuery.data.report.event_id
       : objectQuery.data?.kind === "workflow"
         ? objectQuery.data.workflow.event_id
-        : null;
+        : objectQuery.data?.kind === "claim_conflict"
+          ? objectQuery.data.conflict.event_id
+          : null;
 
   const eventQuery = useQuery({
     queryKey: ["event", eventId],
@@ -260,10 +268,57 @@ function ReviewDetailPage({ taskId }: { taskId: string }) {
               </p>
             </div>
           ) : null}
+          {objectQuery.data?.kind === "claim_conflict" ? (
+            <div>
+              <h4>冲突摘要</h4>
+              <p style={{ whiteSpace: "pre-wrap" }}>{objectQuery.data.conflict.summary}</p>
+              <p className="muted">
+                类型 <StatusBadge value={objectQuery.data.conflict.conflict_type} /> · 严重度{" "}
+                <StatusBadge value={objectQuery.data.conflict.severity} /> · 状态{" "}
+                <StatusBadge value={objectQuery.data.conflict.status} />
+              </p>
+            </div>
+          ) : null}
           <div className="claim-group" style={{ marginTop: "1rem" }}>
-            {groups.map((status) => {
-              const group = claims.filter((claim) => claim.status === status);
-              return (
+            {objectQuery.data?.kind === "claim_conflict"
+              ? (() => {
+                  const conflict = objectQuery.data.conflict;
+                  const conflictClaims = claims.filter((claim) =>
+                    conflict.claim_ids.includes(claim.id),
+                  );
+                  return conflictClaims.length ? (
+                    <div>
+                      <h4>
+                        <StatusBadge value="conflicted" />（{conflictClaims.length}）
+                      </h4>
+                      {conflictClaims.map((claim) => (
+                        <article key={claim.id} className="claim-card">
+                          <strong>{claim.subject_text}</strong> · {claim.predicate}
+                          <div className="muted mono">{JSON.stringify(claim.object_value)}</div>
+                          <button
+                            type="button"
+                            className="button ghost"
+                            onClick={() =>
+                              setActiveClaim((current) => (current === claim.id ? null : claim.id))
+                            }
+                          >
+                            {activeClaim === claim.id
+                              ? "收起证据"
+                              : `展开证据（${claim.evidence_ids.length}）`}
+                          </button>
+                          {activeClaim === claim.id ? (
+                            <EvidenceRail evidenceIds={claim.evidence_ids || []} />
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState>未加载到相关 Claim</EmptyState>
+                  );
+                })()
+              : groups.map((status) => {
+                  const group = claims.filter((claim) => claim.status === status);
+                  return (
                 <div key={status}>
                   <h4>
                     <StatusBadge value={status} />（{group.length}）
