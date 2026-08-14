@@ -29,7 +29,7 @@ class ToolArgumentError(ValueError):
     """工具参数校验失败。"""
 
 
-# Agent -> 允许的工具集合（DD-50 §12）。Synthesizer 只能读，不能搜索。
+# Agent -> 允许的工具集合（DD-50 §12、DD-80）。Synthesizer 只能读，不能搜索。
 AGENT_TOOL_WHITELIST: dict[str, frozenset[str]] = {
     "fact_checker": frozenset(
         {"search_official_filings", "get_document_blocks", "submit_fact_check_result"}
@@ -39,6 +39,12 @@ AGENT_TOOL_WHITELIST: dict[str, frozenset[str]] = {
     ),
     "skeptic": frozenset({"get_evidence", "get_financial_statements", "find_similar_events"}),
     "synthesizer": frozenset({"read_blackboard", "resolve_citation"}),
+    "planner": frozenset({"read_blackboard"}),
+    "retriever": frozenset({"planned_retrieval"}),
+    "impact_analyst": frozenset({"get_financial_statements", "find_similar_events"}),
+    "market_analyst": frozenset({"get_financial_statements", "find_similar_events"}),
+    "industry_analyst": frozenset({"get_financial_statements", "find_similar_events"}),
+    "regulatory_analyst": frozenset({"get_financial_statements", "find_similar_events"}),
 }
 
 # 禁止任何 Agent 调用的工具（显式清单，便于审计与测试）

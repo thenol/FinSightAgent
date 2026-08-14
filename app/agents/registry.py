@@ -100,6 +100,45 @@ DEFAULT_REGISTRATIONS: list[AgentRegistration] = [
         ],
         budget_profile="mvp_standard",
     ),
+    AgentRegistration(
+        agent_key="market_analyst",
+        version="1.0.0",
+        display_name="市场情绪与流动性分析 Agent",
+        capabilities=["market_analyze"],
+        input_schema_refs=["event-snapshot/1.0.0", "fact-check-snapshot/1.0.0"],
+        output_schema_ref="market-analysis-output/1.0.0",
+        allowed_tools=[
+            "get_financial_statements",
+            "find_similar_events",
+        ],
+        budget_profile="mvp_standard",
+    ),
+    AgentRegistration(
+        agent_key="industry_analyst",
+        version="1.0.0",
+        display_name="产业链与行业分析 Agent",
+        capabilities=["industry_analyze"],
+        input_schema_refs=["event-snapshot/1.0.0", "fact-check-snapshot/1.0.0"],
+        output_schema_ref="industry-analysis-output/1.0.0",
+        allowed_tools=[
+            "get_financial_statements",
+            "find_similar_events",
+        ],
+        budget_profile="mvp_standard",
+    ),
+    AgentRegistration(
+        agent_key="regulatory_analyst",
+        version="1.0.0",
+        display_name="政策与监管分析 Agent",
+        capabilities=["regulatory_analyze"],
+        input_schema_refs=["event-snapshot/1.0.0", "fact-check-snapshot/1.0.0"],
+        output_schema_ref="regulatory-analysis-output/1.0.0",
+        allowed_tools=[
+            "get_financial_statements",
+            "find_similar_events",
+        ],
+        budget_profile="mvp_standard",
+    ),
 ]
 
 

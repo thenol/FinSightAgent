@@ -165,11 +165,18 @@ def test_tool_gateway_sanitizes_sensitive_arguments_in_audit() -> None:
 
 
 def test_whitelist_covers_all_four_agents() -> None:
+    # 固定工作流四个 Agent + WP-08 动态运行时新增的 Specialist Agent
     assert set(AGENT_TOOL_WHITELIST) == {
         "fact_checker",
         "company_analyst",
         "skeptic",
         "synthesizer",
+        "planner",
+        "retriever",
+        "impact_analyst",
+        "market_analyst",
+        "industry_analyst",
+        "regulatory_analyst",
     }
     # Synthesizer 不能搜索、不能查行情、不能写业务数据
     synthesizer_tools = AGENT_TOOL_WHITELIST["synthesizer"]

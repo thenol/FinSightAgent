@@ -79,6 +79,9 @@ class DynamicWorkflowService:
             "skeptic": self._execute_skeptic,
             "synthesizer": self._execute_synthesizer,
             "impact_analyst": self._execute_impact_analyst,
+            "market_analyst": self._execute_market_analyst,
+            "industry_analyst": self._execute_industry_analyst,
+            "regulatory_analyst": self._execute_regulatory_analyst,
         }
 
     # --- public lifecycle ---
@@ -439,6 +442,27 @@ class DynamicWorkflowService:
             "degraded": analysis.degraded,
         }
 
+    def _execute_market_analyst(
+        self, task: ResearchTask, inputs: dict[str, Any], run: WorkflowRun
+    ) -> dict[str, Any]:
+        return self._fallback_generic_analysis(
+            inputs, run, analysis_ref="market_analysis", focus="市场情绪与流动性"
+        )
+
+    def _execute_industry_analyst(
+        self, task: ResearchTask, inputs: dict[str, Any], run: WorkflowRun
+    ) -> dict[str, Any]:
+        return self._fallback_generic_analysis(
+            inputs, run, analysis_ref="industry_analysis", focus="产业链与行业传导"
+        )
+
+    def _execute_regulatory_analyst(
+        self, task: ResearchTask, inputs: dict[str, Any], run: WorkflowRun
+    ) -> dict[str, Any]:
+        return self._fallback_generic_analysis(
+            inputs, run, analysis_ref="regulatory_analysis", focus="政策与监管影响"
+        )
+
     # --- fallback outputs for tests / no-LLM paths ---
 
     def _fallback_company_analysis(
@@ -506,6 +530,28 @@ class DynamicWorkflowService:
             "macro_assumptions": [],
             "watch_items": [],
             "degraded": True,
+        }
+
+    def _fallback_generic_analysis(
+        self,
+        inputs: dict[str, Any],
+        run: WorkflowRun,
+        *,
+        analysis_ref: str,
+        focus: str,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": "1.0.0",
+            "analysis_ref": analysis_ref,
+            "status": "partial",
+            "focus": focus,
+            "direction": "uncertain",
+            "key_findings": [],
+            "assumptions": [],
+            "risks": [],
+            "missing_data": ["dynamic_workflow_no_llm"],
+            "confidence": 0.4,
+            "confidence_factors": [],
         }
 
     def _tool_gateway(self):

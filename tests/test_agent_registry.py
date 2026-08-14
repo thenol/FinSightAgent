@@ -65,4 +65,7 @@ def test_default_registrations_cover_required_agents():
         "planner",
         "retriever",
         "impact_analyst",
+        "market_analyst",
+        "industry_analyst",
+        "regulatory_analyst",
     }.issubset(keys)
