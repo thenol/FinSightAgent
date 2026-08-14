@@ -142,6 +142,7 @@ LLM_AGENT_KEYS = frozenset(
         "synthesize",
         "default_reviewer",
         "impact_analysis",
+        "plan",
     }
 )
 

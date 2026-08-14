@@ -9,8 +9,35 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from app.domain import ResearchPlan, ResearchTask
+from app.model_gateway.service import ModelRequest
 from app.platform.ids import new_id
+
+
+class TaskAdjustment(BaseModel):
+    """LLM 对单个任务的建议调整。"""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=80)
+    action: str = Field(pattern="^(add|modify|remove)$")
+    agent_key: Optional[str] = None
+    description: Optional[str] = None
+    dependencies: Optional[list[str]] = None
+    required: Optional[bool] = None
+    input_fields: Optional[list[str]] = None
+    output_field: Optional[str] = None
+    reason: str = Field(default="", max_length=500)
+
+
+class PlanAdjustmentOutput(BaseModel):
+    """LLM Planner 输出 Schema：只允许在规则模板基础上做受控调整。"""
+
+    model_config = ConfigDict(extra="forbid")
+    objective_refined: Optional[str] = Field(default=None, max_length=300)
+    adjustments: list[TaskAdjustment] = Field(default_factory=list)
+    reasoning: str = Field(default="", max_length=1000)
 
 # 问题类型 -> 默认任务 DAG 模板
 DEFAULT_TEMPLATES: dict[str, list[dict[str, Any]]] = {
@@ -308,12 +335,91 @@ class ResearchPlanner:
         event_id: Optional[str] = None,
     ) -> list[ResearchTask]:
         """调用 planner Agent 对任务列表做增删改建议，并在 Schema 内应用。"""
-        # MVP：仅允许 LLM 调整任务描述和可选标志，禁止新增未注册 Agent、禁止修改依赖。
-        # 真实 LLM 调用后续接入；当前返回原任务列表，保持可测试性。
-        return [
-            replace(t, description=t.description + f" [{question_type}]")
-            for t in tasks
-        ]
+        if self.model_gateway is None:
+            return tasks
+
+        payload = {
+            "question": question,
+            "question_type": question_type,
+            "event_id": event_id,
+            "candidate_tasks": [
+                {
+                    "name": t.name,
+                    "agent_key": t.agent_key,
+                    "description": t.description,
+                    "dependencies": t.dependencies,
+                    "required": t.required,
+                    "input_fields": t.input_fields,
+                    "output_field": t.output_field,
+                }
+                for t in tasks
+            ],
+        }
+        try:
+            response = self.model_gateway.invoke(
+                ModelRequest(
+                    operation="plan",
+                    input_schema_version="v1",
+                    output_schema_version="v1",
+                    payload=payload,
+                    system_prompt=self._planner_system_prompt(),
+                )
+            )
+            parsed = PlanAdjustmentOutput.model_validate(response.payload)
+        except Exception:
+            # LLM 调用或 Schema 解析失败时回退到规则模板，不阻塞计划生成
+            return tasks
+
+        task_map: dict[str, ResearchTask] = {t.name: t for t in tasks}
+        for adjustment in parsed.adjustments:
+            if adjustment.action == "modify" and adjustment.name in task_map:
+                task = task_map[adjustment.name]
+                # 只允许修改 description / required；依赖和 agent_key 由规则保证
+                task_map[task.name] = replace(
+                    task,
+                    description=adjustment.description or task.description,
+                    required=(
+                        adjustment.required if adjustment.required is not None else task.required
+                    ),
+                )
+            elif adjustment.action == "add":
+                # 新增任务必须来自已注册 Agent 且名称不冲突
+                if adjustment.agent_key is None:
+                    continue
+                if self.registry is None or self.registry.get(adjustment.agent_key) is None:
+                    continue
+                if adjustment.name in task_map:
+                    continue
+                task_map[adjustment.name] = ResearchTask(
+                    id=new_id("rts"),
+                    plan_id=task_map[next(iter(task_map))].plan_id if task_map else "",
+                    name=adjustment.name,
+                    agent_key=adjustment.agent_key,
+                    description=adjustment.description or "",
+                    dependencies=list(adjustment.dependencies or []),
+                    required=adjustment.required if adjustment.required is not None else True,
+                    status="pending",
+                    input_fields=list(adjustment.input_fields or []),
+                    output_field=adjustment.output_field or adjustment.name,
+                    output_schema=self._output_schema_for_agent(adjustment.agent_key),
+                    created_at=datetime.now(timezone.utc),
+                )
+            elif adjustment.action == "remove" and adjustment.name in task_map:
+                # 不允许移除必需任务
+                if not task_map[adjustment.name].required:
+                    del task_map[adjustment.name]
+
+        return list(task_map.values())
+
+    @staticmethod
+    def _planner_system_prompt() -> str:
+        return (
+            "你是一名金融研究规划专家。根据用户问题和默认任务模板，"
+            "输出对任务列表的受控调整建议。只返回合法 JSON。"
+            "adjustments 中每个元素包含 name、action（add/modify/remove）、"
+            "可选 agent_key/description/dependencies/required/input_fields/output_field/reason。"
+            "禁止引入未注册 Agent，禁止将必需任务设为可选，禁止产生循环依赖。"
+        )
 
     def _derive_objective(self, question: str, question_type: str) -> str:
         type_label = {

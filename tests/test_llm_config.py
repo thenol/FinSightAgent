@@ -208,7 +208,7 @@ def test_admin_llm_api_crud_and_binding(tmp_path, monkeypatch) -> None:
         )
         assert bulk.status_code == 200
         bulk_items = bulk.json()["data"]
-        assert len(bulk_items) == 6
+        assert len(bulk_items) == 7
         assert {item["agent_key"] for item in bulk_items} == {
             "fact_check",
             "company_analysis",
@@ -216,6 +216,7 @@ def test_admin_llm_api_crud_and_binding(tmp_path, monkeypatch) -> None:
             "synthesize",
             "default_reviewer",
             "impact_analysis",
+            "plan",
         }
         assert all(item["provider_id"] == provider_id for item in bulk_items)
 

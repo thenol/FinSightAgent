@@ -110,13 +110,14 @@ class DynamicWorkflowService:
         )
         self.repository.save_workflow_run(run)
 
-        planner = ResearchPlanner(registry=self.registry)
+        planner = ResearchPlanner(registry=self.registry, model_gateway=self.model_gateway)
         plan = planner.create_plan(
             workflow_id=run.id,
             question=question,
             as_of=effective_as_of,
             event_id=event_id,
             budget_profile=budget_profile,
+            use_llm=self.model_gateway is not None,
         )
         self.repository.save_research_plan(plan)
         for task in plan.tasks:

@@ -48,6 +48,13 @@ class DeterministicProvider:
             from app.events.router import deterministic_route_payload
 
             return deterministic_route_payload(request.payload)
+        if request.operation == "plan":
+            # 确定性 Planner：不修改任务，只返回空调整，确保离线/测试可运行
+            return {
+                "objective_refined": None,
+                "adjustments": [],
+                "reasoning": "deterministic fallback: no changes",
+            }
         return {"operation": request.operation, "input": request.payload}
 
 

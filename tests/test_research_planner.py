@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.agents.registry import AgentRegistry
+from app.model_gateway.service import DeterministicProvider, ModelGateway
 from app.workflows.planner import PlanningError, ResearchPlanner
 
 
@@ -86,3 +87,86 @@ def test_plan_has_required_tasks():
     )
     assert plan.completion_criteria["required_tasks"]
     assert all(t.required for t in plan.tasks)
+
+
+def test_llm_planner_deterministic_fallback():
+    """确定性 Provider 应返回空调整，不破坏规则模板。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        repository = client.app.state.repository
+        gateway = ModelGateway(repository, provider=DeterministicProvider())
+        planner = ResearchPlanner(registry=AgentRegistry(repository), model_gateway=gateway)
+        plan = planner.create_plan(
+            workflow_id="wfr_test",
+            question="某公司发布业绩预告",
+            use_llm=True,
+        )
+        assert plan.status == "ready"
+        task_names = {t.name for t in plan.tasks}
+        assert "retrieve" in task_names
+        assert "synthesize" in task_names
+
+
+def test_llm_planner_unauthorized_agent_is_rejected():
+    """LLM 建议新增未注册 Agent 时应被过滤。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    class _BadProvider(DeterministicProvider):
+        def invoke(self, request):
+            return {
+                "adjustments": [
+                    {
+                        "name": "bad_task",
+                        "action": "add",
+                        "agent_key": "unknown_agent",
+                        "description": "未注册 Agent",
+                    }
+                ]
+            }
+
+    with TestClient(create_app()) as client:
+        repository = client.app.state.repository
+        gateway = ModelGateway(repository, provider=_BadProvider())
+        planner = ResearchPlanner(registry=AgentRegistry(repository), model_gateway=gateway)
+        plan = planner.create_plan(
+            workflow_id="wfr_test",
+            question="某公司发布业绩预告",
+            use_llm=True,
+        )
+        assert "bad_task" not in {t.name for t in plan.tasks}
+
+
+def test_llm_planner_modify_description():
+    """LLM 修改任务描述应被应用。"""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    class _ModifyProvider(DeterministicProvider):
+        def invoke(self, request):
+            return {
+                "adjustments": [
+                    {
+                        "name": "retrieve",
+                        "action": "modify",
+                        "description": "自定义检索",
+                    }
+                ]
+            }
+
+    with TestClient(create_app()) as client:
+        repository = client.app.state.repository
+        gateway = ModelGateway(repository, provider=_ModifyProvider())
+        planner = ResearchPlanner(registry=AgentRegistry(repository), model_gateway=gateway)
+        plan = planner.create_plan(
+            workflow_id="wfr_test",
+            question="某公司发布业绩预告",
+            use_llm=True,
+        )
+        retrieve = next(t for t in plan.tasks if t.name == "retrieve")
+        assert retrieve.description == "自定义检索"
