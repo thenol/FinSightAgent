@@ -707,3 +707,72 @@ class InboxModel(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+# Agent Runtime models (DD-80)
+class AgentRegistrationModel(Base):
+    __tablename__ = "agent_registrations"
+    __table_args__ = (
+        UniqueConstraint("agent_key", "version", name="uq_agent_registration_key_version"),
+        {"schema": "platform"},
+    )
+
+    agent_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    version: Mapped[str] = mapped_column(String(24))
+    display_name: Mapped[str] = mapped_column(String(200))
+    capabilities: Mapped[list[str]] = mapped_column(JSON, default=list)
+    input_schema_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    output_schema_ref: Mapped[str] = mapped_column(String(120))
+    allowed_tools: Mapped[list[str]] = mapped_column(JSON, default=list)
+    budget_profile: Mapped[str] = mapped_column(String(40), default="mvp_standard")
+    quality_gates: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchPlanModel(Base):
+    __tablename__ = "research_plans"
+    __table_args__ = (
+        Index("ix_research_plans_workflow_id", "workflow_id"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String, index=True)
+    question: Mapped[str] = mapped_column(Text)
+    objective: Mapped[str] = mapped_column(Text)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(24))
+    budget_profile: Mapped[str] = mapped_column(String(40), default="mvp_standard")
+    completion_criteria: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    plan_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ResearchTaskModel(Base):
+    __tablename__ = "research_tasks"
+    __table_args__ = (
+        Index("ix_research_tasks_plan_id", "plan_id"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    plan_id: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    agent_key: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(Text)
+    dependencies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(24))
+    input_fields: Mapped[list[str]] = mapped_column(JSON, default=list)
+    output_field: Mapped[Optional[str]] = mapped_column(String(80))
+    tool_strategy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    output_schema: Mapped[Optional[str]] = mapped_column(String(120))
+    input_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    output_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)
+    review_reason: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

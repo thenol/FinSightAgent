@@ -10,7 +10,7 @@ LangGraph 的 StateGraph 节点返回 dict 时会合并状态；本模块在节�
 
 from typing import Any
 
-# 字段 -> 唯一写入者节点（DD-50 §7 所有权表）
+# 字段 -> 唯一写入者节点（DD-50 §7 所有权表；DD-80 增加动态研究字段）
 FIELD_OWNERS: dict[str, str] = {
     "event_snapshot": "context",
     "fact_check_snapshot": "fact_check",
@@ -19,7 +19,17 @@ FIELD_OWNERS: dict[str, str] = {
     "synthesis": "synthesize",
     "guardrail_result": "guardrail",
     "report_draft_ref": "draft",
+    "research_plan": "planner",
+    "task_outputs": "dynamic_engine",
+    "plan_status": "dynamic_engine",
 }
+
+
+def owner_for_field(field: str) -> str | None:
+    """返回字段的注册所有者；支持 task_outputs.{task_name} 子字段约定。"""
+    if field.startswith("task_outputs."):
+        return "dynamic_engine"
+    return FIELD_OWNERS.get(field)
 
 
 class BlackboardVersionConflict(ValueError):

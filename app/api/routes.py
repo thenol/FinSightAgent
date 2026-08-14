@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.agents.registry import AgentRegistry
 from app.analysis.service import ImpactAnalysisService
 from app.api.auth import PASSWORD_HASH, require_roles
 from app.api.errors import openapi_error_responses
@@ -40,6 +41,9 @@ from app.api.schemas import (
     NodeAttemptResponse,
     PipelineResponse,
     ReportTransitionRequest,
+    ResearchCreateRequest,
+    ResearchPlanResponse,
+    ResearchTaskResponse,
     RetrievalRetrieveRequest,
     RetrievalTraceResponse,
     ReviewDecisionRequest,
@@ -79,6 +83,7 @@ from app.platform.repository import (
 from app.publishing.citations import CitationResolver
 from app.publishing.service import FactCardService
 from app.retrieval.service import RetrievalService
+from app.workflows.dynamic import DynamicWorkflowService
 from app.workflows.service import WorkflowService
 
 router = APIRouter()
@@ -405,6 +410,147 @@ def get_workflow_attempts(
     attempts = request.app.state.repository.list_node_attempts(workflow_id)
     return envelope(
         [NodeAttemptResponse.model_validate(a, from_attributes=True) for a in attempts],
+        request.state.request_id,
+    )
+
+
+@router.post(
+    "/api/v1/research",
+    response_model=DataEnvelope,
+    status_code=201,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def create_research(
+    payload: ResearchCreateRequest,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    operation = "research.create"
+    storage_key, request_hash, replay = _idempotency_begin(
+        request, user, idempotency_key, operation, payload
+    )
+    if replay:
+        return replay
+
+    if payload.event_id and not request.app.state.repository.get_event(payload.event_id):
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND")
+
+    service = DynamicWorkflowService(
+        request.app.state.repository,
+        registry=AgentRegistry(request.app.state.repository),
+        model_gateway=getattr(request.app.state, "model_gateway", None),
+    )
+    run, plan = service.create_plan(
+        question=payload.question,
+        as_of=payload.as_of,
+        event_id=payload.event_id,
+        budget_profile=payload.budget_profile,
+        trigger_id=f"manual:{user.id}",
+    )
+    if payload.execute:
+        plan = service.execute(plan.id)
+
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="research.created",
+            object_type="research_plan",
+            object_id=plan.id,
+            request_id=request.state.request_id,
+            details={
+                "workflow_id": run.id,
+                "question": payload.question,
+                "status": plan.status,
+                "event_id": payload.event_id,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    response = envelope(
+        ResearchPlanResponse.model_validate(plan, from_attributes=True),
+        request.state.request_id,
+    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, plan.id, response)
+
+
+@router.post(
+    "/api/v1/research/{plan_id}/execute",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def execute_research(
+    plan_id: str,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    operation = f"research.execute:{plan_id}"
+    storage_key, request_hash, replay = _idempotency_begin(
+        request, user, idempotency_key, operation, {"plan_id": plan_id}
+    )
+    if replay:
+        return replay
+
+    plan = request.app.state.repository.get_research_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="RESEARCH_PLAN_NOT_FOUND")
+    if plan.status not in {"ready", "pending", "waiting_review"}:
+        raise HTTPException(status_code=409, detail="RESEARCH_PLAN_NOT_EXECUTABLE")
+
+    service = DynamicWorkflowService(
+        request.app.state.repository,
+        registry=AgentRegistry(request.app.state.repository),
+        model_gateway=getattr(request.app.state, "model_gateway", None),
+    )
+    plan = service.execute(plan_id)
+
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="research.executed",
+            object_type="research_plan",
+            object_id=plan.id,
+            request_id=request.state.request_id,
+            details={"workflow_id": plan.workflow_id, "status": plan.status},
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    response = envelope(
+        ResearchPlanResponse.model_validate(plan, from_attributes=True),
+        request.state.request_id,
+    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, plan.id, response)
+
+
+@router.get("/api/v1/research/{plan_id}", response_model=DataEnvelope)
+def get_research_plan(
+    plan_id: str,
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    plan = request.app.state.repository.get_research_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="RESEARCH_PLAN_NOT_FOUND")
+    return envelope(
+        ResearchPlanResponse.model_validate(plan, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/research/{plan_id}/tasks", response_model=DataEnvelope)
+def list_research_tasks(
+    plan_id: str,
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    if not request.app.state.repository.get_research_plan(plan_id):
+        raise HTTPException(status_code=404, detail="RESEARCH_PLAN_NOT_FOUND")
+    tasks = request.app.state.repository.list_research_tasks(plan_id)
+    return envelope(
+        [ResearchTaskResponse.model_validate(t, from_attributes=True) for t in tasks],
         request.state.request_id,
     )
 

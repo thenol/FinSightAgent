@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-08-14（WP-07 Hybrid Retrieval 已完成，启动 WP-08 Agent Runtime LLD）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-14（WP-08 Agent Runtime 已交付，WP-09/WP-10 待启动）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -225,31 +225,31 @@
 
 目标：在现有固定 LangGraph 工作流基础上，建设动态 ResearchPlan、Agent Registry 与可复用的 Agent Runtime，使系统能根据问题自动规划检索、分析与审核步骤，而不是硬编码节点序列。
 
-### 13.1 当前状态
+### 13.1 已交付
 
-- 固定工作流已落地：Supervisor 确定性路由、Fact Check → Company Analysis → Skeptic → Synthesis → Guardrail → Report Draft。
-- Blackboard、Checkpoint、预算账本、节点重试、局部重跑、人工审核恢复均已实现。
-- ToolGateway 已支持白名单、`as_of` 校验、调用审计。
-- Model Gateway 已支持多 provider、binding、模型运行审计。
-- Hybrid Retrieval 已支持 Planner 与多路召回。
+- [x] 撰写 `docs/design/08-agent-runtime.md` LLD。
+- [x] 定义 `ResearchPlan`、`ResearchTask`、`AgentRegistration` 领域模型（`app/domain.py`）。
+- [x] 新增 `app/agents/registry.py`：声明式注册 Specialist Agent（fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst），声明能力、输入/输出 Schema、允许工具、预算配置和质量门。
+- [x] 新增 `app/workflows/planner.py`：基于规则的问题分类与默认任务 DAG 模板，生成动态 ResearchPlan（目标、任务、依赖、工具策略、证据要求、完成标准）。
+- [x] 新增 `app/workflows/dynamic.py`：`DynamicWorkflowService` 执行动态 DAG，复用 `WorkflowRun`、`Blackboard`、`BudgetManager`、`NodeAttempt`、`ReviewTask`；任务状态独立，失败语义与固定工作流一致。
+- [x] 新增 `POST /api/v1/research` API：提交研究问题，返回 ResearchPlan 与 WorkflowRun；`POST /api/v1/research/{id}/execute` 启动动态计划；`GET /api/v1/research/{id}` 与 `GET /api/v1/research/{id}/tasks` 查询计划与任务。
+- [x] 扩展 `app/workflows/blackboard.py` 字段所有权表，增加 `research_plan`、`task_outputs`、`plan_status`。
+- [x] 扩展 `app/platform/repository.py` 与 `app/platform/db_models.py`，新增 `agent_registrations`、`research_plans`、`research_tasks` 表与迁移 `20260814_0019_agent_runtime.py`。
+- [x] 补齐测试：`tests/test_agent_registry.py`（7 用例）、`tests/test_research_planner.py`（9 用例）、`tests/test_dynamic_workflow.py`（7 用例）、`tests/test_research_api.py`（7 用例）。
 
-### 13.2 待完成
+### 13.2 验证
 
-- [-] 撰写 `docs/design/08-agent-runtime.md` LLD。
-- [ ] 定义 `ResearchPlan`、`ResearchTask`、`AgentRegistry` 领域模型与 Schema。
-- [ ] 新增 `app/agents/registry.py`：注册 Specialist Agent（Planner、Retriever、Fact Verification、Company、Market、Industry、Skeptic、Synthesis、Citation Auditor 等），声明输入/输出/工具/预算/质量门。
-- [ ] 新增 `app/workflows/planner.py`：基于用户问题生成动态 ResearchPlan（目标、任务、依赖、工具策略、证据要求、完成标准）。
-- [ ] 扩展 `WorkflowService`/`GraphRunner`：支持执行动态 DAG，任务状态独立，失败语义与固定工作流一致。
-- [ ] 新增 `POST /api/v1/research` API：提交研究问题，返回 ResearchPlan 与 WorkflowRun。
-- [ ] 新增 `POST /api/v1/research/{id}/execute` 或复用 `/workflows/{id}/run` 启动动态计划。
-- [ ] 补齐测试：`tests/test_agent_registry.py`、`tests/test_research_plan.py`、`tests/test_dynamic_workflow.py`。
-- [ ] 更新 `docs/10-platform-development-backlog.md` 与 `AGENTS.md`（如模块约定有变化）。
+- [x] `uv run pytest -q` 全绿（463 passed / 1 skipped）。
+- [x] `uv run ruff check .` 变更文件通过（WP-08 新增/修改文件无 lint 错误）。
+- [x] `cd web && npm run build && npm test -- --run` 全绿。
+- [x] 手动调用 `POST /api/v1/research` 可生成计划并执行成功。
 
-### 13.3 验证
+### 13.3 后续迭代
 
-- [ ] `uv run pytest -q` 全绿。
-- [ ] `uv run ruff check .` 变更文件通过。
-- [ ] `cd web && npm run build && npm test -- --run` 全绿。
-- [ ] 手动调用研究 API，验证从问题生成计划并执行至少一个动态任务。
+- [ ] PostgreSQL 持久化：将 Agent Runtime 的内存桥接切换到 ORM 模型读写。
+- [ ] 接入真实 LLM Planner：在规则模板基础上调用 `planner` Agent 做增删改建议，并受 Schema 校验。
+- [ ] 扩展 Specialist Agent：Market、Industry、Regulatory、Macro、Citation Auditor 等。
+- [ ] 动态执行与 LangGraph 检查点深度集成，支持更细粒度的暂停/恢复。
+- [ ] 研究记忆与分层 Blackboard：区分运行时状态、工作区记忆和已验证知识。
 
 完成条件：研究问题可生成动态计划；Agent Registry 可注册/查找 Specialist Agent；动态计划可被工作流引擎执行并产生可追溯结果。

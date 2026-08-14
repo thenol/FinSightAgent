@@ -559,6 +559,68 @@ class FactCard:
 
 
 @dataclass(frozen=True)
+class AgentRegistration:
+    """Specialist Agent 的声明式注册记录（DD-80 §5）。"""
+
+    agent_key: str
+    version: str
+    display_name: str
+    capabilities: list[str]
+    input_schema_refs: list[str]
+    output_schema_ref: str
+    allowed_tools: list[str]
+    budget_profile: str = "mvp_standard"
+    quality_gates: dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ResearchTask:
+    """动态研究计划中的一个任务节点（DD-80 §4.2）。"""
+
+    id: str
+    plan_id: str
+    name: str
+    agent_key: str
+    description: str
+    dependencies: list[str] = field(default_factory=list)
+    required: bool = True
+    # pending | ready | running | succeeded | failed | skipped | waiting_review
+    status: str = "pending"
+    input_fields: list[str] = field(default_factory=list)
+    output_field: Optional[str] = None
+    tool_strategy: dict[str, Any] = field(default_factory=dict)
+    output_schema: Optional[str] = None
+    input_hash: Optional[str] = None
+    output_snapshot: Optional[dict[str, Any]] = None
+    review_reason: Optional[str] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ResearchPlan:
+    """动态研究计划：问题、任务 DAG、预算与完成标准（DD-80 §4.1）。"""
+
+    id: str
+    workflow_id: str
+    question: str
+    objective: str
+    as_of: datetime
+    # pending | planning | ready | running | waiting_review | succeeded | failed | cancelled
+    status: str = "pending"
+    tasks: list[ResearchTask] = field(default_factory=list)
+    budget_profile: str = "mvp_standard"
+    completion_criteria: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class ImpactAnalysis:
     """事件影响分析：预测性传导推理，与 FactCard（已验证事实）分域存储。"""
 

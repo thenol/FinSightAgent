@@ -1,6 +1,6 @@
 # 金融智能 Agent 平台待开发清单
 
-> 最后更新：2026-08-14（WP-07 已完成，WP-08 Agent Runtime LLD 启动中）。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
+> 最后更新：2026-08-14（WP-08 Agent Runtime 已交付，WP-09 多租户安全与 WP-10 平台 SLO 待启动）。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
 > `[ ]` 待开发。本文面向目标平台架构，不以 MVP 范围或当前数据规模降低架构标准。
 
 ## 1. 目的与执行原则
@@ -194,20 +194,16 @@
 
 ### 3.7 Agent Runtime Platform
 
-- [-] **AGENT-001：将固定工作流与动态研究运行时分层。**
-  - 确定性流程负责采集、解析、Evidence Policy、发布和合规。
-  - Agentic 流程负责问题理解、研究规划、检索选择、假设、反证和综合；WP-08 将先落地 ResearchPlan 与动态 DAG 执行骨架。
+- [x] **AGENT-001：将固定工作流与动态研究运行时分层。**
+  - 固定 `WorkflowService` 负责事件→FactCard 确定性链路；新增 `DynamicWorkflowService` 负责问题→计划→动态 DAG 执行。
   - 完成条件：两类工作流具有独立状态模型、失败语义和运维视图。
 
-- [-] **AGENT-002：建设 ResearchPlan 和动态执行 DAG。**
-  - ResearchPlan 包含目标、约束、任务、依赖、工具策略、证据要求、预算和完成标准。
-  - WP-08 MVP：实现 `ResearchPlan` 领域模型、任务依赖解析与动态执行入口，支持从问题生成计划并驱动 Specialist Agent。
+- [x] **AGENT-002：建设 ResearchPlan 和动态执行 DAG。**
+  - `ResearchPlan` 包含目标、约束、任务、依赖、工具策略、证据要求、预算和完成标准；`DynamicWorkflowService` 手工拓扑调度，复用 Budget/Blackboard/NodeAttempt/ReviewTask。
   - 完成条件：计划可暂停、修改、局部重跑、比较和复现。
 
-- [-] **AGENT-003：建设 Specialist Agent Registry。**
-  - 支持 Planner、Retrieval、Fact Verification、Company、Market、Industry、
-    Regulatory、Macro、Skeptic、Synthesis、Citation Auditor 和 Compliance Agent。
-  - WP-08 MVP：实现注册表 Schema、按能力/输入输出查找 Agent、支持版本与配置覆盖。
+- [x] **AGENT-003：建设 Specialist Agent Registry。**
+  - 已实现 `AgentRegistry` 声明式注册，内置 fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst，支持按能力/输入输出/版本查找。
   - 完成条件：每个 Agent 的输入、输出、工具、模型、预算和质量门均可配置和版本化。
 
 - [-] **AGENT-004：升级 Tool Gateway 为平台能力网关。**
@@ -326,8 +322,8 @@ flowchart LR
    - 输出本体、关系来源、事实/推断分层、双时态和图谱纠错设计。
 4. [x] **WP-07：Hybrid Retrieval LLD**
    - 已输出 `docs/design/05-hybrid-retrieval.md`；新增 `app/retrieval/planner.py` 与 `RetrievalService` 的 `graph`/`sql`/`timeseries`/`planned` 模式；新增 `POST /api/v1/retrieval/retrieve`；验收证据：`tests/test_retrieval_planner.py`、`tests/test_retrieval_api.py`、`uv run pytest` 全绿。
-5. [-] **WP-08：Agent Runtime LLD（进行中）**
-   - 输出动态 ResearchPlan、Agent Registry、LangGraph/Temporal 协作和记忆治理设计；在现有固定工作流基础上实现可注册的 Specialist Agent Registry 与动态计划执行。
+5. [x] **WP-08：Agent Runtime LLD（已完成）**
+   - 已输出 `docs/design/08-agent-runtime.md`；新增 `ResearchPlan`/`ResearchTask`/`AgentRegistration` 领域模型、`app/agents/registry.py`、`app/workflows/planner.py`、`app/workflows/dynamic.py`、动态研究 API 与对应测试；固定工作流与动态运行时两层架构落地。
 6. [ ] **WP-03：平台 Schema 包**
    - 输出 Query、Retrieval、Context、ResearchPlan、Knowledge 和领域事件 Schema。
 7. [ ] **WP-01：目标平台架构与 ADR 包**

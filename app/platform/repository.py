@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain import (
+    AgentRegistration,
     Artifact,
     AuditLog,
     Brief,
@@ -42,6 +43,8 @@ from app.domain import (
     NodeAttempt,
     ParsedDocument,
     QuarantineItem,
+    ResearchPlan,
+    ResearchTask,
     ReviewTask,
     Security,
     Source,
@@ -570,6 +573,29 @@ class Repository(Protocol):
 
     def update_impact_analysis(self, impact_analysis: "ImpactAnalysis") -> None: ...
 
+    # Agent Runtime (DD-80)
+    def save_agent_registration(self, registration: "AgentRegistration") -> None: ...
+
+    def get_agent_registration(self, agent_key: str) -> Optional["AgentRegistration"]: ...
+
+    def list_agent_registrations(self) -> list["AgentRegistration"]: ...
+
+    def save_research_plan(self, plan: "ResearchPlan") -> None: ...
+
+    def get_research_plan(self, plan_id: str) -> Optional["ResearchPlan"]: ...
+
+    def get_research_plan_by_workflow(self, workflow_id: str) -> Optional["ResearchPlan"]: ...
+
+    def update_research_plan(self, plan: "ResearchPlan") -> None: ...
+
+    def save_research_task(self, task: "ResearchTask") -> None: ...
+
+    def get_research_task(self, task_id: str) -> Optional["ResearchTask"]: ...
+
+    def list_research_tasks(self, plan_id: str) -> list["ResearchTask"]: ...
+
+    def update_research_task(self, task: "ResearchTask") -> None: ...
+
     def save_brief(self, brief: Brief) -> None: ...
 
     def get_brief_by_date(self, brief_date: str) -> Optional[Brief]: ...
@@ -680,6 +706,9 @@ class InMemoryRepository:
         self.embedding_records: dict[str, EmbeddingRecord] = {}
         self.disclosure_groups: dict[str, DisclosureGroup] = {}
         self.disclosure_group_memberships: list[DisclosureGroupMembership] = []
+        self.agent_registrations: dict[str, AgentRegistration] = {}
+        self.research_plans: dict[str, ResearchPlan] = {}
+        self.research_tasks: dict[str, ResearchTask] = {}
         self.outbox: list[dict] = []
         self.inbox: set[tuple[str, str]] = set()
         self._document_keys: dict[tuple[str, str], str] = {}
@@ -1465,6 +1494,47 @@ class InMemoryRepository:
             raise KeyError(f"impact_analysis not found: {impact_analysis.id}")
         self.impact_analyses[impact_analysis.id] = impact_analysis
 
+    # Agent Runtime (DD-80)
+    def save_agent_registration(self, registration: AgentRegistration) -> None:
+        self.agent_registrations[registration.agent_key] = registration
+
+    def get_agent_registration(self, agent_key: str) -> Optional[AgentRegistration]:
+        return self.agent_registrations.get(agent_key)
+
+    def list_agent_registrations(self) -> list[AgentRegistration]:
+        return list(self.agent_registrations.values())
+
+    def save_research_plan(self, plan: ResearchPlan) -> None:
+        self.research_plans[plan.id] = plan
+
+    def get_research_plan(self, plan_id: str) -> Optional[ResearchPlan]:
+        return self.research_plans.get(plan_id)
+
+    def get_research_plan_by_workflow(self, workflow_id: str) -> Optional[ResearchPlan]:
+        return next(
+            (plan for plan in self.research_plans.values() if plan.workflow_id == workflow_id),
+            None,
+        )
+
+    def update_research_plan(self, plan: ResearchPlan) -> None:
+        if plan.id not in self.research_plans:
+            raise KeyError(f"research_plan not found: {plan.id}")
+        self.research_plans[plan.id] = plan
+
+    def save_research_task(self, task: ResearchTask) -> None:
+        self.research_tasks[task.id] = task
+
+    def get_research_task(self, task_id: str) -> Optional[ResearchTask]:
+        return self.research_tasks.get(task_id)
+
+    def list_research_tasks(self, plan_id: str) -> list[ResearchTask]:
+        return [task for task in self.research_tasks.values() if task.plan_id == plan_id]
+
+    def update_research_task(self, task: ResearchTask) -> None:
+        if task.id not in self.research_tasks:
+            raise KeyError(f"research_task not found: {task.id}")
+        self.research_tasks[task.id] = task
+
     def list_events(
         self,
         as_of: Optional[datetime] = None,
@@ -1762,6 +1832,10 @@ class SqlAlchemyRepository:
             engine = engine.execution_options(schema_translate_map=schema_translate_map)
         self.engine: Engine = engine
         self.session_factory = sessionmaker(engine, expire_on_commit=False)
+        # WP-08: Agent Runtime 持久化先用内存桥接，PostgreSQL 表与迁移已预留，后续切到 ORM 模型。
+        self.agent_registrations: dict[str, AgentRegistration] = {}
+        self.research_plans: dict[str, ResearchPlan] = {}
+        self.research_tasks: dict[str, ResearchTask] = {}
 
     def create_schema_for_tests(self) -> None:
         """Test-only shortcut; deployed databases must be initialized by Alembic."""
@@ -1825,6 +1899,43 @@ class SqlAlchemyRepository:
     def update_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
         with self.transaction() as repository:
             repository.update_impact_analysis(impact_analysis)
+
+    # Agent Runtime (DD-80) - memory bridge for MVP; PostgreSQL tables reserved via migration.
+    def save_agent_registration(self, registration: AgentRegistration) -> None:
+        self.agent_registrations[registration.agent_key] = registration
+
+    def get_agent_registration(self, agent_key: str) -> Optional[AgentRegistration]:
+        return self.agent_registrations.get(agent_key)
+
+    def list_agent_registrations(self) -> list[AgentRegistration]:
+        return list(self.agent_registrations.values())
+
+    def save_research_plan(self, plan: ResearchPlan) -> None:
+        self.research_plans[plan.id] = plan
+
+    def get_research_plan(self, plan_id: str) -> Optional[ResearchPlan]:
+        return self.research_plans.get(plan_id)
+
+    def get_research_plan_by_workflow(self, workflow_id: str) -> Optional[ResearchPlan]:
+        return next(
+            (plan for plan in self.research_plans.values() if plan.workflow_id == workflow_id),
+            None,
+        )
+
+    def update_research_plan(self, plan: ResearchPlan) -> None:
+        self.research_plans[plan.id] = plan
+
+    def save_research_task(self, task: ResearchTask) -> None:
+        self.research_tasks[task.id] = task
+
+    def get_research_task(self, task_id: str) -> Optional[ResearchTask]:
+        return self.research_tasks.get(task_id)
+
+    def list_research_tasks(self, plan_id: str) -> list[ResearchTask]:
+        return [task for task in self.research_tasks.values() if task.plan_id == plan_id]
+
+    def update_research_task(self, task: ResearchTask) -> None:
+        self.research_tasks[task.id] = task
 
     def get_review_task(self, task_id: str) -> Optional[ReviewTask]:
         return self._read(lambda repository: repository.get_review_task(task_id))
@@ -3629,6 +3740,59 @@ class SqlAlchemyTransaction:
         if model is None:
             raise KeyError(f"impact_analysis not found: {value.id}")
         model.status = value.status
+
+    # Agent Runtime (DD-80) - transaction-level memory bridge for MVP.
+    def _agent_runtime_store(self, key: str) -> dict:
+        store: dict = self.session.info.setdefault(f"__wp08_{key}__", {})
+        return store
+
+    def save_agent_registration(self, registration: AgentRegistration) -> None:
+        self._agent_runtime_store("agent_registrations")[registration.agent_key] = registration
+
+    def get_agent_registration(self, agent_key: str) -> Optional[AgentRegistration]:
+        return self._agent_runtime_store("agent_registrations").get(agent_key)
+
+    def list_agent_registrations(self) -> list[AgentRegistration]:
+        return list(self._agent_runtime_store("agent_registrations").values())
+
+    def save_research_plan(self, plan: ResearchPlan) -> None:
+        self._agent_runtime_store("research_plans")[plan.id] = plan
+
+    def get_research_plan(self, plan_id: str) -> Optional[ResearchPlan]:
+        return self._agent_runtime_store("research_plans").get(plan_id)
+
+    def get_research_plan_by_workflow(self, workflow_id: str) -> Optional[ResearchPlan]:
+        return next(
+            (
+                plan
+                for plan in self._agent_runtime_store("research_plans").values()
+                if plan.workflow_id == workflow_id
+            ),
+            None,
+        )
+
+    def update_research_plan(self, plan: ResearchPlan) -> None:
+        if plan.id not in self._agent_runtime_store("research_plans"):
+            raise KeyError(f"research_plan not found: {plan.id}")
+        self._agent_runtime_store("research_plans")[plan.id] = plan
+
+    def save_research_task(self, task: ResearchTask) -> None:
+        self._agent_runtime_store("research_tasks")[task.id] = task
+
+    def get_research_task(self, task_id: str) -> Optional[ResearchTask]:
+        return self._agent_runtime_store("research_tasks").get(task_id)
+
+    def list_research_tasks(self, plan_id: str) -> list[ResearchTask]:
+        return [
+            task
+            for task in self._agent_runtime_store("research_tasks").values()
+            if task.plan_id == plan_id
+        ]
+
+    def update_research_task(self, task: ResearchTask) -> None:
+        if task.id not in self._agent_runtime_store("research_tasks"):
+            raise KeyError(f"research_task not found: {task.id}")
+        self._agent_runtime_store("research_tasks")[task.id] = task
 
     def list_events(
         self,

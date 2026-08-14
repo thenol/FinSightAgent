@@ -293,6 +293,50 @@ class WorkflowCreateRequest(BaseModel):
     execute: bool = True
 
 
+class ResearchCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=2000)
+    as_of: Optional[datetime] = None
+    event_id: Optional[str] = Field(default=None, min_length=1)
+    budget_profile: str = Field(default="mvp_standard", pattern="^(mvp_standard|mvp_low)$")
+    execute: bool = True
+
+
+class ResearchTaskResponse(BaseModel):
+    id: str
+    plan_id: str
+    name: str
+    agent_key: str
+    description: str
+    dependencies: list[str]
+    required: bool
+    status: str
+    input_fields: list[str]
+    output_field: Optional[str]
+    output_schema: Optional[str]
+    output_snapshot: Optional[dict[str, Any]]
+    review_reason: Optional[str]
+    started_at: Optional[datetime]
+    ended_at: Optional[datetime]
+    created_at: Optional[datetime]
+
+
+class ResearchPlanResponse(BaseModel):
+    id: str
+    workflow_id: str
+    question: str
+    objective: str
+    as_of: datetime
+    status: str
+    budget_profile: str
+    completion_criteria: dict[str, Any]
+    metadata: dict[str, Any]
+    tasks: list[ResearchTaskResponse]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
 class WorkflowResumeRequest(BaseModel):
     trigger: str = Field(
         default="budget_resume",
