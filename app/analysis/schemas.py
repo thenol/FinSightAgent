@@ -4,7 +4,7 @@
 校验后持久化为 ``ImpactAnalysis``；解析失败时服务层降级为规则模板。
 """
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,3 +49,5 @@ class ImpactAnalysisOutput(BaseModel):
     macro_assumptions: list[str] = Field(default_factory=list)
     watch_items: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
+    # 生成该输出的模型运行 id，用于成本与审计追踪
+    model_run_id: Optional[str] = None

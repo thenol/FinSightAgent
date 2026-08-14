@@ -94,8 +94,6 @@ class OpenAICompatibleProvider:
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError("MODEL_RESPONSE_INVALID", str(data)[:400]) from exc
         parsed = _parse_json_content(str(content))
-        parsed.setdefault("operation", request.operation)
-        parsed.setdefault("input", request.payload)
         return parsed
 
 
@@ -146,6 +144,4 @@ class AnthropicProvider:
         except (KeyError, TypeError) as exc:
             raise ProviderError("MODEL_RESPONSE_INVALID", str(data)[:400]) from exc
         parsed = _parse_json_content(content)
-        parsed.setdefault("operation", request.operation)
-        parsed.setdefault("input", request.payload)
         return parsed

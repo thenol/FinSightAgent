@@ -69,7 +69,6 @@ def test_openai_compatible_provider_parses_chat_completion(monkeypatch) -> None:
         )
     )
     assert output["ok"] is True
-    assert output["operation"] == "fact_check"
 
 
 def test_gateway_uses_bound_provider_hot_reload() -> None:

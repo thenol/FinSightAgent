@@ -46,7 +46,9 @@ class ImpactAnalystAgent:
 
         payload = response.payload if isinstance(response.payload, dict) else {}
         try:
-            return ImpactAnalysisOutput.model_validate(payload)
+            output = ImpactAnalysisOutput.model_validate(payload)
+            output.model_run_id = response.run_id
+            return output
         except Exception:
             return None
 
