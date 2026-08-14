@@ -203,12 +203,12 @@
   - 完成条件：计划可暂停、修改、局部重跑、比较和复现。
 
 - [x] **AGENT-003：建设 Specialist Agent Registry。**
-  - 已实现 `AgentRegistry` 声明式注册，内置 fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst，支持按能力/输入输出/版本查找。
+  - 已实现 `AgentRegistry` 声明式注册，内置 fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst、market_analyst、industry_analyst、regulatory_analyst，支持按能力/输入输出/版本查找。
   - 完成条件：每个 Agent 的输入、输出、工具、模型、预算和质量门均可配置和版本化。
 
 - [-] **AGENT-004：升级 Tool Gateway 为平台能力网关。**
-  - 在现有白名单、`as_of` 和审计上增加租户、数据许可、调用配额、结果 Schema、
-    服务身份、网络策略和敏感工具审批。
+  - 已扩展白名单覆盖所有动态 Specialist Agent（planner、retriever、impact_analyst、market_analyst、industry_analyst、regulatory_analyst）。
+  - 剩余：租户、数据许可、调用配额、结果 Schema、服务身份、网络策略和敏感工具审批。
   - 完成条件：Agent 无法绕过网关直接访问数据库、图谱、向量库或外部服务。
 
 - [ ] **AGENT-005：建设研究记忆与分层 Blackboard。**

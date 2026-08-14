@@ -229,13 +229,13 @@
 
 - [x] 撰写 `docs/design/08-agent-runtime.md` LLD。
 - [x] 定义 `ResearchPlan`、`ResearchTask`、`AgentRegistration` 领域模型（`app/domain.py`）。
-- [x] 新增 `app/agents/registry.py`：声明式注册 Specialist Agent（fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst），声明能力、输入/输出 Schema、允许工具、预算配置和质量门。
-- [x] 新增 `app/workflows/planner.py`：基于规则的问题分类与默认任务 DAG 模板，生成动态 ResearchPlan（目标、任务、依赖、工具策略、证据要求、完成标准）。
+- [x] 新增 `app/agents/registry.py`：声明式注册 Specialist Agent（fact_checker、company_analyst、skeptic、synthesizer、planner、retriever、impact_analyst、market_analyst、industry_analyst、regulatory_analyst），声明能力、输入/输出 Schema、允许工具、预算配置和质量门。
+- [x] 新增 `app/workflows/planner.py`：基于规则的问题分类与默认任务 DAG 模板，生成动态 ResearchPlan；支持可选 LLM 增强，调用 `ModelGateway` 的 `plan` operation 输出受 Schema 约束的任务调整建议。
 - [x] 新增 `app/workflows/dynamic.py`：`DynamicWorkflowService` 执行动态 DAG，复用 `WorkflowRun`、`Blackboard`、`BudgetManager`、`NodeAttempt`、`ReviewTask`；任务状态独立，失败语义与固定工作流一致。
 - [x] 新增 `POST /api/v1/research` API：提交研究问题，返回 ResearchPlan 与 WorkflowRun；`POST /api/v1/research/{id}/execute` 启动动态计划；`GET /api/v1/research/{id}` 与 `GET /api/v1/research/{id}/tasks` 查询计划与任务。
 - [x] 扩展 `app/workflows/blackboard.py` 字段所有权表，增加 `research_plan`、`task_outputs`、`plan_status`。
-- [x] 扩展 `app/platform/repository.py` 与 `app/platform/db_models.py`，新增 `agent_registrations`、`research_plans`、`research_tasks` 表与迁移 `20260814_0019_agent_runtime.py`。
-- [x] 补齐测试：`tests/test_agent_registry.py`（7 用例）、`tests/test_research_planner.py`（9 用例）、`tests/test_dynamic_workflow.py`（7 用例）、`tests/test_research_api.py`（7 用例）。
+- [x] 扩展 `app/platform/repository.py` 与 `app/platform/db_models.py`，新增 `agent_registrations`、`research_plans`、`research_tasks` 表与迁移 `20260814_0019_agent_runtime.py`；PostgreSQL 路径已实现真实 ORM 持久化。
+- [x] 补齐测试：`tests/test_agent_registry.py`、`tests/test_research_planner.py`（含 LLM Planner 用例）、`tests/test_dynamic_workflow.py`、`tests/test_research_api.py`。
 
 ### 13.2 验证
 
@@ -246,10 +246,11 @@
 
 ### 13.3 后续迭代
 
-- [ ] PostgreSQL 持久化：将 Agent Runtime 的内存桥接切换到 ORM 模型读写。
-- [ ] 接入真实 LLM Planner：在规则模板基础上调用 `planner` Agent 做增删改建议，并受 Schema 校验。
-- [ ] 扩展 Specialist Agent：Market、Industry、Regulatory、Macro、Citation Auditor 等。
+- [x] PostgreSQL 持久化：已切换到 ORM 模型读写。
+- [x] 接入真实 LLM Planner：已实现，受 Schema 校验。
+- [x] 扩展 Specialist Agent：已新增 Market、Industry、Regulatory；Macro、Citation Auditor 等后续补充。
 - [ ] 动态执行与 LangGraph 检查点深度集成，支持更细粒度的暂停/恢复。
 - [ ] 研究记忆与分层 Blackboard：区分运行时状态、工作区记忆和已验证知识。
+- [ ] 动态研究工作台前端：在 Admin SPA 展示 ResearchPlan、任务状态、Blackboard 输出。
 
 完成条件：研究问题可生成动态计划；Agent Registry 可注册/查找 Specialist Agent；动态计划可被工作流引擎执行并产生可追溯结果。
