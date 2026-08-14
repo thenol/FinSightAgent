@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-08-05（事件影响分析 Impact Analysis 进入实现）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-14（真实 LLM 影响分析验证通过，启动 WP-07 Hybrid Retrieval）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -133,7 +133,7 @@
 | --- | --- | --- | --- |
 | 首个交易所公告源及授权 | 未确认 | 产品/数据 | 阻塞真实采集适配器 |
 | 财务和行情数据源 | 未确认 | 研究/数据 | 阻塞 Company Agent 和市场评估 |
-| 模型供应商与预算 | 未确认 | 技术/产品 | 阻塞真实 Agent 接入 |
+| 模型供应商与预算 | [-] DeepSeek provider 已配置并通过连接测试；真实预算、SLA 与供应商切换策略仍待确认 | 技术/产品 | 不再阻塞 Agent 接入，但预算治理仍待完成 |
 | PDF/OCR 组件 | 未确认 | 技术 | 阻塞公告稳定证据定位 |
 | 授权正文展示范围 | 未确认 | 合规/产品 | 阻塞审核页面展示规则 |
 
@@ -165,6 +165,7 @@
 - [x] 修复 `LlmAgentBindingRequest` 的 `agent_key` pattern 未包含 `impact_analysis` / `default_reviewer` 的 bug。
 - [x] 优化 `ImpactAnalystAgent` system prompt：补充完整输出 schema、枚举值、约束与中文要求，提升真实 LLM 输出质量。
 - [x] 后端测试覆盖：macro_policy 分类、schema 校验、版本化、降级、API 权限、自动触发条件与防重复、低重要度/禁用/失败路径、异步 worker 消费与死信、API pending 202 状态。
+- [x] 真实 LLM 验证：修复 OpenAI-compatible/Anthropic provider 向解析后的 JSON 注入 `operation`/`input` 导致 `extra='forbid'` schema 校验失败的问题；使用 DeepSeek `deepseek-chat` 重新生成“美联储加息 25BP”事件影响分析，确认 `degraded=false`、`model_run_id` 已关联、输出包含完整传导链与板块影响。
 
 ### 11.2 前端
 
@@ -184,8 +185,8 @@
 
 ### 11.4 验证
 
-- [x] `uv run pytest -q` 全绿（新增 `tests/test_impact_analysis_worker.py` 5 个用例；当前 `tests/test_impact_analysis.py` 11 个用例 + `tests/test_impact_analysis_auto_trigger.py` 10 个用例）。
-- [x] `uv run ruff check .` 全绿。
+- [x] `uv run pytest -q` 全绿（新增 `tests/test_impact_analysis_worker.py` 5 个用例；当前 `tests/test_impact_analysis.py` 11 个用例 + `tests/test_impact_analysis_auto_trigger.py` 10 个用例；全量 `420 passed / 1 skipped`）。
+- [x] `uv run ruff check .` 全绿（变更文件检查通过；存量测试文件 lint 问题未在本次范围修复）。
 - [x] `cd web && npm run build && npm test -- --run` 全绿（echarts 引入后构建成功）。
 - [x] 手动验证：ingest“美联储加息 25BP”样例 → 事件分类为 `macro_policy` → FactCard published 后自动生成影响分析 → 前端展示传导图与板块影响表。
 

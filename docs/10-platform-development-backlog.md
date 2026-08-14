@@ -1,6 +1,6 @@
 # 金融智能 Agent 平台待开发清单
 
-> 最后更新：2026-07-27。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
+> 最后更新：2026-08-14。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
 > `[ ]` 待开发。本文面向目标平台架构，不以 MVP 范围或当前数据规模降低架构标准。
 
 ## 1. 目的与执行原则
@@ -326,8 +326,8 @@ flowchart LR
    - 输出标准财务模型、行情模型、数据湖、ClickHouse 和计算服务设计。
 3. [ ] **WP-06：Knowledge Graph LLD**
    - 输出本体、关系来源、事实/推断分层、双时态和图谱纠错设计。
-4. [ ] **WP-07：Hybrid Retrieval LLD**
-   - 输出各检索后端、Planner、Fusion、Reranker、Context 和质量评测设计。
+4. [-] **WP-07：Hybrid Retrieval LLD（进行中）**
+   - 输出各检索后端、Planner、Fusion、Reranker、Context 和质量评测设计；在现有 `RetrievalService`/`FusionService` 基础上补齐 Graph/Structured SQL/Time-series 路、Retrieval Planner 与 Control Plane API。
 5. [ ] **WP-08：Agent Runtime LLD**
    - 输出动态 ResearchPlan、Agent Registry、LangGraph/Temporal 协作和记忆治理设计。
 6. [ ] **WP-03：平台 Schema 包**
