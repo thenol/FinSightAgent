@@ -494,6 +494,53 @@ class AdminMetricsResponse(BaseModel):
     citations: dict[str, Any]
 
 
+class RetrievalRetrieveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1)
+    retrieval_mode: str = Field(
+        default="planned",
+        pattern="^(vector|lexical|hybrid|graph|sql|timeseries|planned)$",
+    )
+    top_k: int = Field(default=10, ge=1, le=100)
+    as_of: Optional[datetime] = None
+    chunk_types: Optional[list[str]] = None
+    source_tiers: Optional[list[str]] = None
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    embedding_model_version: Optional[str] = None
+
+
+class CitationCandidateResponse(BaseModel):
+    document_id: str
+    chunk_id: str
+    excerpt: str
+    locator: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievedItemResponse(BaseModel):
+    chunk_id: str
+    document_id: str
+    source_tier: str
+    chunk_type: str
+    text: str
+    score: float
+    backend: str
+    backend_scores: dict[str, float] = Field(default_factory=dict)
+    citation: CitationCandidateResponse
+    embedding_model_version: str = ""
+    retrieved_at: Optional[datetime] = None
+
+
+class RetrievalTraceResponse(BaseModel):
+    candidate_count: int
+    items: list[RetrievedItemResponse]
+    filters: dict[str, Any] = Field(default_factory=dict)
+    fusion_method: Optional[str] = None
+    backend_coverage: dict[str, int] = Field(default_factory=dict)
+    embedding_model_version: str = ""
+    generated_at: Optional[datetime] = None
+
+
 class DataEnvelope(BaseModel):
     data: Any
     meta: dict[str, Any]

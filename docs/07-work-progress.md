@@ -191,3 +191,32 @@
 - [x] 手动验证：ingest“美联储加息 25BP”样例 → 事件分类为 `macro_policy` → FactCard published 后自动生成影响分析 → 前端展示传导图与板块影响表。
 
 完成条件：宏观事件可进入研究管道；影响分析可独立版本化生成；前端能用图+表展示事件对股市、板块、宏观变量的传导影响；所有变更通过测试与 lint。
+
+## 12. 下一交付批次：Hybrid Retrieval（WP-07）
+
+目标：在已有向量/关键词/混合 DocumentChunk 检索基础上，补齐 Graph-like、Structured SQL、Time-series 检索与 Query Planner，并暴露统一检索 API。
+
+### 12.1 后端
+
+- [x] 撰写 `docs/design/05-hybrid-retrieval.md` LLD。
+- [x] 新增 `app/retrieval/planner.py`：规则化 Query Planner，支持实体解析、时间窗提取、事件类型识别、意图分类与后端选择。
+- [x] 扩展 `RetrievalService`：新增 `graph` / `sql` / `timeseries` / `planned` 检索模式；`planned` 模式调用 Planner 生成多路计划并用 `FusionService` 融合。
+- [x] Graph-like 检索基于 Event/Entity/Document 关系在 PostgreSQL 关系模型上实现，不引入图数据库；按跳数衰减打分。
+- [x] Structured SQL 检索按事件类型、时间范围、重要度过滤事件。
+- [x] Time-series 检索按时间窗倒序列出事件及相关文档块。
+- [x] 新增 `POST /api/v1/retrieval/retrieve` API，支持全部模式与 `as_of` 过滤。
+- [x] 补齐 `SqlAlchemyRepository.get_entity/save_entity` 包装方法，使 Planner 在 PostgreSQL 环境下可用。
+- [x] 新增 `tests/test_retrieval_planner.py`（4 用例）、`tests/test_retrieval_api.py`（5 用例）。
+
+### 12.2 文档
+
+- [x] 新增 `docs/design/05-hybrid-retrieval.md`。
+
+### 12.3 验证
+
+- [x] `uv run pytest -q` 全绿（全量 `433 passed / 1 skipped`，新增 9 个检索用例）。
+- [x] `uv run ruff check .` 变更文件通过。
+- [x] `cd web && npm run build && npm test -- --run` 全绿。
+- [x] 手动调用 `POST /api/v1/retrieval/retrieve` planned 模式返回带 `RetrievalTrace` 的多路融合结果。
+
+完成条件：检索 API 支持多后端计划执行；Graph/SQL/Time-series 召回可落地；新增测试覆盖；进度文档同步更新。

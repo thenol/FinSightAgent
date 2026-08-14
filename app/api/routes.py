@@ -40,6 +40,8 @@ from app.api.schemas import (
     NodeAttemptResponse,
     PipelineResponse,
     ReportTransitionRequest,
+    RetrievalRetrieveRequest,
+    RetrievalTraceResponse,
     ReviewDecisionRequest,
     ReviewTaskResponse,
     SourceCreateRequest,
@@ -50,7 +52,7 @@ from app.api.schemas import (
     WorkflowResponse,
     WorkflowResumeRequest,
 )
-from app.domain import AuditLog, Source, User
+from app.domain import AuditLog, RetrievalRequest, Source, User
 from app.ingestion.html_text import scrub_extracted_text
 from app.ingestion.seed_sources import seed_sources
 from app.model_gateway.config import (
@@ -76,6 +78,7 @@ from app.platform.repository import (
 )
 from app.publishing.citations import CitationResolver
 from app.publishing.service import FactCardService
+from app.retrieval.service import RetrievalService
 from app.workflows.service import WorkflowService
 
 router = APIRouter()
@@ -1957,6 +1960,36 @@ def get_impact_analysis(
     return DataEnvelope(
         data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
         meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post(
+    "/api/v1/retrieval/retrieve",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 422),
+)
+def retrieve_documents(
+    payload: RetrievalRetrieveRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    repository = request.app.state.repository
+    trace = RetrievalService(repository).retrieve(
+        RetrievalRequest(
+            query=payload.query,
+            embedding_model_version=payload.embedding_model_version,
+            top_k=payload.top_k,
+            as_of=payload.as_of,
+            chunk_types=payload.chunk_types,
+            source_tiers=payload.source_tiers,
+            min_score=payload.min_score,
+            retrieval_mode=payload.retrieval_mode,
+        )
+    )
+    return envelope(
+        RetrievalTraceResponse.model_validate(trace, from_attributes=True),
+        request.state.request_id,
     )
 
 

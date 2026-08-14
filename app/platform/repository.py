@@ -1791,6 +1791,13 @@ class SqlAlchemyRepository:
     def get_claims_for_event(self, event_id: str, as_of: Optional[datetime] = None) -> list[Claim]:
         return self._read(lambda repository: repository.get_claims_for_event(event_id, as_of))
 
+    def save_entity(self, value: Entity) -> None:
+        with self.transaction() as repository:
+            repository.save_entity(value)
+
+    def get_entity(self, entity_id: str) -> Optional[Entity]:
+        return self._read(lambda repository: repository.get_entity(entity_id))
+
     def get_fact_card(self, fact_card_id: str) -> Optional[FactCard]:
         return self._read(lambda repository: repository.get_fact_card(fact_card_id))
 

@@ -166,19 +166,15 @@
     Vector、Lexical、Graph、SQL 和 Time-series 全后端契约测试。
 
 - [-] **RAG-003：建设多路 Retrieval Data Plane。**
-  - Vector Retrieval 已落地：`RetrievalService` 支持 query embedding，PostgreSQL
-    路径使用 pgvector `<=>` 余弦距离 JOIN 召回，SQLite/内存路径回退应用层 brute-force。
-  - Lexical Retrieval 已落地：`RetrievalService` 支持 `retrieval_mode="lexical"`；
-    `Repository.find_document_chunks_by_keywords()` 使用 PostgreSQL `to_tsvector`/
-    `ts_rank_cd`/GIN 索引，SQLite/内存路径回退应用层关键词匹配；支持
-    `as_of`、`source_tier`、`chunk_type`、`min_score` 过滤和 TOP-K 返回。
-  - 剩余：Graph、Structured SQL、Time-series Retrieval，以及多路 Fusion、
-    Rerank、限流/熔断/部分降级策略。
+  - Vector / Lexical / Hybrid 已落地（见 07-work-progress）。
+  - Graph-like Retrieval 已落地：基于 Event/Entity/Document 关系在 PostgreSQL 上做关联召回，按跳数衰减打分。
+  - Structured SQL Retrieval 已落地：按事件类型、时间窗、重要度过滤事件。
+  - Time-series Retrieval 已落地：按时间窗倒序列出事件及相关文档块。
+  - 剩余：Rerank、限流/熔断/部分降级策略、专用向量/图存储选型。
 
-- [ ] **RAG-004：建设 Query Understanding 与 Retrieval Planner。**
-  - 提取意图、实体、市场、时间范围、数据类型、研究任务和证据要求。
-  - Planner 生成受 Schema 约束的并行检索计划，不允许模型执行任意 SQL/Cypher。
-  - 完成条件：计划可审计、可回放，并受工具权限、预算和 `as_of` 强制约束。
+- [-] **RAG-004：建设 Query Understanding 与 Retrieval Planner。**
+  - 规则化 Planner 已落地：`app/retrieval/planner.py` 支持实体最长匹配、ISO/相对时间窗提取、事件类型关键词映射、意图分类与后端选择；生成 `RetrievalPlan` 可被 `RetrievalService` 执行并写入 `RetrievalTrace`。
+  - 剩余：LLM 增强的意图/实体消歧、市场/数据类型识别、受 Schema 约束的复杂并行计划、预算与 `as_of` 强制策略。
 
 - [-] **RAG-005：建设 Fusion、Reranking 和 Context Assembly。**
   - 已落地：候选归一化（min-max）、RRF 与 weighted-score 融合、`chunk_id` 去重、
@@ -326,8 +322,8 @@ flowchart LR
    - 输出标准财务模型、行情模型、数据湖、ClickHouse 和计算服务设计。
 3. [ ] **WP-06：Knowledge Graph LLD**
    - 输出本体、关系来源、事实/推断分层、双时态和图谱纠错设计。
-4. [-] **WP-07：Hybrid Retrieval LLD（进行中）**
-   - 输出各检索后端、Planner、Fusion、Reranker、Context 和质量评测设计；在现有 `RetrievalService`/`FusionService` 基础上补齐 Graph/Structured SQL/Time-series 路、Retrieval Planner 与 Control Plane API。
+4. [x] **WP-07：Hybrid Retrieval LLD**
+   - 已输出 `docs/design/05-hybrid-retrieval.md`；新增 `app/retrieval/planner.py` 与 `RetrievalService` 的 `graph`/`sql`/`timeseries`/`planned` 模式；新增 `POST /api/v1/retrieval/retrieve`；验收证据：`tests/test_retrieval_planner.py`、`tests/test_retrieval_api.py`、`uv run pytest` 全绿。
 5. [ ] **WP-08：Agent Runtime LLD**
    - 输出动态 ResearchPlan、Agent Registry、LangGraph/Temporal 协作和记忆治理设计。
 6. [ ] **WP-03：平台 Schema 包**
