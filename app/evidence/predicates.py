@@ -3,19 +3,23 @@
 谓词使用版本化的受控词表（DD-40 §5）。未知谓词可提交候选，但进入
 ``unverified``（reason ``PREDICATE_UNSUPPORTED``），不得临时拼写新谓词绕过校验。
 
-词表按 MVP 五类事件定义。新增谓词需要升级 ``PREDICATE_VERSION`` 并补 Claim 模板。
+词表按一等事件类型定义。新增谓词需要升级 ``PREDICATE_VERSION`` 并补 Claim 模板。
 """
 
 from dataclasses import dataclass
 from typing import Optional
 
-PREDICATE_VERSION = "controlled-v2"
+PREDICATE_VERSION = "controlled-v3"
 
 # 受控谓词 -> {object_type, summary}。object_type 约束 ClaimNormalizer 接受的值类型。
 CONTROLLED_PREDICATES: dict[str, dict[str, str]] = {
     "document_discloses_event": {
         "object_type": "string",
         "summary": "文档披露了某类事件存在",
+    },
+    "geopolitical_action": {
+        "object_type": "string",
+        "summary": "主体采取地缘政治行动（开战/制裁/军演等）",
     },
     "expects_net_profit": {
         "object_type": "range",

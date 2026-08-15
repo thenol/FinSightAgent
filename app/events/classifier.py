@@ -1,13 +1,14 @@
 """事件分类器与 key_fields 抽取。
 
-EventClassifier 在五类 MVP 事件中分类并抽取结构化 ``key_fields``（DD-20 §4、
-IMP-021）。抽取使用确定性正则，不依赖模型；关键数字走规则，避免模型心算。
+EventClassifier 在一等事件类型（七类 MVP 词表）中分类并抽取结构化 ``key_fields``
+（DD-20 §4、DD-21、IMP-021）。抽取使用确定性正则，不依赖模型；关键数字走规则，
+避免模型心算。分类结果只作为 Router 的规则 hint，门控由 Router v2 相关性裁决承担。
 
 分类输出包含：事件类型、重要度、置信度、key_fields、缺失的必填字段。
 - 必填字段齐全 -> triaged。
 - 缺失必填字段 -> needs_review（不阻塞，进入审核补字段）。
-- 未命中五类但像财经资讯 -> general_market_news（dormant）。
-- 非财经/无法处理 -> out_of_scope（archived）。
+- 未命中一等类型但像财经资讯 -> general_market_news（规则 hint，由 Router 裁决）。
+- 非财经/无法处理 -> out_of_scope（规则 hint，由 Router 裁决）。
 
 置信度初始由命中关键词数与已抽取字段比例决定，需用标注集校准（IMP-021 完成条件）。
 """
@@ -78,7 +79,7 @@ class ClassificationResult:
 
 
 class EventClassifier:
-    """在五类 MVP 事件中分类并抽取 key_fields；未命中则分层到资讯/范围外。"""
+    """在一等事件类型中分类并抽取 key_fields；未命中则产出分层 hint 供 Router 裁决。"""
 
     def classify(self, document: Document) -> ClassificationResult:
         text = f"{document.title}\n{document.content}"
@@ -114,6 +115,8 @@ class EventClassifier:
     def _extract_fields(self, schema: EventSchema, text: str) -> dict[str, Any]:
         if schema.event_type == "macro_policy":
             return self._extract_macro_policy(text)
+        if schema.event_type == "geopolitical_event":
+            return self._extract_geopolitical(text)
         if schema.event_type == "earnings_guidance":
             return self._extract_earnings_guidance(text)
         if schema.event_type == "major_contract":
@@ -169,6 +172,40 @@ class EventClassifier:
         if date_match:
             year, month, day = date_match.group(1), date_match.group(2), date_match.group(3)
             fields["effective_date"] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+        return fields
+
+    def _extract_geopolitical(self, text: str) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        # 涉及方："X对Y开战/实施制裁"、"X与Y爆发武装冲突"
+        parties = re.search(
+            r"(?P<a>[一-龥]{2,10}?)(?:对|与|向|和)(?P<b>[一-龥]{2,10}?)"
+            r"(?:开战|宣战|发动战争|实施制裁|发起制裁|军事打击|发动空袭|爆发武装冲突|举行军演)",
+            text,
+        )
+        if parties:
+            fields["parties"] = f"{parties.group('a')}/{parties.group('b')}"
+
+        regions = ("中东", "波斯湾", "红海", "欧洲", "东欧", "亚太", "南海", "台海", "非洲", "拉美")
+        for region in regions:
+            if region in text:
+                fields["region"] = region
+                break
+
+        for action, words in {
+            "war": ("开战", "宣战", "发动战争", "入侵"),
+            "strike": ("军事打击", "空袭", "导弹袭击", "恐怖袭击"),
+            "sanction": ("制裁",),
+            "military_exercise": ("军演", "军事演习"),
+            "coup": ("政变",),
+        }.items():
+            if any(word in text for word in words):
+                fields["action"] = action
+                break
+
+        commodities = [name for name in ("原油", "石油", "黄金", "天然气", "航运") if name in text]
+        if commodities:
+            fields["commodities"] = "/".join(commodities)
 
         return fields
 

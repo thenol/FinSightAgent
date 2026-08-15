@@ -14,6 +14,22 @@ from typing import Optional
 SCHEMA_VERSION = "event-schema-v1"
 
 # 宏观政策类事件独立关键词，避免与公司事件混淆
+GEOPOLITICAL_KEYWORDS = (
+    "开战",
+    "宣战",
+    "战争",
+    "军事打击",
+    "空袭",
+    "导弹袭击",
+    "制裁",
+    "军演",
+    "军事演习",
+    "政变",
+    "恐怖袭击",
+    "入侵",
+    "武装冲突",
+)
+
 MACRO_POLICY_KEYWORDS = (
     "加息",
     "降息",
@@ -70,6 +86,23 @@ class EventSchema:
 
 
 EVENT_SCHEMAS: dict[str, EventSchema] = {
+    "geopolitical_event": EventSchema(
+        event_type="geopolitical_event",
+        keywords=GEOPOLITICAL_KEYWORDS,
+        importance=0.95,
+        fields=(
+            FieldSpec("parties", "string", required=True, description="涉及方，如 美国/伊朗"),
+            FieldSpec("region", "string", required=True, description="事发地区，如 中东"),
+            FieldSpec("action", "string", description="行动类型，如 war/sanction/strike"),
+            FieldSpec("commodities", "string", description="关联商品，如 原油/黄金"),
+        ),
+        claim_predicate="geopolitical_action",
+        claim_object_type="string",
+        claim_templates=(
+            ClaimTemplate("action", "geopolitical_action", "string"),
+        ),
+        conflict_rules=("subject", "scope", "semantic"),
+    ),
     "macro_policy": EventSchema(
         event_type="macro_policy",
         keywords=MACRO_POLICY_KEYWORDS,
@@ -181,10 +214,11 @@ EVENT_SCHEMAS: dict[str, EventSchema] = {
     ),
 }
 
-# 按优先级排序：宏观政策 > 监管处罚 > 并购重组 > 减持 > 重大合同 > 业绩预告
+# 按优先级排序：宏观政策 > 地缘事件 > 监管处罚 > 并购重组 > 减持 > 重大合同 > 业绩预告
 # （避免一篇同时含"重组"和"合同"的公告被误判为低优先级类型）
 EVENT_TYPE_PRIORITY = (
     "macro_policy",
+    "geopolitical_event",
     "regulatory_penalty",
     "merger_acquisition",
     "shareholder_reduction",
@@ -272,6 +306,15 @@ def is_mvp_event_type(event_type: str) -> bool:
 
 def is_non_mvp_event_type(event_type: str) -> bool:
     return event_type in NON_MVP_EVENT_TYPES
+
+
+def is_candidate_event_type(event_type: str) -> bool:
+    """候选类型：Router LLM 开放分类产出的一等词表外标签（DD-21 §2.4）。"""
+    return (
+        bool(event_type)
+        and not is_mvp_event_type(event_type)
+        and not is_non_mvp_event_type(event_type)
+    )
 
 
 def looks_like_finance_news(text: str) -> bool:

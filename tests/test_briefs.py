@@ -16,11 +16,12 @@ def _seed_report(
     published_at: datetime,
     version: int = 1,
     report_type: str = "research_card",
+    event_type: str = "earnings_guidance",
 ) -> None:
     repository.save_event(
         Event(
             id=event_id,
-            event_type="earnings_guidance",
+            event_type=event_type,
             status="triaged",
             title=f"事件 {event_id}",
             entity_ids=entity_ids,
@@ -242,3 +243,31 @@ def test_brief_excludes_reports_outside_date_range() -> None:
 
     assert brief.candidate_count == 1
     assert brief.entries[0].event_id == "evt_in"
+
+
+def test_brief_excludes_candidate_type_events() -> None:
+    """候选类型事件（Router 开放分类、待人工确认）不进每日简报（DD-21 §2.4）。"""
+    repository = InMemoryRepository()
+    day = datetime(2026, 7, 12, 10, 0, tzinfo=timezone.utc)
+    _seed_report(
+        repository,
+        event_id="evt_normal",
+        entity_ids=["000001.SZ"],
+        importance=0.6,
+        urgency="normal",
+        published_at=day,
+    )
+    _seed_report(
+        repository,
+        event_id="evt_candidate",
+        entity_ids=["000002.SZ"],
+        importance=0.95,
+        urgency="high",
+        published_at=day,
+        event_type="geopolitical_crisis",  # 一等词表外的候选标签
+    )
+
+    brief = BriefService(repository).generate(date(2026, 7, 12))
+
+    assert brief.candidate_count == 1
+    assert brief.entries[0].event_id == "evt_normal"

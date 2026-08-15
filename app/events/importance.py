@@ -38,8 +38,14 @@ class ImportanceCalculator:
         key_fields: dict[str, Any],
         published_at: datetime,
         now: Optional[datetime] = None,
+        type_baseline_override: Optional[float] = None,
     ) -> ImportanceScore:
-        type_baseline = self._type_baseline(event_type)
+        # 候选类型（Router LLM 开放分类产出）无规则基线，由 Router 建议值替代（DD-21 §2.6）
+        type_baseline = (
+            min(1.0, max(0.0, type_baseline_override))
+            if type_baseline_override is not None
+            else self._type_baseline(event_type)
+        )
         tier_score = self._tier_score(source_tier)
         magnitude_score = self._magnitude_score(event_type, key_fields)
         severity_score = self._severity_score(event_type, key_fields)

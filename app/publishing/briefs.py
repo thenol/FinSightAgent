@@ -8,12 +8,14 @@ BriefService 从当日已发布且允许进入简报的报告生成去重 Top-N 
 规则：
 - 同一 Event 只保留最新版本。
 - 同一公司默认最多两条，除非存在 critical 事件。
+- 候选类型（Router 开放分类、待人工确认）事件不进入简报（DD-21 §2.4）。
 - Brief 保存候选集、分数、规则版本和最终顺序，不重新调用研究 Agent（稳定重放）。
 """
 
 from datetime import date, datetime, timedelta, timezone
 
 from app.domain import Brief, BriefEntry, Event, FactCard
+from app.events.schemas import is_candidate_event_type
 from app.platform.ids import new_id
 from app.platform.repository import Repository
 
@@ -69,6 +71,9 @@ class BriefService:
         for report in latest_per_event.values():
             event = events.get(report.event_id)
             if event is None:
+                continue
+            # 候选类型事件（Router 开放分类、待人工确认）不进每日简报（DD-21 §2.4）
+            if is_candidate_event_type(event.event_type):
                 continue
             entry = self._score_entry(report, event)
             scored.append((entry, event))

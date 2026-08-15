@@ -11,6 +11,7 @@
 | DD-00 | [共享约定](./00-shared-conventions.md) | 全部 P0 | 初稿 |
 | DD-10 | [数据接入详细设计](./10-ingestion.md) | FR-001、AC-001 | 初稿 |
 | DD-20 | [事件中心详细设计](./20-event-center.md) | FR-002、FR-003、AC-002～AC-004 | 初稿 |
+| DD-21 | [事件分流 v2：评分门控与开放分类](./21-event-triage-v2.md) | FR-002、FR-003 | 初稿 |
 | DD-30 | [MVP 物理数据模型](./30-storage-schema.md) | AC-001～AC-004、NFR-003～NFR-004 | 初稿 |
 | DD-40 | [证据中心详细设计](./40-evidence-center.md) | FR-004、AC-005、AC-011 | 初稿 |
 | DD-50 | [研究工作流详细设计](./50-research-workflow.md) | FR-005～FR-006、AC-006～AC-010 | 初稿 |

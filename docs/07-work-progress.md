@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-08-15（WP-08 Agent Runtime 已交付，含动态研究工作台前端）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-15（WP-08 Agent Runtime 已交付含动态研究前端；事件分流 v2/DD-21 已交付）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -256,3 +256,32 @@
 - [ ] 研究记忆与分层 Blackboard：区分运行时状态、工作区记忆和已验证知识。
 
 完成条件：研究问题可生成动态计划；Agent Registry 可注册/查找 Specialist Agent；动态计划可被工作流引擎执行并产生可追溯结果。
+
+## 14. 下一交付批次：事件分流 v2（DD-21）
+
+目标：事件门控从"类型白名单"改为"相关性 + 重要度评分"，类型降级为输出标签；规则词表外的重大事件（地缘冲突、自然灾害等）不再被静默归档。
+
+### 14.1 已交付
+
+- [x] 撰写 `docs/design/21-event-triage-v2.md` LLD 与 ADR-021。
+- [x] Router 契约升级 v2：`RouterOutput` 改为 `relevance`（relevant/irrelevant/unsure）+ `event_type`（标签）+ `importance` + `confidence`；新增 `ROUTER_SYSTEM_PROMPT` 明确开放分类职责；`ROUTER_SCHEMA_VERSION=v2`。
+- [x] 门控语义变更：`irrelevant` → archived（`out_of_scope` 语义重定义为"无经济相关性"）；`unsure` → dormant；`relevant` 进入研究管道。确定性回退与 v1 行为完全一致（不放行未知类型）。
+- [x] 候选类型（candidate type）：LLM 产出的一等词表外 snake_case 标签落库为 `event_type`，`classifier_version=event-router-v2-candidate`，强制 `needs_review`（`candidate_type_confirmation`）；重要度类型基线由 Router 建议值替代（`ImportanceCalculator.type_baseline_override`）；非法标签（保留字冲突/非 snake_case）自动降级 unsure；候选事件 Claim 生成走 legacy 谓词回退，不崩溃；候选事件不进每日简报（`BriefService` 过滤）。
+- [x] 新增一等类型 `geopolitical_event`：关键词（开战/宣战/制裁/军演/政变/恐怖袭击等）、key_fields 抽取（parties/region/action/commodities）、importance 基线 0.95、优先级紧随 macro_policy；新增受控谓词 `geopolitical_action`，`PREDICATE_VERSION` 升至 `controlled-v3`。
+- [x] `event.router_decision` 审计扩展：`relevance`/`importance`/`is_candidate_type`/`router_schema_version`。
+
+### 14.2 验证
+
+- [x] `tests/test_event_router.py` 重写为 v2 契约（12 用例，含 LLM stub 候选类型、非法标签降级、irrelevant 归档、候选类型端到端）。
+- [x] `tests/test_classifier.py` 新增 geopolitical 抽取/必填缺失/Claim 模板用例（3 个）。
+- [x] `tests/test_briefs.py` 新增候选类型排除用例。
+- [x] `uv run pytest -q` 全绿，`uv run ruff check .` 全绿。
+
+### 14.3 后续迭代
+
+- [ ] 候选类型积累阈值统计与升格操作（`FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD`，默认 5；本轮仅落库标记）。
+- [ ] 审核风险分层路由（高置信低风险自动放行）。
+- [ ] 重要度动态化（来源密度/传播速度/市场反馈参与计算）。
+- [ ] 真实 LLM 端到端验证（DeepSeek 对"美国对伊朗开战"类样本的开放分类质量）。
+
+完成条件：规则词表外的重大经济事件不再被静默丢弃；LLM 开放分类产出受 Schema 约束；确定性回退与 v1 完全兼容；所有变更通过测试与 lint。

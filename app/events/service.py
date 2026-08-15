@@ -7,7 +7,11 @@ from app.domain import Document, Event, MergeReviewTask
 from app.events.classifier import ClassificationResult, EventClassifier
 from app.events.entities import EntityResolver
 from app.events.importance import ImportanceCalculator
-from app.events.schemas import GENERAL_MARKET_NEWS, is_non_mvp_event_type
+from app.events.schemas import (
+    GENERAL_MARKET_NEWS,
+    is_candidate_event_type,
+    is_non_mvp_event_type,
+)
 from app.events.time_parser import DeterministicEventTimeParser, EventTimeResolution
 from app.platform.ids import new_id
 from app.platform.repository import Repository
@@ -89,6 +93,10 @@ class EventService:
             source_tier=document.source_tier,
             key_fields=result.key_fields,
             published_at=document.published_at,
+            # 候选类型无规则基线，以 Router 建议重要度替代（DD-21 §2.6）
+            type_baseline_override=(
+                result.importance if is_candidate_event_type(result.event_type) else None
+            ),
         )
 
         event = Event(

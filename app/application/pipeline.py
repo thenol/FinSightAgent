@@ -125,7 +125,7 @@ class EventResearchPipeline:
                 _, _, _, disclosure_group = doc_intel.process(document)
                 disclosure_group_id = disclosure_group.id
 
-                # 规则提名 → Router 确认 → 仅 accept 的五类进入可研究状态
+                # 规则提名 → Router v2 相关性裁决 → relevant 的一等/候选类型进入可研究状态
                 rule_hint = router.propose(document)
                 router_decision = router.route(document, rule_hint=rule_hint)
                 classification = router.merge_classification(rule_hint, router_decision)
@@ -164,14 +164,17 @@ class EventResearchPipeline:
                             object_id=event.id,
                             request_id=None,
                             details={
-                                "decision": router_decision.decision,
+                                "relevance": router_decision.relevance,
                                 "event_type": router_decision.event_type,
+                                "importance": router_decision.importance,
+                                "is_candidate_type": router_decision.is_candidate_type,
                                 "rule_hint_type": router_decision.rule_hint_type,
                                 "confidence": router_decision.confidence,
                                 "required_agents": list(router_decision.required_agents),
                                 "reason": router_decision.reason,
                                 "model_run_id": router_decision.model_run_id,
                                 "used_fallback": router_decision.used_fallback,
+                                "router_schema_version": "v2",
                             },
                             created_at=datetime.now(timezone.utc),
                         )

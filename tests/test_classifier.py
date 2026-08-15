@@ -219,13 +219,15 @@ def test_claim_template_for_each_event_type() -> None:
     assert claim_template_for("out_of_scope") is None
 
 
-def test_all_five_event_types_have_schemas() -> None:
+def test_all_mvp_event_types_have_schemas() -> None:
     expected = {
         "earnings_guidance",
         "major_contract",
         "merger_acquisition",
         "shareholder_reduction",
         "regulatory_penalty",
+        "macro_policy",
+        "geopolitical_event",
     }
     assert expected.issubset(EVENT_SCHEMAS.keys())
     for schema in EVENT_SCHEMAS.values():
@@ -235,3 +237,42 @@ def test_all_five_event_types_have_schemas() -> None:
 
 def test_schema_for_keywords_returns_none_when_unmatched() -> None:
     assert schema_for_keywords("一段不含任何事件关键词的文字") is None
+
+
+def test_geopolitical_event_extracts_parties_region_and_action() -> None:
+    classifier = EventClassifier()
+    document = make_document(
+        "美国对伊朗开战",
+        "美国对伊朗开战，中东局势骤然升级，霍尔木兹海峡航运风险上升，原油价格跳涨。",
+    )
+    result = classifier.classify(document)
+
+    assert result.event_type == "geopolitical_event"
+    assert result.key_fields["parties"] == "美国/伊朗"
+    assert result.key_fields["region"] == "中东"
+    assert result.key_fields["action"] == "war"
+    assert "原油" in result.key_fields["commodities"]
+    assert result.missing_required == []
+    assert not result.needs_review
+    assert result.importance == 0.95
+
+
+def test_geopolitical_event_missing_required_goes_needs_review() -> None:
+    classifier = EventClassifier()
+    document = make_document(
+        "突发军事冲突",
+        "凌晨发生导弹袭击，具体涉事方与地点尚待确认。",
+    )
+    result = classifier.classify(document)
+
+    assert result.event_type == "geopolitical_event"
+    assert "parties" in result.missing_required
+    assert "region" in result.missing_required
+    assert result.needs_review
+
+
+def test_geopolitical_claim_template_uses_controlled_predicate() -> None:
+    template = claim_template_for("geopolitical_event")
+    assert template is not None
+    assert template["predicate"] == "geopolitical_action"
+    assert template["object_type"] == "string"
