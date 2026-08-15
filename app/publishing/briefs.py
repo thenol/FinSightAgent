@@ -75,6 +75,9 @@ class BriefService:
             # 候选类型事件（Router 开放分类、待人工确认）不进每日简报（DD-21 §2.4）
             if is_candidate_event_type(event.event_type):
                 continue
+            # cold/archived 事件不进简报（DD-22 §2.2）
+            if event.status in {"cold", "archived"}:
+                continue
             entry = self._score_entry(report, event)
             scored.append((entry, event))
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis.worker import ImpactAnalysisWorker
 from app.application.pipeline import EventResearchPipeline
+from app.events.reevaluation import ReevaluationService
 from app.ingestion.artifacts import LocalArtifactStore
 from app.ingestion.rss import RssFeedClient
 from app.ingestion.scheduler import build_source_scheduler
@@ -113,6 +114,26 @@ async def run_source() -> None:
         await client.close()
 
 
+async def run_reevaluate() -> None:
+    settings = Settings.from_environment()
+    if settings.repository != "postgresql":
+        raise RuntimeError("Reevaluation worker requires FINSIGHT_REPOSITORY=postgresql")
+    repository = SqlAlchemyRepository(settings.database_url)
+    service = ReevaluationService(repository)
+    interval = max(5, int(os.getenv("FINSIGHT_REEVALUATE_INTERVAL_SECONDS", "60")))
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for event in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(event, stop.set)
+
+    while not stop.is_set():
+        await asyncio.to_thread(service.run_once)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+
+
 @contextmanager
 def claim_workflow_run(
     repository: SqlAlchemyRepository,
@@ -185,7 +206,9 @@ def _workflow_lock_key(workflow_id: str) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FinSightAgent background worker")
-    parser.add_argument("worker", choices=["outbox", "workflow", "source", "impact-analysis"])
+    parser.add_argument(
+        "worker", choices=["outbox", "workflow", "source", "impact-analysis", "reevaluate"]
+    )
     arguments = parser.parse_args()
     if arguments.worker == "outbox":
         asyncio.run(run_outbox())
@@ -195,6 +218,8 @@ def main() -> None:
         asyncio.run(run_source())
     if arguments.worker == "impact-analysis":
         asyncio.run(run_impact_analysis())
+    if arguments.worker == "reevaluate":
+        asyncio.run(run_reevaluate())
 
 
 if __name__ == "__main__":

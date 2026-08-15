@@ -137,6 +137,19 @@
 - 影响：`event_route` 输出契约升级 v2（`relevance`/`importance` 字段）；`out_of_scope` 语义重定义为"无经济相关性"；新增 `geopolitical_event` 一等类型与 `geopolitical_action` 谓词；候选类型事件可触发工作流与影响分析但不进每日简报。详见 DD-21。
 - 复审条件：候选类型误判率超标，或 LLM 路由成本超预算。
 
+### ADR-022：事件无终态——cold 状态与监听重估（Watch Triggers）
+
+- 状态：已接受
+- 日期：2026-08-15
+- 背景：ADR-021 消除了类型门控，但 `irrelevant → archived` 仍是终态，入口裁决建立在信息最少的时刻，误判使系统在滞后升级的重大事件上永久失明。
+- 决策：
+  - Router 判 `irrelevant` 的事件落 `cold` 状态而非 `archived`：信息完整保留、可被检索与动态研究触达、可被重估升级；`archived` 仅保留为人工显式归档语义；
+  - 事件落 `cold`/`dormant` 时自动注册监听条件（`watch_triggers` 表：source_cluster / source_upgrade），由重估 Worker 周期检查，命中即升级为 needs_review 并留审计；
+  - 重估是常态运行而非"复活"特例。
+- 备选：保留终态归档（信息负债）；全部事件无差别深度分析（注意力与预算失控）。
+- 影响：事件状态机新增 `cold`；新增 `watch_triggers` 表与 `app.worker reevaluate` 命令；检索覆盖全量文档成为显式不变量。详见 DD-22。
+- 复审条件：cold 事件积累量导致存储/治理压力，或重估升级误报率超标。
+
 ## 5. 待确认决策
 
 | 候选 ID | 问题 | 需要的输入 | 决策负责人 |

@@ -515,6 +515,19 @@ class MergeReviewTaskModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class WatchTriggerModel(Base):
+    __tablename__ = "watch_triggers"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    trigger_type: Mapped[str] = mapped_column(String(32), index=True)
+    condition: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="armed", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class MatchDecisionModel(Base):
     __tablename__ = "match_decisions"
     __table_args__ = {"schema": "events"}

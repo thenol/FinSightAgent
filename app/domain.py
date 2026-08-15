@@ -446,6 +446,23 @@ class MergeReviewTask:
 
 
 @dataclass(frozen=True)
+class WatchTrigger:
+    """冷/休眠事件的监听条件（DD-22 §2.3）。
+
+    Agent 在入口裁决时显式声明"什么信号会改变我的判断"；重估 Worker
+    周期检查 armed 触发器，命中即升级为 needs_review 并留审计。
+    """
+
+    id: str
+    event_id: str
+    trigger_type: str  # source_cluster | source_upgrade | market_signal | user_query
+    condition: dict[str, Any]
+    status: str = "armed"  # armed | fired | cancelled
+    created_at: Optional[datetime] = None
+    fired_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class MatchFeatures:
     """事件匹配特征分项，用于解释 match_score。"""
 

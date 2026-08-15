@@ -212,7 +212,7 @@ class EventResearchPipeline:
             return
         if not is_new_event:
             return
-        if event.status in {"dormant", "archived"}:
+        if event.status in {"dormant", "archived", "cold"}:
             return
         if event.importance < self.settings.workflow_auto_importance_threshold:
             return

@@ -123,7 +123,7 @@ class FactCardService:
         event = self.repository.get_event(event_id)
         if event is None:
             return
-        if event.status in {"dormant", "archived"}:
+        if event.status in {"dormant", "archived", "cold"}:
             return
         if event.importance < self.settings.auto_impact_analysis_importance_threshold:
             return

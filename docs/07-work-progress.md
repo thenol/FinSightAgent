@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-08-15（WP-08 Agent Runtime 已交付含动态研究前端；事件分流 v2/DD-21 已交付）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-15（WP-08 Agent Runtime 已交付含动态研究前端；事件分流 v2/DD-21 与全量记忆重估/DD-22 已交付）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -285,3 +285,32 @@
 - [ ] 真实 LLM 端到端验证（DeepSeek 对"美国对伊朗开战"类样本的开放分类质量）。
 
 完成条件：规则词表外的重大经济事件不再被静默丢弃；LLM 开放分类产出受 Schema 约束；确定性回退与 v1 完全兼容；所有变更通过测试与 lint。
+
+## 15. 下一交付批次：全量记忆与监听重估（DD-22）
+
+目标：移除事件入口的终态裁决——`irrelevant` 不再归档，落 `cold`（可检索、挂监听、可重估）；Agent 动作空间收敛为"记住 / 理解打标 / 决定深度 / 设置监听"。
+
+### 15.1 已交付
+
+- [x] 撰写 `docs/design/22-watch-triggers.md` LLD 与 ADR-022。
+- [x] 事件状态机：`irrelevant`（out_of_scope）落 `cold` 而非 `archived`；`archived` 仅保留人工显式归档语义；`cold` 不触发自动工作流（pipeline）、不自动生成影响分析（publishing）、不进每日简报（briefs 同时排除 cold/archived）。
+- [x] 新增 `WatchTrigger` 领域模型、`events.watch_triggers` 表与迁移 `20260815_0020`；Repository 协议 + InMemory + SqlAlchemy 三层实现。
+- [x] `EventService._persist_event` 对 cold/dormant 事件自动注册两个监听条件：`source_cluster`（独立来源 ≥3）与 `source_upgrade`（更高信任等级来源）。
+- [x] 新增 `ReevaluationService`：扫描 armed 触发器，命中即升级事件 cold/dormant → needs_review（`reevaluation_confirm`）、触发器 fired、审计 `event.reevaluated` 含证据；事件已不可重估时触发器自动 cancelled。
+- [x] 新增 Worker 命令 `uv run python -m app.worker reevaluate`（周期扫描，`FINSIGHT_REEVALUATE_INTERVAL_SECONDS`）。
+- [x] 显式声明检索不变量：Hybrid Retrieval 以 DocumentChunk 为粒度不按事件状态过滤，cold 事件文档天然可被检索与动态研究触达。
+
+### 15.2 验证
+
+- [x] 新增 `tests/test_reevaluation.py`（7 用例：cold 落位、触发器注册、聚集触发升级、来源升级触发、未命中保持 armed、人工归档后触发器取消、cold 不触发自动工作流）。
+- [x] `uv run pytest -q` 全绿（494 passed / 1 skipped）；`uv run ruff check` 变更文件全绿。
+
+### 15.3 后续迭代
+
+- [ ] `market_signal` 触发器（行情异动回扫冷文档，依赖真实行情数据接入）。
+- [ ] `user_query` 触发器（动态研究检索命中冷文档时触发正式事件化，需检索埋点）。
+- [ ] 展示层排序视图（简报/审核按分数排序 + 可展开全部，替代状态过滤）。
+- [ ] 大型受控分类法治理流程（候选类型评审入词表的后台操作）。
+- [ ] 重估升级后自动重启研究管道的深度衔接（当前停在 needs_review 人工确认）。
+
+完成条件：Router 不再自动产出终态归档；cold/dormant 事件挂监听条件并可被信号升级；重估全程留审计；所有变更通过测试与 lint。

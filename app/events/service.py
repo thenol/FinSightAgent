@@ -3,12 +3,13 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from app.domain import Document, Event, MergeReviewTask
+from app.domain import Document, Event, MergeReviewTask, WatchTrigger
 from app.events.classifier import ClassificationResult, EventClassifier
 from app.events.entities import EntityResolver
 from app.events.importance import ImportanceCalculator
 from app.events.schemas import (
     GENERAL_MARKET_NEWS,
+    OUT_OF_SCOPE,
     is_candidate_event_type,
     is_non_mvp_event_type,
 )
@@ -81,8 +82,11 @@ class EventService:
 
         if result.event_type == GENERAL_MARKET_NEWS:
             status = "dormant"
+        elif result.event_type == OUT_OF_SCOPE:
+            # DD-22：无经济相关性落 cold（可检索、可重估），不再是终态 archived
+            status = "cold"
         elif is_non_mvp_event_type(result.event_type):
-            status = "archived"
+            status = "archived"  # 历史 unsupported 等保留归档语义
         elif result.needs_review:
             status = "needs_review"
         else:
@@ -119,6 +123,8 @@ class EventService:
         self._time_resolutions[event.id] = time_resolution
         self.repository.save_event(event)
         self.repository.save_event_entities(event.id, links)
+        if status in {"cold", "dormant"}:
+            self._arm_default_watch_triggers(event, document)
         for candidate in ambiguous:
             task = MergeReviewTask(
                 id=new_id("mrt"),
@@ -130,6 +136,35 @@ class EventService:
             self.repository.save_merge_review_task(task)
             AutoReviewService(self.repository).attempt_merge_review(task)
         return event
+
+    def _arm_default_watch_triggers(self, event: Event, document: Document) -> None:
+        """为 cold/dormant 事件注册默认监听条件（DD-22 §2.3）。
+
+        Agent 在入口裁决时显式声明"什么信号会改变我的判断"：
+        - source_cluster：同事件独立来源数 >= 3（聚集信号）；
+        - source_upgrade：出现比当前来源更高信任等级的报道（来源升级信号）。
+        """
+        now = datetime.now(timezone.utc)
+        triggers = (
+            WatchTrigger(
+                id=new_id("wtr"),
+                event_id=event.id,
+                trigger_type="source_cluster",
+                condition={"min_sources": 3},
+                status="armed",
+                created_at=now,
+            ),
+            WatchTrigger(
+                id=new_id("wtr"),
+                event_id=event.id,
+                trigger_type="source_upgrade",
+                condition={"baseline_tier": document.source_tier},
+                status="armed",
+                created_at=now,
+            ),
+        )
+        for trigger in triggers:
+            self.repository.save_watch_trigger(trigger)
 
     def attach_document_to_event(self, event: Event, document: Document) -> Event:
         """将同一事件的新来源或新公告关联到现有 Event。"""

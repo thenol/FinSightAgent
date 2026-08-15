@@ -50,6 +50,7 @@ from app.domain import (
     Source,
     ToolCall,
     User,
+    WatchTrigger,
     WorkflowRun,
 )
 from app.platform.asof import visible_as_of
@@ -95,6 +96,7 @@ from app.platform.db_models import (
     SourceModel,
     ToolCallModel,
     UserModel,
+    WatchTriggerModel,
     WorkflowRunModel,
 )
 from app.platform.ids import new_id
@@ -462,6 +464,19 @@ class Repository(Protocol):
 
     def update_merge_review_task(self, task: MergeReviewTask) -> None: ...
 
+    def save_watch_trigger(self, trigger: WatchTrigger) -> None: ...
+
+    def get_watch_trigger(self, trigger_id: str) -> Optional[WatchTrigger]: ...
+
+    def list_watch_triggers(
+        self,
+        status: Optional[str] = None,
+        event_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[WatchTrigger]: ...
+
+    def update_watch_trigger(self, trigger: WatchTrigger) -> None: ...
+
     def save_match_decision(self, decision: MatchDecision) -> None: ...
 
     def list_match_decisions(self, document_id: str) -> list[MatchDecision]: ...
@@ -702,6 +717,7 @@ class InMemoryRepository:
         self.securities: dict[str, Security] = {}
         self.event_entities: dict[str, list[EntityLink]] = {}
         self.merge_review_tasks: list[MergeReviewTask] = []
+        self.watch_triggers: dict[str, WatchTrigger] = {}
         self.match_decisions: list[MatchDecision] = []
         self.evidence: dict[str, EvidenceSpan] = {}
         self.claims: dict[str, Claim] = {}
@@ -1392,6 +1408,34 @@ class InMemoryRepository:
             task if t.id == task.id else t for t in self.merge_review_tasks
         ]
 
+    def save_watch_trigger(self, trigger: WatchTrigger) -> None:
+        self.watch_triggers[trigger.id] = trigger
+
+    def get_watch_trigger(self, trigger_id: str) -> Optional[WatchTrigger]:
+        return self.watch_triggers.get(trigger_id)
+
+    def list_watch_triggers(
+        self,
+        status: Optional[str] = None,
+        event_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[WatchTrigger]:
+        triggers = [
+            t
+            for t in self.watch_triggers.values()
+            if (status is None or t.status == status)
+            and (event_id is None or t.event_id == event_id)
+        ]
+        triggers.sort(key=lambda t: (t.created_at or datetime.min, t.id))
+        if limit:
+            triggers = triggers[:limit]
+        return triggers
+
+    def update_watch_trigger(self, trigger: WatchTrigger) -> None:
+        if trigger.id not in self.watch_triggers:
+            raise KeyError(f"WatchTrigger not found: {trigger.id}")
+        self.watch_triggers[trigger.id] = trigger
+
     def save_match_decision(self, decision: MatchDecision) -> None:
         self.match_decisions.append(decision)
 
@@ -2069,6 +2113,27 @@ class SqlAlchemyRepository:
     def update_merge_review_task(self, task: MergeReviewTask) -> None:
         with self.transaction() as repository:
             repository.update_merge_review_task(task)
+
+    def save_watch_trigger(self, trigger: WatchTrigger) -> None:
+        with self.transaction() as repository:
+            repository.save_watch_trigger(trigger)
+
+    def get_watch_trigger(self, trigger_id: str) -> Optional[WatchTrigger]:
+        return self._read(lambda repository: repository.get_watch_trigger(trigger_id))
+
+    def list_watch_triggers(
+        self,
+        status: Optional[str] = None,
+        event_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[WatchTrigger]:
+        return self._read(
+            lambda repository: repository.list_watch_triggers(status, event_id, limit)
+        )
+
+    def update_watch_trigger(self, trigger: WatchTrigger) -> None:
+        with self.transaction() as repository:
+            repository.update_watch_trigger(trigger)
 
     def get_api_idempotent(self, key: str) -> Optional[ApiIdempotencyRecord]:
         return self._read(lambda repository: repository.get_api_idempotent(key))
@@ -3540,6 +3605,51 @@ class SqlAlchemyTransaction:
         model.decided_at = value.decided_at
         self.session.flush()
 
+    def save_watch_trigger(self, value: WatchTrigger) -> None:
+        self.session.add(
+            WatchTriggerModel(
+                id=value.id,
+                event_id=value.event_id,
+                trigger_type=value.trigger_type,
+                condition=value.condition,
+                status=value.status,
+                created_at=value.created_at or datetime.now(timezone.utc),
+                fired_at=value.fired_at,
+            )
+        )
+        self.session.flush()
+
+    def get_watch_trigger(self, trigger_id: str) -> Optional[WatchTrigger]:
+        model = self.session.get(WatchTriggerModel, trigger_id)
+        return _watch_trigger(model) if model else None
+
+    def list_watch_triggers(
+        self,
+        status: Optional[str] = None,
+        event_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list[WatchTrigger]:
+        statement = select(WatchTriggerModel).order_by(
+            WatchTriggerModel.created_at, WatchTriggerModel.id
+        )
+        if status:
+            statement = statement.where(WatchTriggerModel.status == status)
+        if event_id:
+            statement = statement.where(WatchTriggerModel.event_id == event_id)
+        if limit:
+            statement = statement.limit(limit)
+        models = self.session.scalars(statement)
+        return [_watch_trigger(model) for model in models]
+
+    def update_watch_trigger(self, value: WatchTrigger) -> None:
+        model = self.session.get(WatchTriggerModel, value.id)
+        if not model:
+            raise KeyError(f"WatchTrigger not found: {value.id}")
+        model.status = value.status
+        model.condition = value.condition
+        model.fired_at = value.fired_at
+        self.session.flush()
+
     def save_match_decision(self, value: MatchDecision) -> None:
         self.session.add(
             MatchDecisionModel(
@@ -4830,6 +4940,18 @@ def _merge_review_task(value: MergeReviewTaskModel) -> MergeReviewTask:
         reviewer_id=value.reviewer_id,
         decided_at=value.decided_at,
         created_at=value.created_at,
+    )
+
+
+def _watch_trigger(value: WatchTriggerModel) -> WatchTrigger:
+    return WatchTrigger(
+        id=value.id,
+        event_id=value.event_id,
+        trigger_type=value.trigger_type,
+        condition=value.condition if value.condition else {},
+        status=value.status,
+        created_at=value.created_at,
+        fired_at=value.fired_at,
     )
 
 
