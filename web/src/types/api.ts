@@ -346,3 +346,56 @@ export type ImpactAnalysis = {
   supersedes_id?: string | null;
   created_at?: string | null;
 };
+
+export type ResearchTask = {
+  id: string;
+  plan_id: string;
+  name: string;
+  agent_key: string;
+  description: string;
+  dependencies: string[];
+  required: boolean;
+  status: string;
+  input_fields: string[];
+  output_field?: string | null;
+  output_schema?: string | null;
+  output_snapshot?: Record<string, unknown> | null;
+  review_reason?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  created_at?: string | null;
+};
+
+export type ResearchPlan = {
+  id: string;
+  workflow_id: string;
+  question: string;
+  objective: string;
+  as_of: string;
+  status: string;
+  budget_profile: string;
+  completion_criteria: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  tasks: ResearchTask[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ResearchPlanListItem = {
+  id: string;
+  workflow_id: string;
+  question: string;
+  objective: string;
+  as_of: string;
+  status: string;
+  budget_profile: string;
+  metadata: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ResearchBlackboard = {
+  workflow_id: string;
+  research_plan: Record<string, unknown>;
+  task_outputs: Record<string, unknown>;
+};

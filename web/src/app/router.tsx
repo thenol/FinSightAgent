@@ -13,6 +13,7 @@ import { ModelsPage } from "@/pages/ModelsPage";
 import { DocumentsPage } from "@/pages/DocumentsPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { MergeReviewsPage } from "@/pages/MergeReviewsPage";
+import { ResearchPage } from "@/pages/ResearchPage";
 
 function RequireAuth() {
   const { token } = useAuth();
@@ -43,6 +44,8 @@ export function AppRouter() {
           <Route path="models" element={<ModelsPage />} />
           <Route path="workflows" element={<WorkflowsPage />} />
           <Route path="workflows/:workflowId" element={<WorkflowsPage />} />
+          <Route path="research" element={<ResearchPage />} />
+          <Route path="research/:planId" element={<ResearchPage />} />
           <Route path="briefs" element={<BriefsPage />} />
           <Route path="audit" element={<AuditPage />} />
         </Route>

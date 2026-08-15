@@ -41,7 +41,9 @@ from app.api.schemas import (
     NodeAttemptResponse,
     PipelineResponse,
     ReportTransitionRequest,
+    ResearchBlackboardResponse,
     ResearchCreateRequest,
+    ResearchPlanListResponse,
     ResearchPlanResponse,
     ResearchTaskResponse,
     RetrievalRetrieveRequest,
@@ -540,17 +542,63 @@ def get_research_plan(
     )
 
 
+@router.get("/api/v1/research", response_model=DataEnvelope)
+def list_research_plans(
+    request: Request,
+    status_filter: Annotated[
+        Optional[str],
+        Query(pattern="^(pending|planning|ready|running|waiting_review|succeeded|failed|cancelled)$"),
+    ] = None,
+    cursor: Optional[str] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status_filter", "cursor", "limit"})
+    _validate_cursor(cursor)
+    plans = request.app.state.repository.list_research_plans(
+        status=status_filter, limit=limit + 1, cursor=cursor
+    )
+    values = [
+        ResearchPlanListResponse.model_validate(p, from_attributes=True) for p in plans
+    ]
+    return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
+
+
 @router.get("/api/v1/research/{plan_id}/tasks", response_model=DataEnvelope)
 def list_research_tasks(
     plan_id: str,
     request: Request,
     _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
 ) -> DataEnvelope:
-    if not request.app.state.repository.get_research_plan(plan_id):
+    plan = request.app.state.repository.get_research_plan(plan_id)
+    if not plan:
         raise HTTPException(status_code=404, detail="RESEARCH_PLAN_NOT_FOUND")
     tasks = request.app.state.repository.list_research_tasks(plan_id)
     return envelope(
         [ResearchTaskResponse.model_validate(t, from_attributes=True) for t in tasks],
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/research/{plan_id}/blackboard", response_model=DataEnvelope)
+def get_research_blackboard(
+    plan_id: str,
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    plan = request.app.state.repository.get_research_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="RESEARCH_PLAN_NOT_FOUND")
+    run = request.app.state.repository.get_workflow_run(plan.workflow_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="WORKFLOW_NOT_FOUND")
+    blackboard = run.blackboard or {}
+    return envelope(
+        ResearchBlackboardResponse(
+            workflow_id=run.id,
+            research_plan=blackboard.get("research_plan", {}),
+            task_outputs=blackboard.get("task_outputs", {}),
+        ),
         request.state.request_id,
     )
 

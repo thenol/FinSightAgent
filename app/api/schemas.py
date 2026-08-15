@@ -337,6 +337,25 @@ class ResearchPlanResponse(BaseModel):
     updated_at: Optional[datetime]
 
 
+class ResearchPlanListResponse(BaseModel):
+    id: str
+    workflow_id: str
+    question: str
+    objective: str
+    as_of: datetime
+    status: str
+    budget_profile: str
+    metadata: dict[str, Any]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
+class ResearchBlackboardResponse(BaseModel):
+    workflow_id: str
+    research_plan: dict[str, Any]
+    task_outputs: dict[str, Any]
+
+
 class WorkflowResumeRequest(BaseModel):
     trigger: str = Field(
         default="budget_resume",

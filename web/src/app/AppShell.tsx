@@ -60,6 +60,11 @@ const ICONS = {
       <path d="M7 4a3 3 0 1 1-2.83 4H3v3h1.17A3 3 0 1 1 7 17h10a3 3 0 1 1 2.83-4H21V9h-1.17A3 3 0 1 1 17 4H7Zm0 2h10a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 9a1 1 0 1 0 0 2h10a1 1 0 1 0 0-2H7Z" />
     </svg>
   ),
+  research: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 2a7 7 0 1 0 4.6 12.2l5.1 5.1 1.4-1.4-5.1-5.1A7 7 0 0 0 9 2Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" />
+    </svg>
+  ),
   briefs: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M6 3h12v18H6V3Zm2 2v14h8V5H8Zm2 2h4v2h-4V7Zm0 4h4v2h-4v-2Zm0 4h3v2h-3v-2Z" />
@@ -86,6 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/merge-reviews", label: "事件合并审核", icon: ICONS.merge },
       { to: "/events", label: "事件证据", icon: ICONS.events },
       { to: "/reports", label: "研究报告", icon: ICONS.reports },
+      { to: "/research", label: "动态研究", icon: ICONS.research },
     ],
   },
   {
@@ -133,6 +139,11 @@ function titleFor(pathname: string): { crumbs: string[]; title: string } {
     return pathname === "/workflows"
       ? { crumbs: ["工作流"], title: "研究工作流" }
       : { crumbs: ["工作流", "运行详情"], title: "工作流详情" };
+  }
+  if (isDetailPath(pathname, "/research")) {
+    return pathname === "/research"
+      ? { crumbs: ["动态研究"], title: "动态研究" }
+      : { crumbs: ["动态研究", "计划详情"], title: "研究计划详情" };
   }
   if (pathname.startsWith("/briefs")) return { crumbs: ["每日简报"], title: "每日简报" };
   if (pathname.startsWith("/audit")) return { crumbs: ["审计记录"], title: "审计记录" };

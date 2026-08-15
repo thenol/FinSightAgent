@@ -20,6 +20,10 @@ export function canRunWorkflow(role: Role | null): boolean {
   return role === "researcher" || role === "reviewer" || role === "admin";
 }
 
+export function canRunResearch(role: Role | null): boolean {
+  return role === "researcher" || role === "reviewer" || role === "admin";
+}
+
 export function canPublish(role: Role | null): boolean {
   return role === "publisher" || role === "admin";
 }

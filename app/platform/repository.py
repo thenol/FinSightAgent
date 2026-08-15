@@ -589,6 +589,13 @@ class Repository(Protocol):
 
     def get_research_plan_by_workflow(self, workflow_id: str) -> Optional["ResearchPlan"]: ...
 
+    def list_research_plans(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list["ResearchPlan"]: ...
+
     def update_research_plan(self, plan: "ResearchPlan") -> None: ...
 
     def save_research_task(self, task: "ResearchTask") -> None: ...
@@ -1519,6 +1526,17 @@ class InMemoryRepository:
             None,
         )
 
+    def list_research_plans(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[ResearchPlan]:
+        values = list(self.research_plans.values())
+        if status:
+            values = [p for p in values if p.status == status]
+        return _paginate(values, cursor, limit, lambda value: value.created_at)
+
     def update_research_plan(self, plan: ResearchPlan) -> None:
         if plan.id not in self.research_plans:
             raise KeyError(f"research_plan not found: {plan.id}")
@@ -1920,6 +1938,16 @@ class SqlAlchemyRepository:
     def get_research_plan_by_workflow(self, workflow_id: str) -> Optional[ResearchPlan]:
         return self._read(
             lambda repository: repository.get_research_plan_by_workflow(workflow_id)
+        )
+
+    def list_research_plans(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[ResearchPlan]:
+        return self._read(
+            lambda repository: repository.list_research_plans(status, limit, cursor)
         )
 
     def update_research_plan(self, plan: ResearchPlan) -> None:
@@ -3827,6 +3855,26 @@ class SqlAlchemyTransaction:
             return None
         tasks = self.list_research_tasks(model.id)
         return _research_plan(model, tasks)
+
+    def list_research_plans(
+        self,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> list[ResearchPlan]:
+        statement = select(ResearchPlanModel).order_by(
+            ResearchPlanModel.created_at.desc(), ResearchPlanModel.id.desc()
+        )
+        if status:
+            statement = statement.where(ResearchPlanModel.status == status)
+        if cursor:
+            statement = statement.where(
+                _cursor_filter(ResearchPlanModel.created_at, ResearchPlanModel.id, cursor)
+            )
+        if limit is not None:
+            statement = statement.limit(limit)
+        models = self.session.scalars(statement)
+        return [_research_plan(model, self.list_research_tasks(model.id)) for model in models]
 
     def update_research_plan(self, plan: ResearchPlan) -> None:
         model = self.session.get(ResearchPlanModel, plan.id)
