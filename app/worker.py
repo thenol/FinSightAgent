@@ -210,8 +210,8 @@ async def run_market_data() -> None:
     )
     if settings.market_data_provider == "eastmoney":
         provider = eastmoney
-    elif settings.market_data_provider == "bridge":
-        provider = FallbackMarketDataProvider(bridge, eastmoney)
+    elif settings.market_data_provider in {"bridge", "auto"}:
+        provider = bridge
     elif settings.market_data_provider == "akshare":
         provider = akshare
     elif settings.market_data_provider == "none":
@@ -255,10 +255,8 @@ async def run_forecast_outcomes() -> None:
         base_url=settings.market_data_bridge_url,
         timeout_seconds=settings.market_data_timeout_seconds,
     )
-    if settings.market_data_provider == "bridge":
-        provider = FallbackMarketDataProvider(
-            bridge, FallbackMarketDataProvider(eastmoney, akshare)
-        )
+    if settings.market_data_provider in {"bridge", "auto"}:
+        provider = bridge
     elif settings.market_data_provider == "eastmoney":
         provider = eastmoney
     elif settings.market_data_provider == "akshare":

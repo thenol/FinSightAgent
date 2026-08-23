@@ -296,7 +296,7 @@ class EastMoneyBridgeMarketDataProvider:
         self._last_success_at: datetime | None = None
         self._capability = MarketDataCapability(
             provider="eastmoney-bridge", status="available",
-            supported_markets=list(MARKET_CODES), supported_intervals=list(INTERVALS),
+            supported_markets=list(MARKET_CODES), supported_intervals=["1d", "5m"],
             reason="local_browser_bridge",
         )
 
@@ -363,9 +363,51 @@ class EastMoneyBridgeMarketDataProvider:
         )
 
     def get_snapshots(self, *, instrument_ids, as_of):
+        snapshots: list[MarketSnapshot] = []
+        warnings: list[str] = []
+        for instrument_id in instrument_ids:
+            try:
+                payload = self._request_json(
+                    f"{self.base_url}/api/v1/market/quote/{self._secid(instrument_id)}",
+                    {"allow_stale": "true"},
+                )
+                item = _bridge_quote_item(payload)
+                if item is None:
+                    warnings.append(f"{instrument_id}:bridge_quote_missing")
+                    continue
+                instrument = self.instruments[instrument_id]
+                captured_at = _parse_iso_timestamp(item.get("captured_at")) or as_of
+                last = _as_float(item.get("price"))
+                if last is None or last <= 0:
+                    warnings.append(f"{instrument_id}:bridge_quote_invalid")
+                    continue
+                snapshots.append(
+                    MarketSnapshot(
+                        instrument_id=instrument_id,
+                        market=instrument.market,
+                        symbol=instrument.symbol,
+                        observed_at=captured_at,
+                        last=last,
+                        change=_as_float(item.get("change")),
+                        change_percent=(
+                            (_as_float(item.get("change_percent")) or 0.0) / 100
+                            if item.get("change_percent") is not None
+                            else None
+                        ),
+                        volume=_as_float(item.get("volume")),
+                        amount=_as_float(item.get("amount")),
+                        source="eastmoney-browser-bridge",
+                        available_at=captured_at,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("eastmoney bridge snapshot failed for %s: %s", instrument_id, exc)
+                warnings.append(f"{instrument_id}:bridge_provider_error")
         return MarketDataResult(
-            status="unsupported", capability=self.capability,
-            warnings=["bridge_snapshot_not_implemented"],
+            status="ok" if snapshots and not warnings else "degraded",
+            snapshots=snapshots,
+            capability=self.capability,
+            warnings=warnings,
         )
 
     def get_calendar(self, *, market, start, end, as_of):
@@ -422,6 +464,21 @@ def _parse_provider_time(value: str, interval: str, market: str) -> datetime | N
     if timezone_name is None:
         raise ValueError(f"unsupported market: {market}")
     return local.replace(tzinfo=ZoneInfo(timezone_name)).astimezone(timezone.utc)
+
+
+def _bridge_quote_item(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize bridge v1/v2 quote envelopes without exposing them upstream."""
+    items = payload.get("items")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        return items[0]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        items = data.get("items")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return items[0]
+        if "price" in data:
+            return data
+    return payload if "price" in payload else None
 
 
 def _parse_iso_timestamp(value: Any) -> datetime | None:

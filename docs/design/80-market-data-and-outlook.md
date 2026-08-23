@@ -6,7 +6,7 @@
 
 ## 数据边界
 
-- 东方财富为研究版主源，AKShare 为可选回退源；供应商必须通过 `MarketDataProvider` 暴露标准化结果。
+- `eastmoney-api-bridge` 是统一行情数据边界；直连东方财富与 AKShare 仅作为显式诊断适配器，不参与默认查询或同一任务内混合。所有供应商必须通过 `MarketDataProvider` 暴露标准化结果。
 - 原始响应不可变归档，标准化行情包含 `source`、`available_at`、`ingested_at`、`as_of` 和版本。
 - `as_of` 之后可用的行情、特征和事件不得进入历史预测或回测。
 - 无数据、过期数据、供应商冲突和字段缺失必须返回结构化降级状态。
@@ -122,6 +122,6 @@ API 分为预览与留痕两条路径：`GET /api/v1/market/outlooks` 不写数�
 
 当前已提供 `MarketBatchStore` 端口、本机原子 JSON 归档适配器、ClickHouse `ReplacingMergeTree` 插入适配器和 `market-data` Worker。`MARKET_DATA_STORE` 支持 `local`、`clickhouse`、`dual`：dual 先完成本地不可变归档，再镜像 ClickHouse，镜像失败返回 degraded receipt 而不丢失主归档。Worker 支持 `MARKET_DATA_INSTRUMENT_IDS`、`MARKET_DATA_INTERVAL`、`MARKET_DATA_LOOKBACK_DAYS` 和 `MARKET_DATA_WORKER_INTERVAL_SECONDS`；持久化异步回放 Job、MinIO、断点续传、缺口补数和收盘核对仍是下一步工作。
 
-新增 `EastMoneyBridgeMarketDataProvider`，读取本机 `eastmoney-api-bridge` 的标准化 K 线与分时接口；通过 `MARKET_DATA_PROVIDER=bridge` 启用，桥接服务返回的 `fresh/stale/captured_at` 会保留到平台质量告警和 `as_of` 校验中。该模式不直接依赖浏览器桥接项目的 SQLite 或原始东方财富协议。
+新增 `EastMoneyBridgeMarketDataProvider`，读取本机 `eastmoney-api-bridge` 的标准化报价、K 线与分时接口；通过 `MARKET_DATA_PROVIDER=bridge` 启用，当前默认配置和 Compose 默认值均使用桥接。桥接服务返回的 `fresh/stale/captured_at` 会保留到平台质量告警和 `as_of` 校验中。该模式不直接依赖浏览器桥接项目的 SQLite 或原始东方财富协议，也不会把直连东方财富或 AKShare 的结果静默混入同一查询。
 
-主备路由按标的和请求范围检查日线完整度，而不再把“状态为 ok 但只有少量缓存”视为成功。桥接历史不足时依次尝试东方财富直连和 AKShare，并为每个标的选择样本更完整的数据集；不会混合不同复权口径的两段 K 线。所有 Provider 的 `limit` 均按单标的执行，避免批量查询时后一个标的挤掉前一个标的历史。
+桥接适配器按标的和请求范围检查日线完整度，不把“状态为 ok 但只有少量缓存”视为完整成功；历史不足时返回结构化 `degraded` 和缺口告警，由上层决定是否等待补采。默认查询不会跨供应商拼接不同复权口径的行情；所有 Provider 的 `limit` 均按单标的执行，避免批量查询时后一个标的挤掉前一个标的历史。

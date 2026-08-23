@@ -2,9 +2,9 @@
 
 ## 1. 目的
 
-本文记录 FinSightAgent 从 `eastmoney-api-bridge` 获取行情、生成市场展望，以及处理“展望长期显示 33%”问题的标准运行方式。
+本文记录 FinSightAgent 以 `eastmoney-api-bridge` 作为统一行情数据边界、生成市场展望，以及处理“展望长期显示 33%”问题的标准运行方式。
 
-2026-08-22 的运行验收中，桥接端沪深300仅有 28 条历史缓存。平台现已按请求范围检查逐标的完整度：不足时依次尝试东方财富直连与 AKShare，并选择样本更多且口径一致的一组行情。本次环境的直连被上游断开、AKShare 代理连接失败、桥接浏览器补采超时，因此最终仍保留 28 条并返回 `probabilities=null`；这是可观测的数据源阻断，不再表现为 33% 占位概率。
+2026-08-22 的运行验收中，桥接端沪深300仅有 28 条历史缓存。平台现在把桥接作为唯一默认数据边界；若桥接数据不足，保留结构化降级并返回 `probabilities=null`，不再静默混入其他供应商。这是可观测的数据源阻断，不再表现为 33% 占位概率。
 
 ## 2. 标准数据链路
 
@@ -12,7 +12,7 @@
 Chrome / 东方财富页面
         ↓ 浏览器网络采集
 eastmoney-api-bridge :8765
-        ↓ 标准化 kline / trends
+        ↓ 标准化 quote / kline / trends
 EastMoneyBridgeMarketDataProvider
         ↓ MarketBar
 MarketStateService
@@ -34,6 +34,7 @@ FinSight 只依赖桥接项目的标准化接口，不解析东方财富原始�
 | 采集状态 | `GET /api/v1/browser/status` |
 | 日线 K 线 | `GET /api/v1/market/kline/{secid}` |
 | 分时数据 | `GET /api/v1/market/trends/{secid}` |
+| 报价快照 | `GET /api/v1/market/quote/{secid}` |
 | 最新采集 | `GET /api/v1/market/latest` |
 
 默认标的代码：
@@ -86,7 +87,7 @@ down = 0.3333
 已完成的修复：
 
 1. 前端在数据不足时显示“暂无方向性结论”，不再显示三等分百分比；
-2. `bridge` 模式使用“浏览器桥接首选、东方财富直连回退”；
+2. 默认 `bridge` 模式只使用浏览器桥接；直连东方财富和 AKShare 仅允许显式诊断配置，不会混入同一查询；
 3. 本地桥接请求使用 `trust_env=False`，避免 `HTTP(S)_PROXY` 将 `127.0.0.1` 请求转发到代理后产生 502；
 4. Playwright 在没有默认 browser context 时自动创建 context，避免采集启动 `IndexError`；
 5. 桥接缓存数据仍通过 `MarketBar` 标准化后才进入趋势和展望计算。

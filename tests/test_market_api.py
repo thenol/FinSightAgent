@@ -22,7 +22,7 @@ def test_market_capabilities_exposes_provider_and_intervals() -> None:
         )
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["provider"] == "eastmoney+akshare"
+    assert data["provider"] == "eastmoney-bridge"
     assert data["supported_intervals"] == ["1d", "5m"]
 
 
@@ -35,7 +35,7 @@ def test_market_provider_health_does_not_confuse_configuration_with_success() ->
         )
     assert response.status_code == 200
     data = response.json()["data"]
-    assert {item["provider"] for item in data} == {"eastmoney", "akshare"}
+    assert {item["provider"] for item in data} == {"eastmoney-bridge"}
     assert all(item["operational_status"] in {"unknown", "unavailable", "healthy"} for item in data)
 
 

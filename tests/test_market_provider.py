@@ -93,6 +93,45 @@ def test_fallback_records_primary_degradation() -> None:
     assert "primary_unavailable" in result.warnings
 
 
+def test_bridge_adapter_reads_quote_snapshot_contract() -> None:
+    instrument = MarketInstrument(
+        id="cn:000001",
+        market="cn",
+        symbol="000001",
+        name="上证指数",
+        instrument_type="index",
+        provider_symbols={"eastmoney": "1.000001"},
+    )
+
+    def transport(url: str, params: dict[str, object]) -> dict[str, object]:
+        assert url.endswith("/api/v1/market/quote/1.000001")
+        assert params["allow_stale"] == "true"
+        return {
+            "items": [
+                {
+                    "price": 3200.5,
+                    "change": 12.5,
+                    "change_percent": 0.39,
+                    "volume": 1000,
+                    "amount": 2000,
+                    "captured_at": "2026-08-18T07:30:00Z",
+                }
+            ]
+        }
+
+    provider = EastMoneyBridgeMarketDataProvider(
+        {instrument.id: instrument}, request_json=transport
+    )
+    result = provider.get_snapshots(
+        instrument_ids=[instrument.id], as_of=AS_OF
+    )
+
+    assert result.status == "ok"
+    assert result.snapshots[0].last == 3200.5
+    assert result.snapshots[0].change_percent == pytest.approx(0.0039)
+    assert result.snapshots[0].source == "eastmoney-browser-bridge"
+
+
 def test_fallback_selects_more_complete_daily_history_per_instrument() -> None:
     def bars(count: int, source: str) -> list[MarketBar]:
         return [
