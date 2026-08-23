@@ -14,6 +14,7 @@ from app.events.schemas import (
     is_non_mvp_event_type,
 )
 from app.events.time_parser import DeterministicEventTimeParser, EventTimeResolution
+from app.events.type_registry import CANDIDATE_TYPE_CONFIRMATION
 from app.platform.ids import new_id
 from app.platform.repository import Repository
 from app.review.service import AutoReviewService
@@ -61,6 +62,7 @@ class EventService:
         disclosure_group_id: Optional[str] = None,
     ) -> Event:
         result = classification or self.classifier.classify(document)
+        result = self._apply_type_registry(result)
         return self._persist_event(document, result, disclosure_group_id=disclosure_group_id)
 
     def _persist_event(
@@ -80,6 +82,7 @@ class EventService:
         links = self.resolver.to_links(resolutions)
         ambiguous = self.resolver.ambiguous_candidates(resolutions)
 
+        registry_entry = self.repository.get_event_type_registry(result.event_type)
         if result.event_type == GENERAL_MARKET_NEWS:
             status = "dormant"
         elif result.event_type == OUT_OF_SCOPE:
@@ -87,6 +90,8 @@ class EventService:
             status = "cold"
         elif is_non_mvp_event_type(result.event_type):
             status = "archived"  # 历史 unsupported 等保留归档语义
+        elif registry_entry is not None and registry_entry.status == "rejected":
+            status = "cold"
         elif result.needs_review:
             status = "needs_review"
         else:
@@ -165,6 +170,18 @@ class EventService:
         )
         for trigger in triggers:
             self.repository.save_watch_trigger(trigger)
+
+    def _apply_type_registry(self, result: ClassificationResult) -> ClassificationResult:
+        """开放分类标签写入注册表，并按 accepted/rejected 调整强制审核。"""
+        if not is_candidate_event_type(result.event_type):
+            return result
+        entry = self.repository.increment_event_type_registry_count(result.event_type)
+        missing = [
+            item for item in result.missing_required if item != CANDIDATE_TYPE_CONFIRMATION
+        ]
+        if entry.status == "candidate":
+            missing.append(CANDIDATE_TYPE_CONFIRMATION)
+        return replace(result, missing_required=missing)
 
     def attach_document_to_event(self, event: Event, document: Document) -> Event:
         """将同一事件的新来源或新公告关联到现有 Event。"""

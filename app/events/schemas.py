@@ -308,13 +308,23 @@ def is_non_mvp_event_type(event_type: str) -> bool:
     return event_type in NON_MVP_EVENT_TYPES
 
 
-def is_candidate_event_type(event_type: str) -> bool:
-    """候选类型：Router LLM 开放分类产出的一等词表外标签（DD-21 §2.4）。"""
-    return (
-        bool(event_type)
-        and not is_mvp_event_type(event_type)
-        and not is_non_mvp_event_type(event_type)
-    )
+def is_candidate_event_type(
+    event_type: str,
+    *,
+    registry_status: Optional[str] = None,
+) -> bool:
+    """候选类型：Router LLM 开放分类产出、尚未被词表治理接受或拒绝的标签。
+
+    不传 ``registry_status`` 时只做句法判断（不在一等/保留词表）。
+    ``accepted`` / ``rejected`` 不再视为候选（DD-21 §2.4）。
+    """
+    if not event_type:
+        return False
+    if is_mvp_event_type(event_type) or is_non_mvp_event_type(event_type):
+        return False
+    if registry_status in {"accepted", "rejected"}:
+        return False
+    return True
 
 
 def looks_like_finance_news(text: str) -> bool:
