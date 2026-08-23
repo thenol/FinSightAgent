@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "@/app/AuthContext";
 import { AppRouter } from "@/app/router";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ToastProvider } from "@/components/Toast";
 import "@/styles/global.css";
 
@@ -23,7 +24,9 @@ createRoot(document.getElementById("root")!).render(
       <BrowserRouter basename="/admin">
         <AuthProvider>
           <ToastProvider>
-            <AppRouter />
+            <ErrorBoundary>
+              <AppRouter />
+            </ErrorBoundary>
           </ToastProvider>
         </AuthProvider>
       </BrowserRouter>

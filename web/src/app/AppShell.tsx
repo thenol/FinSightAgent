@@ -4,7 +4,17 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/app/AuthContext";
 import { apiGet } from "@/lib/api";
 import { asList } from "@/lib/format";
-import type { ReviewTask, Source, Workflow } from "@/types/api";
+import {
+  canManageDocuments,
+  canManageLlm,
+  canManageMarketMasterData,
+  canReview,
+  canRunResearch,
+  canRunWorkflow,
+  canViewAudit,
+  hasBusinessRole,
+} from "@/lib/roles";
+import type { ReviewTask, Role, Source, Workflow } from "@/types/api";
 
 type NavItem = {
   to: string;
@@ -12,6 +22,7 @@ type NavItem = {
   end?: boolean;
   badge?: "reviews" | "sources" | "workflows";
   icon: ReactNode;
+  visible?: (role: Role | null) => boolean;
 };
 
 type NavGroup = {
@@ -92,28 +103,71 @@ const NAV_GROUPS: NavGroup[] = [
     label: "业务工作台",
     items: [
       { to: "/", label: "总览", end: true, icon: ICONS.overview },
-      { to: "/reviews", label: "审核中心", badge: "reviews", icon: ICONS.reviews },
-      { to: "/merge-reviews", label: "事件合并审核", icon: ICONS.merge },
-      { to: "/event-types", label: "事件类型", icon: ICONS.types },
-      { to: "/events", label: "事件证据", icon: ICONS.events },
-      { to: "/impact-targets", label: "目标影响", icon: ICONS.briefs },
-      { to: "/future-events", label: "研究日历", icon: ICONS.briefs },
-      { to: "/market-outlook", label: "市场展望", icon: ICONS.briefs },
-      { to: "/forecast-evaluation", label: "预测评估", icon: ICONS.models },
-      { to: "/market-master-data", label: "市场主数据", icon: ICONS.types },
-      { to: "/reports", label: "研究报告", icon: ICONS.reports },
-      { to: "/research", label: "动态研究", icon: ICONS.research },
+      {
+        to: "/reviews",
+        label: "审核中心",
+        badge: "reviews",
+        icon: ICONS.reviews,
+        visible: canReview,
+      },
+      {
+        to: "/merge-reviews",
+        label: "事件合并审核",
+        icon: ICONS.merge,
+        visible: canReview,
+      },
+      {
+        to: "/event-types",
+        label: "事件类型",
+        icon: ICONS.types,
+        visible: canReview,
+      },
+      { to: "/events", label: "事件证据", icon: ICONS.events, visible: hasBusinessRole },
+      { to: "/impact-targets", label: "目标影响", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/future-events", label: "研究日历", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/market-outlook", label: "市场展望", icon: ICONS.briefs, visible: hasBusinessRole },
+      {
+        to: "/forecast-evaluation",
+        label: "预测评估",
+        icon: ICONS.models,
+        visible: hasBusinessRole,
+      },
+      {
+        to: "/market-master-data",
+        label: "市场主数据",
+        icon: ICONS.types,
+        visible: canManageMarketMasterData,
+      },
+      { to: "/reports", label: "研究报告", icon: ICONS.reports, visible: hasBusinessRole },
+      { to: "/research", label: "动态研究", icon: ICONS.research, visible: canRunResearch },
     ],
   },
   {
     label: "运维与合规",
     items: [
-      { to: "/sources", label: "来源", badge: "sources", icon: ICONS.sources },
-      { to: "/documents", label: "文档保留", icon: ICONS.documents },
-      { to: "/models", label: "模型配置", icon: ICONS.models },
-      { to: "/workflows", label: "工作流", badge: "workflows", icon: ICONS.workflows },
-      { to: "/briefs", label: "每日简报", icon: ICONS.briefs },
-      { to: "/audit", label: "审计记录", icon: ICONS.audit },
+      {
+        to: "/sources",
+        label: "来源",
+        badge: "sources",
+        icon: ICONS.sources,
+        visible: hasBusinessRole,
+      },
+      {
+        to: "/documents",
+        label: "文档保留",
+        icon: ICONS.documents,
+        visible: canManageDocuments,
+      },
+      { to: "/models", label: "模型配置", icon: ICONS.models, visible: canManageLlm },
+      {
+        to: "/workflows",
+        label: "工作流",
+        badge: "workflows",
+        icon: ICONS.workflows,
+        visible: canRunWorkflow,
+      },
+      { to: "/briefs", label: "每日简报", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/audit", label: "审计记录", icon: ICONS.audit, visible: canViewAudit },
     ],
   },
 ];
@@ -274,7 +328,9 @@ export function AppShell() {
           {NAV_GROUPS.map((group) => (
             <div key={group.label} className="nav-group">
               <p className="nav-group-label">{group.label}</p>
-              {group.items.map((item) => {
+              {group.items
+                .filter((item) => (item.visible ? item.visible(role) : true))
+                .map((item) => {
                 const count = badgeValue(item.badge);
                 return (
                   <NavLink

@@ -1,5 +1,11 @@
 import type { Role } from "@/types/api";
 
+export const BUSINESS_ROLES: Role[] = ["researcher", "reviewer", "publisher", "admin"];
+
+export function hasBusinessRole(role: Role | null): boolean {
+  return role !== null && BUSINESS_ROLES.includes(role);
+}
+
 export function canManageSources(role: Role | null): boolean {
   return role === "admin";
 }
@@ -14,6 +20,14 @@ export function canManageLlm(role: Role | null): boolean {
 
 export function canReview(role: Role | null): boolean {
   return role === "reviewer" || role === "admin";
+}
+
+export function canViewAudit(role: Role | null): boolean {
+  return role === "reviewer" || role === "publisher" || role === "admin";
+}
+
+export function canManageMarketMasterData(role: Role | null): boolean {
+  return role === "admin";
 }
 
 export function canRunWorkflow(role: Role | null): boolean {
