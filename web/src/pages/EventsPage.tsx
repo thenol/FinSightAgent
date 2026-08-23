@@ -113,7 +113,21 @@ function EventDetailPage({ eventId }: { eventId: string }) {
             {keyFields.map(([key, value]) => (
               <div key={key} className="key-item">
                 <span>{key}</span>
-                <strong className="mono">{typeof value === "string" ? value : JSON.stringify(value)}</strong>
+                {key === "source_url" && typeof value === "string" ? (
+                  <a
+                    className="key-value-link mono"
+                    href={value}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={value}
+                  >
+                    {value}
+                  </a>
+                ) : (
+                  <strong className="mono">
+                    {typeof value === "string" ? value : JSON.stringify(value)}
+                  </strong>
+                )}
               </div>
             ))}
           </div>

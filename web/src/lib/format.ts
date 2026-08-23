@@ -33,7 +33,7 @@ export function slaClass(value?: string | null): "ok" | "warn" | "bad" {
 }
 
 export function statusTone(status: string): "ok" | "warn" | "bad" {
-  if (["active", "succeeded", "published", "verified", "approved"].includes(status)) {
+  if (["active", "succeeded", "published", "verified", "approved", "accepted"].includes(status)) {
     return "ok";
   }
   if (["failed", "withdrawn", "rejected", "conflicted", "disabled"].includes(status)) {
@@ -78,6 +78,8 @@ export const statusNames: Record<string, string> = {
   withdrawn: "已撤回",
   needs_revision: "待修订",
   rejected: "已拒绝",
+  candidate: "候选",
+  accepted: "已升格",
   triaged: "已分诊",
   dormant: "休眠",
   archived: "已归档",

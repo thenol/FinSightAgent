@@ -1,83 +1,148 @@
 import { describe, expect, it } from "vitest";
-import { buildGraphOption, directionColor } from "./ImpactAnalysisPanel";
-import type { ImpactAnalysis } from "@/types/api";
+import { explainImpactForNonEconomist } from "./ImpactAnalysisPanel";
+import {
+  directionColor,
+  edgeAnnotation,
+  filterImpactGraph,
+  type GraphFilter,
+  type ImpactGraph,
+} from "./ImpactGraphFlow";
 
-const sampleAnalysis: ImpactAnalysis = {
-  id: "imp_001",
-  event_id: "evt_001",
-  version: 1,
-  status: "approved",
-  event_title_snapshot: "美联储加息",
-  summary: "加息压制成长股",
-  transmission_chains: [
+const graph: ImpactGraph = {
+  nodes: [
     {
-      chain_id: "chn_rate",
+      node_id: "node_event",
+      node_type: "event",
+      label: "美联储降息",
+      layer: 0,
+    },
+    {
+      node_id: "node_rate",
+      node_type: "variable",
+      label: "融资成本",
+      layer: 1,
+    },
+    { node_id: "node_house", node_type: "impact", label: "房地产", layer: 4 },
+    { node_id: "node_bank", node_type: "impact", label: "银行", layer: 4 },
+  ],
+  edges: [
+    {
+      edge_id: "edge_direct",
+      source_node_id: "node_event",
+      target_node_id: "node_rate",
       mechanism: "利率传导",
-      steps: [
-        { step: 0, description: "美联储加息" },
-        { step: 1, description: "融资成本上升" },
-      ],
-      confidence: 0.7,
-    },
-  ],
-  impacts: [
-    {
-      target_type: "sector",
-      target_name: "银行",
       direction: "positive",
-      magnitude: "moderate",
-      horizon: "medium",
-      confidence: 0.65,
-      rationale: "息差扩大",
-      chain_refs: ["chn_rate"],
+      order: "direct",
+      horizon: "0_1d",
+      inference_kind: "fact",
+      confidence: 0.8,
     },
     {
-      target_type: "sector",
-      target_name: "地产",
-      direction: "negative",
-      magnitude: "strong",
-      horizon: "medium",
+      edge_id: "edge_core",
+      source_node_id: "node_rate",
+      target_node_id: "node_house",
+      mechanism: "融资传导",
+      direction: "positive",
+      order: "first_order",
+      horizon: "1_4q",
+      inference_kind: "inference",
       confidence: 0.7,
-      rationale: "融资成本上升",
+    },
+    {
+      edge_id: "edge_second",
+      source_node_id: "node_rate",
+      target_node_id: "node_bank",
+      mechanism: "息差传导",
+      direction: "negative",
+      order: "second_order",
+      horizon: "1_4q",
+      inference_kind: "assumption",
+      confidence: 0.5,
     },
   ],
-  macro_assumptions: [],
-  watch_items: [],
-  generated_by: "agent",
-  degraded: false,
 };
 
-describe("buildGraphOption", () => {
-  it("creates event node and chain/impact nodes", () => {
-    const option = buildGraphOption(sampleAnalysis);
-    const series = (option.series as Array<Record<string, unknown>>)?.[0] as {
-      data: Array<{ id: string; name: string }>;
-      links: unknown[];
-    };
-    const ids = series.data.map((node) => node.id);
-    expect(ids).toContain("event");
-    expect(ids).toContain("impact-银行");
-    expect(ids).toContain("impact-地产");
-    expect(ids.some((id) => id.startsWith("chn_rate-step-"))).toBe(true);
-    expect(series.links.length).toBeGreaterThan(0);
+const defaultFilter: GraphFilter = {
+  scenarioId: "all",
+  horizon: "all",
+  minimumConfidence: 0.6,
+  coreOnly: true,
+};
+
+describe("impact graph filters", () => {
+  it("defaults to high-confidence direct and first-order paths", () => {
+    const filtered = filterImpactGraph(graph, [], defaultFilter);
+    expect(filtered.edges.map((edge) => edge.edge_id)).toEqual([
+      "edge_direct",
+      "edge_core",
+    ]);
+    expect(filtered.nodes.map((node) => node.node_id)).toEqual([
+      "node_event",
+      "node_rate",
+      "node_house",
+    ]);
   });
 
-  it("links impact back to chain end node when chain_ref matches", () => {
-    const option = buildGraphOption(sampleAnalysis);
-    const series = (option.series as Array<Record<string, unknown>>)?.[0] as {
-      links: Array<{ source: string; target: string }>;
-    };
-    const bankLink = series.links.find((link) => link.target === "impact-银行");
-    expect(bankLink).toBeDefined();
-    expect(bankLink?.source).toMatch(/^chn_rate-step-/);
+  it("reveals second-order edges when all paths and a lower threshold are selected", () => {
+    const filtered = filterImpactGraph(graph, [], {
+      ...defaultFilter,
+      coreOnly: false,
+      minimumConfidence: 0.5,
+    });
+    expect(filtered.edges).toHaveLength(3);
+    expect(filtered.nodes.map((node) => node.node_id)).toContain("node_bank");
+  });
+
+  it("filters edges by selected scenario and time horizon", () => {
+    const filtered = filterImpactGraph(
+      graph,
+      [
+        {
+          scenario_id: "scn_base",
+          name: "base",
+          active_edge_ids: ["edge_core"],
+        },
+      ],
+      { ...defaultFilter, scenarioId: "scn_base", horizon: "1_4q" },
+    );
+    expect(filtered.edges.map((edge) => edge.edge_id)).toEqual(["edge_core"]);
   });
 });
 
 describe("directionColor", () => {
-  it("maps directions to expected colors", () => {
-    expect(directionColor("positive")).toBe("#16a34a");
+  it("maps directional semantics to stable graph colors", () => {
+    expect(directionColor("positive")).toBe("#15803d");
     expect(directionColor("negative")).toBe("#dc2626");
-    expect(directionColor("neutral")).toBe("#6b7280");
-    expect(directionColor("mixed")).toBe("#d97706");
+    expect(directionColor("mixed")).toBe("#b45309");
+    expect(directionColor("uncertain")).toBe("#64748b");
+  });
+});
+
+describe("plain-language impact explanations", () => {
+  it("explains direction, strength and timing without economic jargon", () => {
+    const explanation = explainImpactForNonEconomist({
+      target_type: "sector",
+      target_name: "房地产",
+      direction: "negative",
+      magnitude: "strong",
+      horizon: "medium",
+      confidence: 0.8,
+      rationale: "融资成本上升",
+    });
+    expect(explanation).toContain("行业板块“房地产”");
+    expect(explanation).toContain("压制/不利");
+    expect(explanation).toContain("明显影响");
+    expect(explanation).toContain("不代表结果已经发生");
+  });
+});
+
+describe("edge annotations", () => {
+  it("maps structured causal fields to readable research labels", () => {
+    const annotation = edgeAnnotation(graph.edges[1]);
+    expect(annotation.directionLabel).toBe("正向");
+    expect(annotation.orderLabel).toBe("一阶");
+    expect(annotation.horizonLabel).toBe("1–4季度");
+    expect(annotation.inferenceLabel).toBe("推断");
+    expect(annotation.confidenceLabel).toBe("70%");
   });
 });

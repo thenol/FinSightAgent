@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -30,6 +31,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setTokenState] = useState(getToken());
   const role = useMemo(() => parseRole(token), [token]);
   const username = useMemo(() => parseUsername(token), [token]);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearToken();
+      setTokenState("");
+    };
+    window.addEventListener("finsight:auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("finsight:auth-expired", handleAuthExpired);
+  }, []);
 
   const login = useCallback(async (usernameValue: string, password: string) => {
     const data = await apiRequest<LoginResponse>("/api/v1/auth/login", {

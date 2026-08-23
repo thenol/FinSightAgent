@@ -80,6 +80,11 @@ const ICONS = {
       <path d="M8 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm8 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM8 11h8v2H8v-2Zm3 3h2v6h-2v-6Zm-3 2h2v4H8v-4Zm6 0h2v4h-2v-4Z" />
     </svg>
   ),
+  types: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5h16v3H4V5Zm0 5h10v3H4v-3Zm0 5h16v3H4v-3Zm12-5h4v3h-4v-3Z" />
+    </svg>
+  ),
 } as const;
 
 const NAV_GROUPS: NavGroup[] = [
@@ -89,7 +94,13 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/", label: "总览", end: true, icon: ICONS.overview },
       { to: "/reviews", label: "审核中心", badge: "reviews", icon: ICONS.reviews },
       { to: "/merge-reviews", label: "事件合并审核", icon: ICONS.merge },
+      { to: "/event-types", label: "事件类型", icon: ICONS.types },
       { to: "/events", label: "事件证据", icon: ICONS.events },
+      { to: "/impact-targets", label: "目标影响", icon: ICONS.briefs },
+      { to: "/future-events", label: "研究日历", icon: ICONS.briefs },
+      { to: "/market-outlook", label: "市场展望", icon: ICONS.briefs },
+      { to: "/forecast-evaluation", label: "预测评估", icon: ICONS.models },
+      { to: "/market-master-data", label: "市场主数据", icon: ICONS.types },
       { to: "/reports", label: "研究报告", icon: ICONS.reports },
       { to: "/research", label: "动态研究", icon: ICONS.research },
     ],
@@ -122,11 +133,23 @@ function titleFor(pathname: string): { crumbs: string[]; title: string } {
       ? { crumbs: ["事件合并审核"], title: "事件合并审核" }
       : { crumbs: ["事件合并审核", "任务详情"], title: "合并审核任务" };
   }
+  if (pathname.startsWith("/event-types")) return { crumbs: ["事件类型"], title: "事件类型词表" };
   if (isDetailPath(pathname, "/events")) {
     return pathname === "/events"
       ? { crumbs: ["事件证据"], title: "事件证据" }
       : { crumbs: ["事件证据", "事件详情"], title: "事件详情" };
   }
+  if (isDetailPath(pathname, "/impact-targets")) {
+    return pathname === "/impact-targets"
+      ? { crumbs: ["目标影响"], title: "目标影响" }
+      : pathname.includes("/forward")
+        ? { crumbs: ["目标影响", "行业前瞻"], title: "行业前瞻" }
+        : { crumbs: ["目标影响", "目标详情"], title: "目标影响详情" };
+  }
+  if (pathname.startsWith("/future-events")) return { crumbs: ["研究日历"], title: "未来事件研究日历" };
+  if (pathname.startsWith("/market-outlook")) return { crumbs: ["市场展望"], title: "市场展望" };
+  if (pathname.startsWith("/forecast-evaluation")) return { crumbs: ["预测评估"], title: "预测评估与校准" };
+  if (pathname.startsWith("/market-master-data")) return { crumbs: ["市场主数据"], title: "市场主数据治理" };
   if (isDetailPath(pathname, "/reports")) {
     return pathname === "/reports"
       ? { crumbs: ["研究报告"], title: "研究报告" }

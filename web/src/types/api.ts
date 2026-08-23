@@ -345,6 +345,13 @@ export type ImpactAnalysis = {
   degraded: boolean;
   supersedes_id?: string | null;
   created_at?: string | null;
+  analysis_payload?: Record<string, unknown>;
+  quality_report?: {
+    gate_passed?: boolean;
+    evidence_coverage?: number;
+    blockers?: string[];
+    warnings?: string[];
+  };
 };
 
 export type ResearchTask = {
@@ -398,4 +405,390 @@ export type ResearchBlackboard = {
   workflow_id: string;
   research_plan: Record<string, unknown>;
   task_outputs: Record<string, unknown>;
+};
+
+export type EventTypeRegistryEntry = {
+  type_label: string;
+  status: string;
+  event_count: number;
+  promotion_ready: boolean;
+  decided_by?: string | null;
+  decided_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ImpactPortfolioTarget = {
+  id: string;
+  target_type: string;
+  target_code: string;
+  canonical_name: string;
+  taxonomy_version: string;
+};
+
+export type ImpactSnapshot = {
+  id: string;
+  target_id: string;
+  as_of: string;
+  horizon: string;
+  scenario_set_id: string;
+  positive_gross: number;
+  negative_gross: number;
+  net_score: number;
+  direction: string;
+  magnitude: string;
+  confidence: number;
+  dominant_event_id?: string | null;
+  previous_direction?: string | null;
+  change_type?: string | null;
+  explanation: string;
+  contributions: Array<Record<string, unknown>>;
+};
+
+export type ImpactDashboardContribution = {
+  contribution_id: string;
+  event_id: string;
+  event_title: string;
+  event_occurred_at?: string | null;
+  direction: string;
+  magnitude: string;
+  horizon: string;
+  effective_strength: number;
+  contribution_share: number;
+  base_strength: number;
+  event_importance: number;
+  assessment_confidence: number;
+  path_confidence: number;
+  dependency_weight: number;
+  time_weight: number;
+  valid_from?: string | null;
+  expected_peak_at?: string | null;
+  valid_to?: string | null;
+  rationale: string;
+  source_url?: string | null;
+  analysis_id?: string | null;
+  analysis_version?: number | null;
+};
+
+export type ImpactDashboard = {
+  target: ImpactPortfolioTarget;
+  snapshot: ImpactSnapshot | null;
+  contributions: ImpactDashboardContribution[];
+  events: Array<Record<string, unknown>>;
+  calculation: {
+    formula: string;
+    rule_version: string;
+    as_of: string;
+  };
+};
+
+export type ImpactTimeline = {
+  target_id: string;
+  granularity: string;
+  points: Array<{
+    point_at: string;
+    positive_gross: number;
+    negative_gross: number;
+    net_score: number;
+    direction: string;
+    confidence: number;
+    dominant_event_id?: string | null;
+  }>;
+};
+
+export type ForwardImpactWindow = {
+  id: string;
+  target_id: string;
+  as_of: string;
+  window_start: string;
+  window_end: string;
+  granularity: string;
+  scenario_set_id: string;
+  status: string;
+};
+
+export type ForwardImpactPoint = {
+  id: string;
+  window_id: string;
+  point_at: string;
+  scenario_id: string;
+  positive_conditional: number;
+  negative_conditional: number;
+  net_conditional: number;
+  positive_expected?: number | null;
+  negative_expected?: number | null;
+  net_expected?: number | null;
+  direction: string;
+  confidence: number;
+  dominant_catalyst_id?: string | null;
+};
+
+export type FutureCalendarSummary = {
+  date: string;
+  event_count: number;
+  event_previews: Array<{
+    id: string;
+    title: string;
+    target_name?: string | null;
+    event_type: string;
+    scheduled_from?: string | null;
+    time_precision: string;
+    status: string;
+    importance: number;
+    direction: string;
+  }>;
+  hidden_event_count: number;
+  uncertain_time_count: number;
+  major_event_count: number;
+  positive_strength: number;
+  negative_strength: number;
+  net_strength: number;
+  direction: string;
+  has_conflict: boolean;
+};
+
+export type FutureCalendarEvent = {
+  id: string;
+  target_id: string;
+  target_name?: string;
+  target_type?: string | null;
+  kind: string;
+  title: string;
+  event_type: string;
+  scheduled_from?: string | null;
+  scheduled_to?: string | null;
+  time_precision: string;
+  status: string;
+  importance: number;
+  probability_base?: number | null;
+  direction: string;
+  magnitude: string;
+  trigger_definition?: Record<string, unknown>;
+  evidence_refs?: Array<Record<string, unknown>>;
+};
+
+export type FutureEventDetail = {
+  event: { id: string; event_type: string; kind: string };
+  current_revision?: {
+    title: string;
+    description?: string;
+    scheduled_from?: string | null;
+    scheduled_to?: string | null;
+    status: string;
+    importance: number;
+    probability_base?: number | null;
+    source_url?: string | null;
+    evidence_refs?: Array<Record<string, unknown>>;
+  } | null;
+  target_impacts: Array<{
+    target_id: string;
+    direction: string;
+    magnitude: string;
+    rationale?: string;
+    conditional_strength: number;
+  }>;
+};
+
+export type FutureCalendarDay = {
+  date: string;
+  timezone: string;
+  scheduled_events: FutureCalendarEvent[];
+  active_impacts: Array<{
+    catalyst_id: string;
+    target_id: string;
+    target_name: string;
+    event_title: string;
+    direction: string;
+    magnitude: string;
+    conditional_strength: number;
+    occurrence_probability?: number | null;
+    rationale: string;
+  }>;
+  target_summary: Array<{
+    target_id: string;
+    target_name: string;
+    positive_strength: number;
+    negative_strength: number;
+    net_strength: number;
+    direction: string;
+    event_count: number;
+  }>;
+};
+
+export type MarketInstrument = {
+  id: string;
+  market: "cn" | "hk" | "us";
+  symbol: string;
+  name: string;
+  instrument_type: "index" | "sector" | "etf" | "stock";
+  exchange: string;
+  currency: string;
+  timezone: string;
+};
+
+export type IndustryTaxonomy = {
+  id: string;
+  standard: string;
+  version: string;
+  name: string;
+  status: string;
+  source: string;
+};
+
+export type IndustryClassification = {
+  id: string;
+  taxonomy_id: string;
+  code: string;
+  name: string;
+  level: number;
+  aliases: string[];
+  status: string;
+};
+
+export type ImpactTargetMapping = {
+  id: string;
+  target_id: string;
+  mapping_type: "instrument" | "industry" | "market";
+  mapping_code: string;
+  weight: number;
+  confidence: number;
+  status: "proposed" | "approved" | "rejected" | "retired";
+  reason: string;
+  source: string;
+  reviewed_at?: string | null;
+};
+
+export type MarketMasterDataImportRun = {
+  id: string;
+  standard: string;
+  version: string;
+  source: string;
+  source_hash: string;
+  status: "validated" | "rejected" | "published";
+  classification_count: number;
+  membership_count: number;
+  errors: string[];
+  warnings: string[];
+  source_metadata: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  published_at?: string | null;
+};
+
+export type MarketOutlook = {
+  instrument_id: string;
+  as_of: string;
+  horizon: number;
+  direction: "positive" | "mixed" | "negative" | "unknown";
+  probabilities: { up: number; flat: number; down: number } | null;
+  expected_return_p10: number | null;
+  expected_return_p50: number | null;
+  expected_return_p90: number | null;
+  confidence: number;
+  forecast_status: "insufficient_data" | "uncalibrated" | "ready" | string;
+  data_status: string;
+  rule_version: string;
+  calibration_version_id: string | null;
+  calibration_method: string | null;
+  contributions: Array<{
+    source: string;
+    score: number;
+    weight: number;
+    configured_weight: number;
+    status: "available" | "unavailable" | string;
+    confidence: number;
+    explanation: string;
+    provenance: {
+      reason?: string | null;
+      source_hash?: string;
+      rule_version?: string;
+      sources?: Array<{
+        target_id: string;
+        target_name: string;
+        snapshot_id: string;
+        dominant_event_id: string | null;
+        confidence: number;
+      }>;
+    };
+  }>;
+  risks: string[];
+  blocking_reasons: string[];
+  available_observations: number;
+  required_observations: number;
+  coverage: number;
+  factor_coverage: number;
+  latest_observed_at: string | null;
+};
+
+export type ChampionChallengerComparison = {
+  comparable_sample_count: number;
+  entries: Array<{
+    model_key: string;
+    report: MarketForecastEvaluation["report"];
+  }>;
+  incumbent_model_key: string | null;
+  recommended_model_key: string | null;
+  decision: string;
+  decision_reasons: string[];
+};
+
+export type HistoricalForecastReplayReceipt = {
+  forecast_from: string;
+  forecast_to: string;
+  scheduled_slots: number;
+  processed_slots: number;
+  created_count: number;
+  reused_count: number;
+  insufficient_count: number;
+  settled_count: number;
+  pending_outcome_count: number;
+  excluded_outcome_count: number;
+  evaluation_as_of: string | null;
+  run_ids: string[];
+  warnings: string[];
+  status: string;
+  source_provider: string;
+  rule_version: string;
+};
+
+export type ForecastCalibrationBin = {
+  lower: number;
+  upper: number;
+  count: number;
+  mean_confidence: number | null;
+  empirical_accuracy: number | null;
+};
+
+export type MarketForecastEvaluation = {
+  report: {
+    sample_count: number;
+    eligible_count: number;
+    coverage: number | null;
+    accuracy: number | null;
+    brier_score: number | null;
+    log_loss: number | null;
+    expected_calibration_error: number | null;
+    class_counts: { up: number; flat: number; down: number };
+    calibration_bins: ForecastCalibrationBin[];
+    rule_version: string;
+  };
+  exclusions: Record<string, number>;
+};
+
+export type MarketCalibrationVersion = {
+  id: string;
+  model_key: string;
+  version: string;
+  horizon: number;
+  market: string;
+  status: string;
+  method: string;
+  parameters: Record<string, number>;
+  metrics: Record<string, unknown>;
+  train_start: string;
+  train_end: string;
+  sample_count: number;
+  created_by: string;
+  created_at: string;
+  published_at: string | null;
 };

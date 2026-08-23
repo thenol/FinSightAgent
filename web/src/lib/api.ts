@@ -35,6 +35,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   if (response.status === 401) {
     clearToken();
+    window.dispatchEvent(new CustomEvent("finsight:auth-expired"));
     throw new ApiError("登录已过期，请重新登录", 401, "AUTH_REQUIRED");
   }
   if (!response.ok) {

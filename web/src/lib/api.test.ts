@@ -35,4 +35,17 @@ describe("apiRequest", () => {
     await expect(apiRequest("/api/v1/reviews")).rejects.toBeInstanceOf(ApiError);
     expect(sessionStorage.getItem("finsight.token")).toBeNull();
   });
+
+  it("notifies the auth provider when a token expires", async () => {
+    const expired = vi.fn();
+    window.addEventListener("finsight:auth-expired", expired);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: { code: "AUTH_TOKEN_INVALID" } }),
+    }));
+    await expect(apiRequest("/api/v1/future-calendar/summary")).rejects.toMatchObject({ code: "AUTH_REQUIRED" });
+    expect(expired).toHaveBeenCalledTimes(1);
+    window.removeEventListener("finsight:auth-expired", expired);
+  });
 });

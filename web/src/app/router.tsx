@@ -14,6 +14,14 @@ import { DocumentsPage } from "@/pages/DocumentsPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { MergeReviewsPage } from "@/pages/MergeReviewsPage";
 import { ResearchPage } from "@/pages/ResearchPage";
+import { EventTypesPage } from "@/pages/EventTypesPage";
+import { ImpactTargetsPage } from "@/pages/ImpactTargetsPage";
+import { ImpactTargetDetailPage } from "@/pages/ImpactTargetDetailPage";
+import { ForwardImpactPage } from "@/pages/ForwardImpactPage";
+import { FutureEventsPage } from "@/pages/FutureEventsPage";
+import { MarketOutlookPage } from "@/pages/MarketOutlookPage";
+import { ForecastEvaluationPage } from "@/pages/ForecastEvaluationPage";
+import { MarketMasterDataPage } from "@/pages/MarketMasterDataPage";
 
 function RequireAuth() {
   const { token } = useAuth();
@@ -35,8 +43,16 @@ export function AppRouter() {
           <Route path="reviews/:taskId" element={<ReviewsPage />} />
           <Route path="merge-reviews" element={<MergeReviewsPage />} />
           <Route path="merge-reviews/:taskId" element={<MergeReviewsPage />} />
+          <Route path="event-types" element={<EventTypesPage />} />
           <Route path="events" element={<EventsPage />} />
           <Route path="events/:eventId" element={<EventsPage />} />
+          <Route path="impact-targets" element={<ImpactTargetsPage />} />
+          <Route path="impact-targets/:targetId" element={<ImpactTargetDetailPage />} />
+          <Route path="impact-targets/:targetId/forward" element={<ForwardImpactPage />} />
+          <Route path="future-events" element={<FutureEventsPage />} />
+          <Route path="market-outlook" element={<MarketOutlookPage />} />
+          <Route path="forecast-evaluation" element={<ForecastEvaluationPage />} />
+          <Route path="market-master-data" element={<MarketMasterDataPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="reports/:reportId" element={<ReportsPage />} />
           <Route path="sources" element={<SourcesPage />} />
