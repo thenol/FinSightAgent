@@ -187,6 +187,138 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
 
+  impact-aggregation-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "impact-aggregation"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_ARTIFACT_ROOT: /data/artifacts
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  forward-impact-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "forward-impact"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_ARTIFACT_ROOT: /data/artifacts
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # Market data ingestion does not require PostgreSQL: batches are written to the
+  # configured MarketBatchStore (local archive, ClickHouse or dual mirror).
+  market-data-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "market-data"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-auto}
+      MARKET_DATA_BRIDGE_URL: ${MARKET_DATA_BRIDGE_URL:-http://127.0.0.1:8765}
+      MARKET_DATA_STORE: ${MARKET_DATA_STORE:-local}
+      MARKET_ARCHIVE_ROOT: /data/market
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-clickhouse://localhost:8123/default}
+      MARKET_DATA_INSTRUMENT_IDS: ${MARKET_DATA_INSTRUMENT_IDS:-}
+      MARKET_DATA_INTERVAL: ${MARKET_DATA_INTERVAL:-1d}
+      MARKET_DATA_LOOKBACK_DAYS: ${MARKET_DATA_LOOKBACK_DAYS:-45}
+      MARKET_DATA_WORKER_INTERVAL_SECONDS: ${MARKET_DATA_WORKER_INTERVAL_SECONDS:-300}
+    volumes:
+      - market-data:/data/market
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  forecast-outcomes-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "forecast-outcomes"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-auto}
+      MARKET_DATA_BRIDGE_URL: ${MARKET_DATA_BRIDGE_URL:-http://127.0.0.1:8765}
+      FORECAST_OUTCOME_WORKER_INTERVAL_SECONDS: ${FORECAST_OUTCOME_WORKER_INTERVAL_SECONDS:-3600}
+      FORECAST_OUTCOME_FLAT_BAND: ${FORECAST_OUTCOME_FLAT_BAND:-0.003}
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -220,5 +352,6 @@ services:
 
 volumes:
   artifacts:
+  market-data:
   postgres-data:
   redis-data:
