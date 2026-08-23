@@ -238,7 +238,9 @@ def test_conflict_escalates_when_source_tiers_same() -> None:
 
     doc_a2 = _save_document(repo, "A")
     ev_a2 = _save_evidence(repo, doc_a2)
-    claim_a2 = _save_claim(repo, event, doc_a2, ev_a2, object_value={"type": "decimal", "value": 4.8})
+    claim_a2 = _save_claim(
+        repo, event, doc_a2, ev_a2, object_value={"type": "decimal", "value": 4.8}
+    )
 
     conflict = ConflictRecord(
         id=new_id("cfl"),

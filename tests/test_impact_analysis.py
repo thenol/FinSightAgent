@@ -1,12 +1,17 @@
 """事件影响分析模块测试。"""
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+
+from fastapi.testclient import TestClient
 
 from app.analysis.agents import ImpactAnalystAgent
 from app.analysis.schemas import ImpactAnalysisOutput, ImpactTarget, TransmissionChain
 from app.analysis.service import ImpactAnalysisService
-from app.domain import Document, Event, ImpactAnalysis
+from app.api.auth import PASSWORD_HASH
+from app.domain import Document, Event, User
 from app.events.classifier import EventClassifier
+from app.main import create_app
 from app.platform.ids import new_id
 from app.platform.repository import InMemoryRepository
 
@@ -91,7 +96,7 @@ def test_impact_analysis_service_fallback() -> None:
     assert analysis.event_id == event.id
     assert analysis.version == 1
     assert analysis.degraded is True
-    assert analysis.status == "approved"
+    assert analysis.status == "draft"
     assert analysis.summary
     assert len(analysis.impacts) >= 1
     assert analysis.generated_by == "agent:impact_analyst"
@@ -147,10 +152,10 @@ def test_impact_analysis_version_chain() -> None:
 
     assert first.version == 1
     assert second.version == 2
-    assert second.supersedes_id == first.id
+    assert second.supersedes_id is None
     updated_first = repo.get_impact_analysis(first.id)
     assert updated_first is not None
-    assert updated_first.status == "superseded"
+    assert updated_first.status == "draft"
     latest = repo.get_latest_impact_analysis_for_event(event.id)
     assert latest is not None
     assert latest.id == second.id
@@ -167,16 +172,6 @@ def test_impact_analysis_list_versions() -> None:
     versions = service.list_versions(event.id)
     assert len(versions) == 2
     assert versions[0].version > versions[1].version
-
-
-from contextlib import contextmanager
-
-from fastapi.testclient import TestClient
-
-from app.api.auth import PASSWORD_HASH
-from app.domain import User
-from app.main import create_app
-
 
 @contextmanager
 def _admin_client():
@@ -209,7 +204,7 @@ def test_api_generate_impact_analysis() -> None:
         assert data["event_id"] == event.id
         assert data["version"] == 1
         assert data["degraded"] is True
-        assert data["status"] == "approved"
+        assert data["status"] == "draft"
         assert len(data["impacts"]) >= 1
 
 
@@ -227,6 +222,26 @@ def test_api_get_impact_analysis() -> None:
         data = response.json()["data"]
         assert data["id"] == analysis.id
         assert data["summary"]
+
+
+def test_api_impact_analysis_transition_blocks_degraded_approval() -> None:
+    with _admin_client() as (client, repository, token):
+        event = _save_event(repository)
+        analysis = ImpactAnalysisService(repository).generate(event.id)
+        response = client.post(
+            f"/api/v1/impact-analyses/{analysis.id}/transition",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"status": "needs_review", "comment": "补充证据后复核"},
+        )
+        assert response.status_code == 200
+
+        response = client.post(
+            f"/api/v1/impact-analyses/{analysis.id}/transition",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"status": "approved", "comment": "reviewed"},
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "DEGRADED_IMPACT_ANALYSIS_NOT_APPROVABLE"
 
 
 def test_api_list_impact_analysis_versions() -> None:

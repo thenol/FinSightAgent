@@ -255,6 +255,10 @@ def test_pipeline_candidate_type_end_to_end() -> None:
     # 候选类型无规则基线，Router 建议 0.9 作为类型基线分量（0.30 权重），应显著高于归档线
     assert result.event.importance > 0.3
     assert result.claim is not None  # legacy 谓词回退，不崩溃
+    entry = repository.get_event_type_registry("geopolitical_crisis")
+    assert entry is not None
+    assert entry.status == "candidate"
+    assert entry.event_count == 1
 
 
 def test_model_gateway_deterministic_event_route_operation() -> None:

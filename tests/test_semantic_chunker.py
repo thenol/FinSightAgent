@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from app.document_intelligence.chunker import SemanticChunker
 from app.domain import DocumentBlock
 

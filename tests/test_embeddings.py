@@ -1,7 +1,5 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from app.document_intelligence.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingService,

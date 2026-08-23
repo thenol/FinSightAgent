@@ -1,7 +1,3 @@
-from datetime import datetime, timezone
-
-import pytest
-
 from app.domain import CitationCandidate, FusionConfig, RetrievedItem
 from app.retrieval.fusion import FusionService
 

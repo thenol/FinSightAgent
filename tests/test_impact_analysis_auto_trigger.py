@@ -1,6 +1,5 @@
 """影响分析自动生成触发测试。"""
 
-from dataclasses import replace
 from datetime import datetime, timezone
 
 from app.analysis.service import ImpactAnalysisService

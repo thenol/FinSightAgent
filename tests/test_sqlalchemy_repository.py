@@ -151,6 +151,28 @@ def test_persistent_repository_supports_user_and_audit_proxies(tmp_path) -> None
     assert logs[0].action == "auth.login"
 
 
+def test_persistent_repository_creates_and_updates_impact_graph_layout(tmp_path) -> None:
+    from app.domain import ImpactGraphLayout
+
+    value = repository(f"sqlite:///{tmp_path / 'impact-layout.db'}")
+    value.save_impact_graph_layout(
+        ImpactGraphLayout(
+            analysis_id="ian_1", user_id="usr_1",
+            node_positions={"node-1": {"x": 10.0, "y": 20.0}},
+        )
+    )
+    value.save_impact_graph_layout(
+        ImpactGraphLayout(
+            analysis_id="ian_1", user_id="usr_1",
+            node_positions={"node-1": {"x": 30.0, "y": 40.0}},
+        )
+    )
+
+    layout = value.get_impact_graph_layout("ian_1", "usr_1")
+    assert layout is not None
+    assert layout.node_positions["node-1"] == {"x": 30.0, "y": 40.0}
+
+
 def test_persistent_repository_supports_brief_and_tool_call_proxies(tmp_path) -> None:
     from app.domain import Brief, ToolCall
     from app.platform.ids import new_id
@@ -186,3 +208,18 @@ def test_persistent_repository_supports_brief_and_tool_call_proxies(tmp_path) ->
     calls = value.list_tool_calls("wfr_1")
     assert len(calls) == 1
     assert calls[0].tool_name == "calculate_financial_metrics"
+
+
+def test_event_type_registry_increment_and_reload(tmp_path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'registry.db'}"
+    first = repository(database_url)
+    first.increment_event_type_registry_count("weather_event")
+    first.increment_event_type_registry_count("weather_event")
+
+    restarted = repository(database_url)
+    entry = restarted.get_event_type_registry("weather_event")
+    assert entry is not None
+    assert entry.status == "candidate"
+    assert entry.event_count == 2
+    listed = restarted.list_event_type_registry(status="candidate")
+    assert [item.type_label for item in listed] == ["weather_event"]

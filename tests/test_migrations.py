@@ -62,6 +62,8 @@ def test_alembic_head_includes_research_and_brief_tables(tmp_path) -> None:
     # 0007 新增的表
     for table in ("tool_calls", "budget_ledger", "node_attempts", "briefs"):
         assert table in tables, f"missing table: {table}"
+    assert "watch_triggers" in tables
+    assert "event_type_registry" in tables
 
 
 def test_alembic_head_adds_review_task_resume_columns(tmp_path) -> None:

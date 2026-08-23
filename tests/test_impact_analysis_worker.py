@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-from app.analysis.service import ImpactAnalysisService
 from app.analysis.worker import MAX_ATTEMPTS, ImpactAnalysisWorker
 from app.domain import Event, ImpactAnalysis
 from app.platform.ids import new_id

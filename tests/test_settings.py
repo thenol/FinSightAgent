@@ -91,3 +91,14 @@ def test_document_purge_min_age_seconds_bounds() -> None:
             bootstrap_admin_password="",
             document_purge_min_age_seconds=-1,
         ).validate()
+
+
+def test_market_data_store_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="FINSIGHT_MARKET_DATA_STORE_INVALID"):
+        Settings(
+            environment="development", repository="memory",
+            database_url="postgresql+psycopg://user:pass@db/finsight",
+            redis_url="redis://redis:6379/0", artifact_root=".data/artifacts",
+            jwt_secret="a" * 32, bootstrap_admin_username="",
+            bootstrap_admin_password="", market_data_store="unknown",
+        ).validate()

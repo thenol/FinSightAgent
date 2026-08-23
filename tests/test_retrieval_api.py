@@ -146,6 +146,25 @@ def test_retrieve_api_graph_mode() -> None:
         assert data["candidate_count"] >= 1
         assert any(item["backend"] == "graph" for item in data["items"])
         assert any(item["chunk_id"] == "chk_001" for item in data["items"])
+        assert data["filters"]["relation_path"] == "entity->event->document->chunk"
+        assert data["filters"]["max_hops"] == 3
+
+
+def test_retrieve_api_relation_mode_is_graph_compatible() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        repository = app.state.repository
+        _seed(repository)
+
+        token = _login(client)
+        response = client.post(
+            "/api/v1/retrieval/retrieve",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"query": "美联储加息影响", "retrieval_mode": "relation", "top_k": 5},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert any(item["backend"] == "graph" for item in data["items"])
 
 
 def test_retrieve_api_sql_mode() -> None:
@@ -170,6 +189,36 @@ def test_retrieve_api_sql_mode() -> None:
         assert any(item["chunk_id"] == "evt_001" for item in data["items"])
 
 
+def test_retrieve_api_sql_mode_pushes_event_filters_down() -> None:
+    app = create_app()
+    with TestClient(app) as client:
+        repository = app.state.repository
+        _seed(repository)
+        repository.events["evt_earnings"] = Event(
+            id="evt_earnings",
+            event_type="earnings_guidance",
+            status="triaged",
+            title="公司业绩预告",
+            entity_ids=["ent_001"],
+            document_ids=[],
+            importance=0.70,
+            urgency="normal",
+            occurred_at=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        )
+
+        token = _login(client)
+        response = client.post(
+            "/api/v1/retrieval/retrieve",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"query": "美联储加息", "retrieval_mode": "sql", "top_k": 1},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["candidate_count"] == 1
+        assert [item["chunk_id"] for item in data["items"]] == ["evt_001"]
+        assert data["filters"]["event_types"] == ["macro_policy"]
+
+
 def test_retrieve_api_timeseries_mode() -> None:
     app = create_app()
     with TestClient(app) as client:
@@ -188,7 +237,9 @@ def test_retrieve_api_timeseries_mode() -> None:
         )
         assert response.status_code == 200
         data = response.json()["data"]
-        assert any(item["backend"] == "timeseries" for item in data["items"])
+        assert data["status"] == "unavailable"
+        assert data["degradation_reason"] == "market_data_provider_not_configured"
+        assert data["items"] == []
 
 
 def test_retrieve_api_planned_mode() -> None:
