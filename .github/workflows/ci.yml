@@ -24,7 +24,9 @@ jobs:
           npm test
           npm run build
       - run: uv run ruff check .
-      - run: uv run pytest
+      - run: uv run pytest --cov=app --cov-report=term-missing:skip-covered
+      - name: Build API container image
+        run: docker build -f deploy/Dockerfile .
       - name: Orphan reference audit (empty memory repository)
         env:
           FINSIGHT_REPOSITORY: memory
@@ -42,3 +44,44 @@ jobs:
           FINSIGHT_COMPOSE_REDIS_URL: redis://redis:6379/0
           POSTGRES_PASSWORD: ci
         run: docker compose -f deploy/docker-compose.yml config --quiet
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: finsight
+          POSTGRES_PASSWORD: finsight
+          POSTGRES_DB: finsight
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finsight -d finsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      FINSIGHT_POSTGRES_TEST_URL: postgresql+psycopg://finsight:finsight@localhost:5432/finsight
+      FINSIGHT_DATABASE_URL: postgresql+psycopg://finsight:finsight@localhost:5432/finsight
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev --extra postgres
+      - name: PostgreSQL repository, migration, and pgvector path
+        run: uv run pytest tests/test_postgres_integration.py
+      - name: E2E smoke against TestClient-backed API
+        env:
+          FINSIGHT_REPOSITORY: postgresql
+          FINSIGHT_ENV: test
+          FINSIGHT_JWT_SECRET: ci-postgres-secret-that-is-32bytes
+          FINSIGHT_BOOTSTRAP_ADMIN_USERNAME: admin
+          FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD: admin123
+          FINSIGHT_WORKFLOW_AUTO_TRIGGER_ENABLED: "false"
+        run: |
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8765 &
+          for attempt in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8765/health/ready && break
+            sleep 1
+          done
+          FINSIGHT_E2E_BASE_URL=http://127.0.0.1:8765 uv run python scripts/e2e_smoke.py
