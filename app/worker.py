@@ -29,12 +29,13 @@ from app.market.adapters import (
 )
 from app.market.calendar import build_trading_calendar
 from app.market.forecasting import ForecastLifecycleService
+from app.market.master_data import seed_market_master_data
 from app.market.reference import MarketInstrumentCatalog
 from app.market.storage import build_market_batch_store
 from app.market.worker import MarketDataWorker
 from app.platform.db_models import WorkflowRunModel
 from app.platform.messaging import OutboxPublisher, RedisStreamBroker
-from app.platform.repository import SqlAlchemyRepository
+from app.platform.repository import InMemoryRepository, SqlAlchemyRepository
 from app.platform.settings import Settings
 from app.workflows.service import WorkflowService
 
@@ -197,7 +198,7 @@ async def run_reevaluate() -> None:
 
 async def run_market_data() -> None:
     settings = Settings.from_environment()
-    catalog = MarketInstrumentCatalog()
+    catalog = load_market_catalog(settings)
     eastmoney = EastMoneyMarketDataProvider(
         catalog.as_mapping(), timeout_seconds=settings.market_data_timeout_seconds
     )
@@ -217,11 +218,7 @@ async def run_market_data() -> None:
         raise RuntimeError("Market data worker requires a configured provider")
     else:
         provider = FallbackMarketDataProvider(eastmoney, akshare)
-    instrument_ids = tuple(
-        item.strip()
-        for item in os.getenv("MARKET_DATA_INSTRUMENT_IDS", "cn:index:000300").split(",")
-        if item.strip()
-    )
+    instrument_ids = market_instrument_ids(catalog)
     worker = MarketDataWorker(
         provider,
         build_market_batch_store(
@@ -248,7 +245,7 @@ async def run_forecast_outcomes() -> None:
     if settings.repository != "postgresql":
         raise RuntimeError("Forecast outcome worker requires FINSIGHT_REPOSITORY=postgresql")
     repository = SqlAlchemyRepository(settings.database_url)
-    catalog = MarketInstrumentCatalog()
+    catalog = seed_market_master_data(repository)
     eastmoney = EastMoneyMarketDataProvider(
         catalog.as_mapping(), timeout_seconds=settings.market_data_timeout_seconds
     )
@@ -362,6 +359,39 @@ def claim_workflow_run(
 def _workflow_lock_key(workflow_id: str) -> int:
     digest = hashlib.sha256(f"finsight-workflow:{workflow_id}".encode()).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def load_market_catalog(
+    settings: Settings, repository=None
+) -> MarketInstrumentCatalog:
+    """Load the persisted instrument catalog; seed bootstrap rows if the table is empty.
+
+    Production workers must not query the in-code DEFAULT_INSTRUMENTS list directly.
+    That tuple remains the idempotent seed source used by ``seed_market_master_data``.
+    """
+    if repository is None:
+        if settings.repository == "postgresql":
+            repository = SqlAlchemyRepository(settings.database_url)
+        else:
+            repository = InMemoryRepository()
+    return seed_market_master_data(repository)
+
+
+def market_instrument_ids(catalog: MarketInstrumentCatalog) -> tuple[str, ...]:
+    configured = tuple(
+        item.strip()
+        for item in os.getenv("MARKET_DATA_INSTRUMENT_IDS", "").split(",")
+        if item.strip()
+    )
+    if configured:
+        missing = [item for item in configured if catalog.get(item) is None]
+        if missing:
+            raise RuntimeError(f"Market instruments are not in master data: {missing}")
+        return configured
+    ids = tuple(item.id for item in catalog.list())
+    if not ids:
+        raise RuntimeError("Market master data catalog is empty")
+    return ids
 
 
 def main() -> None:
