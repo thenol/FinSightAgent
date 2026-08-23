@@ -16,6 +16,7 @@ from app.analysis.forward import ForwardImpactService
 from app.analysis.service import ImpactAnalysisService
 from app.api.auth import PASSWORD_HASH, require_roles
 from app.api.errors import openapi_error_responses
+from app.api.login_guard import client_ip_from_request
 from app.api.schemas import (
     AdminMetricsResponse,
     AuditLogResponse,
@@ -1278,16 +1279,30 @@ def _idempotency_finish(
 @router.post(
     "/api/v1/auth/login",
     response_model=DataEnvelope,
-    responses=openapi_error_responses(401, 422),
+    responses=openapi_error_responses(401, 422, 429),
 )
 def login(payload: LoginRequest, request: Request) -> DataEnvelope:
+    guard = request.app.state.login_guard
+    client_key = client_ip_from_request(
+        request.headers.get("X-Forwarded-For"),
+        request.client.host if request.client else None,
+    )
+    allowed, retry_after = guard.check_allowed(client_key)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="AUTH_LOGIN_LOCKED",
+            headers={"Retry-After": str(retry_after or 1)},
+        )
     user = request.app.state.repository.get_user_by_username(payload.username)
     if (
         not user
         or user.status != "active"
         or not PASSWORD_HASH.verify(payload.password, user.password_hash)
     ):
+        guard.record_failure(client_key)
         raise HTTPException(status_code=401, detail="AUTH_INVALID_CREDENTIALS")
+    guard.record_success(client_key)
     token = request.app.state.token_manager.issue(user)
     request.app.state.repository.save_audit_log(
         AuditLog(

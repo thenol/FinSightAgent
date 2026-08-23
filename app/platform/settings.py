@@ -38,6 +38,14 @@ class Settings:
     minio_endpoint: str = "http://localhost:9000"
 
     default_rate_limit_per_minute: int = 10
+    login_max_failures: int = 5
+    login_lockout_seconds: int = 900
+    login_failure_window_seconds: int = 300
+    metrics_enabled: bool = False
+    login_max_failures: int = 5
+    login_lockout_seconds: int = 900
+    login_failure_window_seconds: int = 300
+    metrics_enabled: bool = False
     rsshub_base_url: str = "http://127.0.0.1:1200"
     fetch_timeout_seconds: float = 60.0
     ingest_max_items_per_sync: int = 20
@@ -108,6 +116,12 @@ class Settings:
             raise ValueError("FINSIGHT_BOOTSTRAP_ADMIN_USERNAME_INVALID")
         if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 8:
             raise ValueError("FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD_TOO_SHORT")
+        if self.login_max_failures < 1 or self.login_max_failures > 100:
+            raise ValueError("FINSIGHT_LOGIN_MAX_FAILURES_INVALID")
+        if self.login_lockout_seconds < 30 or self.login_lockout_seconds > 86400:
+            raise ValueError("FINSIGHT_LOGIN_LOCKOUT_SECONDS_INVALID")
+        if self.login_failure_window_seconds < 30 or self.login_failure_window_seconds > 86400:
+            raise ValueError("FINSIGHT_LOGIN_FAILURE_WINDOW_SECONDS_INVALID")
         max_purge_age = 365 * 24 * 60 * 60
         if (
             self.document_purge_min_age_seconds < 0
@@ -159,6 +173,13 @@ class Settings:
             default_rate_limit_per_minute=int(
                 os.getenv("FINSIGHT_DEFAULT_RATE_LIMIT_PER_MINUTE", "10")
             ),
+            login_max_failures=int(os.getenv("FINSIGHT_LOGIN_MAX_FAILURES", "5")),
+            login_lockout_seconds=int(os.getenv("FINSIGHT_LOGIN_LOCKOUT_SECONDS", "900")),
+            login_failure_window_seconds=int(
+                os.getenv("FINSIGHT_LOGIN_FAILURE_WINDOW_SECONDS", "300")
+            ),
+            metrics_enabled=os.getenv("FINSIGHT_METRICS_ENABLED", "false").lower()
+            in {"1", "true", "yes"},
             rsshub_base_url=os.getenv("FINSIGHT_RSSHUB_BASE_URL", "http://127.0.0.1:1200"),
             fetch_timeout_seconds=float(os.getenv("FINSIGHT_FETCH_TIMEOUT_SECONDS", "60")),
             ingest_max_items_per_sync=int(os.getenv("FINSIGHT_INGEST_MAX_ITEMS_PER_SYNC", "20")),

@@ -79,6 +79,18 @@ OPENAPI_ERROR_EXAMPLES: dict[str, dict[str, Any]] = {
             "meta": {"request_id": "req_019example"},
         },
     },
+    "429": {
+        "summary": "Too many requests",
+        "value": {
+            "error": {
+                "code": "AUTH_LOGIN_LOCKED",
+                "message": "Auth Login Locked",
+                "retryable": True,
+                "details": {},
+            },
+            "meta": {"request_id": "req_019example"},
+        },
+    },
     "500": {
         "summary": "Internal error",
         "value": {
@@ -147,13 +159,17 @@ def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         code = str(exc.detail) if isinstance(exc.detail, str) else "HTTP_ERROR"
-        return error_response(
+        response = error_response(
             request,
             status_code=exc.status_code,
             code=code,
             message=code.replace("_", " ").title(),
             details={} if isinstance(exc.detail, str) else exc.detail,
         )
+        if exc.headers:
+            for key, value in exc.headers.items():
+                response.headers[key] = value
+        return response
 
     @app.exception_handler(Exception)
     async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
