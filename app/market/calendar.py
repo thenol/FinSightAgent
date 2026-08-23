@@ -5,14 +5,19 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from app.market.provider import MarketDataCapability, MarketDataResult, TradingCalendarDay
+from app.market.provider import (
+    MARKET_TIMEZONES,
+    MarketDataCapability,
+    MarketDataResult,
+    TradingCalendarDay,
+)
 
 _SESSIONS = {
     "cn": ((time(9, 30), time(11, 30)), (time(13, 0), time(15, 0))),
     "hk": ((time(9, 30), time(12, 0)), (time(13, 0), time(16, 0))),
     "us": ((time(9, 30), time(16, 0)),),
 }
-_TIMEZONES = {"cn": "Asia/Shanghai", "hk": "Asia/Hong_Kong", "us": "America/New_York"}
+_TIMEZONES = MARKET_TIMEZONES
 _EXCHANGE_CODES = {"cn": "XSHG", "hk": "XHKG", "us": "XNYS"}
 
 

@@ -165,6 +165,103 @@ def test_eastmoney_bridge_normalizes_kline_and_preserves_stale_warning() -> None
     assert result.warnings == ["cn:index:000300:bridge_stale_data"]
 
 
+def test_eastmoney_localizes_intraday_bars_from_exchange_time_to_utc() -> None:
+    instrument = MarketInstrument(
+        id="cn:index:000300", market="cn", symbol="000300", name="沪深300",
+        instrument_type="index", provider_symbols={"eastmoney": "1.000300"},
+    )
+
+    def transport(url: str, params: dict[str, object]) -> dict[str, object]:
+        assert params["klt"] == "5"
+        return {"data": {"klines": ["2026-08-17 14:55,4000,4020,4030,3990,1200,3400"]}}
+
+    provider = EastMoneyMarketDataProvider({instrument.id: instrument}, request_json=transport)
+    result = provider.get_bars(
+        instrument_ids=[instrument.id],
+        start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 18, tzinfo=timezone.utc),
+        interval="5m",
+        as_of=AS_OF,
+        limit=100,
+    )
+
+    # 14:55 Asia/Shanghai is 06:55Z.  Labeling the wall clock as UTC would place
+    # the bar at 14:55Z, eight hours after the session actually closed.
+    assert result.bars[0].observed_at == datetime(2026, 8, 17, 6, 55, tzinfo=timezone.utc)
+
+
+def test_us_intraday_bars_use_exchange_timezone() -> None:
+    instrument = MarketInstrument(
+        id="us:index:SPX", market="us", symbol="SPX", name="S&P 500",
+        instrument_type="index", provider_symbols={"eastmoney": "100.SPX"},
+    )
+
+    def transport(url: str, params: dict[str, object]) -> dict[str, object]:
+        return {"data": {"klines": ["2026-08-17 09:35,4000,4020,4030,3990,1200,3400"]}}
+
+    provider = EastMoneyMarketDataProvider({instrument.id: instrument}, request_json=transport)
+    result = provider.get_bars(
+        instrument_ids=[instrument.id],
+        start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 18, tzinfo=timezone.utc),
+        interval="5m",
+        as_of=AS_OF,
+        limit=100,
+    )
+
+    # 09:35 America/New_York during DST is 13:35Z.
+    assert result.bars[0].observed_at == datetime(2026, 8, 17, 13, 35, tzinfo=timezone.utc)
+
+
+def test_daily_bars_keep_utc_midnight_trading_date_marker() -> None:
+    instrument = MarketInstrument(
+        id="cn:index:000300", market="cn", symbol="000300", name="沪深300",
+        instrument_type="index", provider_symbols={"eastmoney": "1.000300"},
+    )
+
+    def transport(url: str, params: dict[str, object]) -> dict[str, object]:
+        return {"data": {"klines": ["2026-08-17,4000,4020,4030,3990,1200,3400"]}}
+
+    provider = EastMoneyMarketDataProvider({instrument.id: instrument}, request_json=transport)
+    result = provider.get_bars(
+        instrument_ids=[instrument.id],
+        start=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 31, tzinfo=timezone.utc),
+        interval="1d",
+        as_of=AS_OF,
+        limit=100,
+    )
+
+    assert result.bars[0].observed_at == datetime(2026, 8, 17, tzinfo=timezone.utc)
+
+
+def test_bridge_localizes_intraday_bars() -> None:
+    instrument = MarketInstrument(
+        id="cn:index:000300", market="cn", symbol="000300", name="沪深300",
+        instrument_type="index", provider_symbols={"eastmoney": "1.000300"},
+    )
+
+    def transport(url: str, params: dict[str, object]) -> dict[str, object]:
+        return {
+            "items": [{
+                "secid": "1.000300", "time": "2026-08-17 10:30", "open": "4000",
+                "close": "4020", "high": "4030", "low": "3990",
+            }],
+        }
+
+    provider = EastMoneyBridgeMarketDataProvider(
+        {instrument.id: instrument}, request_json=transport,
+    )
+    result = provider.get_bars(
+        instrument_ids=[instrument.id],
+        start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 18, tzinfo=timezone.utc),
+        interval="5m", as_of=AS_OF, limit=100,
+    )
+
+    assert result.bars[0].observed_at == datetime(2026, 8, 17, 2, 30, tzinfo=timezone.utc)
+
+
 def test_market_bar_rejects_inconsistent_ohlc() -> None:
     with pytest.raises(ValueError, match="high/low"):
         MarketBar(

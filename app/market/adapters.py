@@ -12,12 +12,14 @@ import math
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.market.provider import (
     INTERVALS,
     MARKET_CODES,
+    MARKET_TIMEZONES,
     MarketBar,
     MarketDataCapability,
     MarketDataProvider,
@@ -208,7 +210,9 @@ class EastMoneyMarketDataProvider:
                 fields = row.split(",") if isinstance(row, str) else row
                 if len(fields) < 7:
                     continue
-                observed_at = _parse_provider_time(str(fields[0]), interval)
+                observed_at = _parse_provider_time(
+                    str(fields[0]), interval, _market_from_instrument(instrument)
+                )
                 if observed_at is None or not start <= observed_at <= end:
                     continue
                 open_value = _as_float(fields[1])
@@ -375,7 +379,11 @@ class EastMoneyBridgeMarketDataProvider:
         item: dict[str, Any], instrument: MarketInstrument, interval: str, as_of: datetime
     ):
         time_value = item.get("time") or item.get("date")
-        observed_at = _parse_provider_time(str(time_value), interval) if time_value else None
+        observed_at = (
+            _parse_provider_time(str(time_value), interval, instrument.market)
+            if time_value
+            else None
+        )
         if observed_at is None:
             return None
         values = {key: _as_float(item.get(key)) for key in ("open", "close", "high", "low")}
@@ -394,13 +402,26 @@ class EastMoneyBridgeMarketDataProvider:
         )
 
 
-def _parse_provider_time(value: str, interval: str) -> datetime | None:
+def _parse_provider_time(value: str, interval: str, market: str) -> datetime | None:
+    """Convert an exchange-local provider timestamp to UTC.
+
+    Daily bars keep UTC midnight as a pure trading-date marker; they identify a
+    session, not an instant.  Intraday bars are real instants and must be
+    localized to the exchange timezone before conversion, otherwise a Beijing
+    wall clock read as UTC lands 8 hours in the future and makes every staleness
+    and ``as_of`` comparison meaningless.
+    """
+
     try:
         if interval == "1d":
             return datetime.strptime(value[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        return datetime.strptime(value[:16], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        local = datetime.strptime(value[:16], "%Y-%m-%d %H:%M")
     except ValueError:
         return None
+    timezone_name = MARKET_TIMEZONES.get(market)
+    if timezone_name is None:
+        raise ValueError(f"unsupported market: {market}")
+    return local.replace(tzinfo=ZoneInfo(timezone_name)).astimezone(timezone.utc)
 
 
 def _parse_iso_timestamp(value: Any) -> datetime | None:
@@ -653,7 +674,8 @@ class AkShareMarketDataProvider(UnavailableMarketDataProvider):
             raise ValueError("akshare response missing time column")
         result = []
         for _, row in frame.iterrows():
-            observed_at = _parse_provider_time(str(row[time_column]), interval)
+            # AKShare only serves CN instruments; ``get_bars`` rejects others.
+            observed_at = _parse_provider_time(str(row[time_column]), interval, "cn")
             if observed_at is None:
                 continue
             value_names = ("开盘", "收盘", "最高", "最低", "成交量", "成交额")

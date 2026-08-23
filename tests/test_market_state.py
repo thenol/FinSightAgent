@@ -75,6 +75,31 @@ def test_market_state_marks_old_bars_as_stale() -> None:
     assert states[0].freshness_lag_seconds == 17 * 86400
 
 
+def test_intraday_staleness_uses_true_utc_instants() -> None:
+    """Guards the timezone contract that makes 5m staleness detectable.
+
+    An adapter that labels a 14:55 Beijing wall clock as 14:55Z produces an
+    ``observed_at`` in the future relative to ``as_of``, the negative lag is
+    clamped to zero, and stale intraday data is reported as fresh forever.
+    """
+
+    observed = datetime(2026, 8, 17, 6, 55, tzinfo=timezone.utc)  # 14:55 Asia/Shanghai
+    bar = MarketBar(
+        instrument_id="cn:index:000300", market="cn", symbol="000300", interval="5m",
+        observed_at=observed, open=100, high=101, low=99, close=100,
+        source="test", available_at=observed,
+    )
+    as_of = datetime(2026, 8, 17, 8, tzinfo=timezone.utc)
+
+    state = MarketStateService(InMemoryMarketDataProvider([bar])).calculate(
+        instrument_ids=["cn:index:000300"], start=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        end=as_of, as_of=as_of, interval="5m",
+    )[0]
+
+    assert state.freshness_lag_seconds == 65 * 60
+    assert state.data_status == "stale_data"
+
+
 def test_market_state_does_not_treat_weekend_as_missing_sessions() -> None:
     observed = datetime(2026, 8, 21, tzinfo=timezone.utc)  # Friday
     bar = MarketBar(

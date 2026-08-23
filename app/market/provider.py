@@ -13,6 +13,14 @@ from typing import Any, Protocol
 
 MARKET_CODES = ("cn", "hk", "us")
 INTERVALS = ("5m", "1d")
+# Providers report wall-clock timestamps in exchange-local time.  Localization
+# is a contract concern, not an adapter detail: mislabeling exchange time as UTC
+# silently shifts intraday bars and breaks as_of and freshness comparisons.
+MARKET_TIMEZONES = {
+    "cn": "Asia/Shanghai",
+    "hk": "Asia/Hong_Kong",
+    "us": "America/New_York",
+}
 
 
 @dataclass(frozen=True)
