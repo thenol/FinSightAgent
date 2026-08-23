@@ -8,7 +8,15 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.analysis.agents import ImpactAnalystAgent
-from app.analysis.schemas import ImpactAnalysisOutput, ImpactTarget, TransmissionChain
+from app.analysis.context import ImpactContextBuilder
+from app.analysis.mechanisms import ImpactCritic, MechanismGenerator
+from app.analysis.quality import validate_impact_output
+from app.analysis.schemas import (
+    ImpactAnalysisOutput,
+    ImpactAnalysisOutputV2,
+    ImpactTarget,
+    TransmissionChain,
+)
 from app.domain import AuditLog, Event, ImpactAnalysis
 from app.model_gateway.service import ModelGateway
 from app.platform.ids import new_id
@@ -30,6 +38,9 @@ class ImpactAnalysisService:
         self.repository = repository
         self.settings = settings or Settings.from_environment()
         self.agent = agent or ImpactAnalystAgent(ModelGateway(repository))
+        self.context_builder = ImpactContextBuilder(repository)
+        self.mechanism_generator = MechanismGenerator()
+        self.impact_critic = ImpactCritic()
 
     def generate(self, event_id: str, actor: Optional[str] = None) -> ImpactAnalysis:
         """为事件生成新一版影响分析；LLM 失败时使用规则模板。"""
@@ -37,44 +48,69 @@ class ImpactAnalysisService:
         if event is None:
             raise ValueError(f"event not found: {event_id}")
 
-        claims = self.repository.get_claims_for_event(event_id)
-        fact_card = self.repository.get_fact_card_for_event(event_id)
-        entities = [
-            entity
-            for entity_id in event.entity_ids
-            if (entity := self.repository.get_entity(entity_id)) is not None
-        ]
+        context = self.context_builder.build(event)
+        claims = context.claims
+        fact_card = context.fact_card
+        entities = context.entities
 
-        output = self.agent.analyze(event, claims, fact_card, entities)
+        output = self.agent.analyze(
+            event, claims, fact_card, entities, context=context.to_payload()
+        )
         degraded = output is None
         if degraded:
             output = _fallback_template(event)
 
-        latest = self.repository.get_latest_impact_analysis_for_event(event_id)
-        version = 1 if latest is None else latest.version + 1
-
-        # 旧版本标记为 superseded
-        if latest is not None:
-            self.repository.update_impact_analysis(
-                replace(latest, status="superseded")
+        v2_payload: dict = {}
+        quality_report = {
+            "gate_passed": not degraded,
+            "blockers": ["model_unavailable"] if degraded else [],
+        }
+        if isinstance(output, ImpactAnalysisOutputV2):
+            mechanism_result = self.mechanism_generator.generate(output)
+            critique = self.impact_critic.critique(output)
+            blockers = validate_impact_output(output)
+            quality_report = output.quality_report.model_dump()
+            quality_report["blockers"] = sorted(
+                set(quality_report.get("blockers", [])) | set(blockers) | set(critique.blockers)
             )
+            quality_report["warnings"] = sorted(
+                set(quality_report.get("warnings", []))
+                | set(mechanism_result.warnings)
+                | set(critique.warnings)
+            )
+            quality_report["gate_passed"] = not quality_report["blockers"]
+            v2_payload = output.model_dump(mode="json")
+            if blockers:
+                degraded = True
+
+        if isinstance(output, ImpactAnalysisOutputV2):
+            transmission_chains, impacts = _legacy_projection(output)
+        else:
+            transmission_chains = [chain.model_dump() for chain in output.transmission_chains]
+            impacts = [impact.model_dump() for impact in output.impacts]
+
+        versions = self.repository.list_impact_analyses_for_event(event_id)
+        latest = max(versions, key=lambda item: item.version, default=None)
+        version = 1 if latest is None else latest.version + 1
 
         analysis = ImpactAnalysis(
             id=new_id("imp"),
             event_id=event_id,
             version=version,
-            status="approved",
+            status="draft" if degraded else "needs_review",
             event_title_snapshot=event.title,
             summary=output.summary,
-            transmission_chains=[chain.model_dump() for chain in output.transmission_chains],
-            impacts=[impact.model_dump() for impact in output.impacts],
-            macro_assumptions=list(output.macro_assumptions),
+            transmission_chains=transmission_chains,
+            impacts=impacts,
+            macro_assumptions=list(getattr(output, "macro_assumptions", [])),
             watch_items=list(output.watch_items),
             generated_by=IMPACT_ANALYSIS_ACTOR,
             model_run_id=None if degraded else getattr(output, "model_run_id", None),
             degraded=degraded,
-            supersedes_id=latest.id if latest else None,
+            supersedes_id=None,
             created_at=datetime.now(timezone.utc),
+            analysis_payload=v2_payload,
+            quality_report=quality_report,
         )
         self.repository.save_impact_analysis(analysis)
         self._audit("impact_analysis.generated", analysis, actor or IMPACT_ANALYSIS_ACTOR)
@@ -88,6 +124,128 @@ class ImpactAnalysisService:
 
     def list_versions(self, event_id: str, limit: Optional[int] = None) -> list[ImpactAnalysis]:
         return self.repository.list_impact_analyses_for_event(event_id, limit=limit)
+
+    def graph(self, impact_analysis_id: str) -> dict:
+        analysis = self.get(impact_analysis_id)
+        if analysis is None:
+            raise ValueError("impact analysis not found")
+        payload = dict(analysis.analysis_payload or {})
+        if payload.get("causal_graph"):
+            return {
+                "schema_version": payload.get("schema_version", "2.1.0"),
+                "legacy": False,
+                "causal_graph": payload["causal_graph"],
+                "scenarios": payload.get("scenarios", []),
+                "impact_assessments": payload.get("impact_assessments", []),
+                "edit_revision": analysis.edit_revision,
+            }
+        return {
+            "schema_version": "2.1.0",
+            "legacy": True,
+            "causal_graph": _legacy_graph(analysis),
+            "scenarios": [],
+            "impact_assessments": [],
+            "edit_revision": analysis.edit_revision,
+        }
+
+    def derive_draft(self, impact_analysis_id: str, actor: str) -> ImpactAnalysis:
+        source = self.get(impact_analysis_id)
+        if source is None:
+            raise ValueError("impact analysis not found")
+        versions = self.list_versions(source.event_id)
+        payload = dict(source.analysis_payload or {})
+        if not payload.get("causal_graph"):
+            payload = self.graph(source.id)
+            payload.update(
+                {
+                    "summary": source.summary,
+                    "watch_items": source.watch_items,
+                    "context_snapshot": {},
+                    "quality_report": source.quality_report
+                    or {"evidence_coverage": 0.0, "gate_passed": False},
+                }
+            )
+        draft = replace(
+            source,
+            id=new_id("imp"),
+            version=max((v.version for v in versions), default=0) + 1,
+            status="draft",
+            generated_by=f"user:{actor}",
+            created_at=datetime.now(timezone.utc),
+            analysis_payload=payload,
+            quality_report=dict(source.quality_report or {}),
+            edit_revision=0,
+            derived_from_id=source.id,
+            supersedes_id=None,
+            degraded=True,
+        )
+        self.repository.save_impact_analysis(draft)
+        self._audit("impact_analysis.draft_derived", draft, actor)
+        return draft
+
+    def edit_graph(
+        self,
+        impact_analysis_id: str,
+        *,
+        expected_revision: int,
+        graph: dict,
+        scenarios: list[dict],
+        impact_assessments: list[dict],
+        actor: str,
+        change_reason: str,
+    ) -> ImpactAnalysis:
+        analysis = self.get(impact_analysis_id)
+        if analysis is None:
+            raise ValueError("impact analysis not found")
+        if analysis.status != "draft":
+            raise RuntimeError("IMPACT_ANALYSIS_DRAFT_REQUIRED")
+        if analysis.edit_revision != expected_revision:
+            raise RuntimeError("IMPACT_ANALYSIS_EDIT_CONFLICT")
+        payload = dict(analysis.analysis_payload or {})
+        payload.update(
+            {
+                "schema_version": "2.1.0",
+                "causal_graph": graph,
+                "scenarios": scenarios,
+                "impact_assessments": impact_assessments,
+            }
+        )
+        from app.analysis.schemas import ImpactAnalysisOutputV2
+
+        try:
+            parsed = ImpactAnalysisOutputV2.model_validate(
+                {
+                    "summary": analysis.summary,
+                    "context_snapshot": payload.get("context_snapshot", {}),
+                    "causal_graph": graph,
+                    "scenarios": scenarios,
+                    "impact_assessments": impact_assessments,
+                    "watch_items": analysis.watch_items,
+                    "quality_report": payload.get("quality_report")
+                    or {"evidence_coverage": 0.0, "gate_passed": False},
+                    "model_run_id": analysis.model_run_id,
+                    "schema_version": "2.1.0",
+                }
+            )
+        except Exception as exc:
+            raise ValueError(f"INVALID_IMPACT_GRAPH: {exc}") from exc
+        blockers = validate_impact_output(parsed)
+        report = parsed.quality_report.model_dump()
+        report["blockers"] = sorted(set(report.get("blockers", [])) | set(blockers))
+        report["gate_passed"] = not report["blockers"]
+        transmission_chains, impacts = _legacy_projection(parsed)
+        updated = replace(
+            analysis,
+            analysis_payload=payload,
+            quality_report=report,
+            transmission_chains=transmission_chains,
+            impacts=impacts,
+            edit_revision=analysis.edit_revision + 1,
+            degraded=not report["gate_passed"],
+        )
+        self.repository.update_impact_analysis(updated)
+        self._audit("impact_analysis.graph_edited", updated, actor)
+        return updated
 
     def _audit(self, action: str, analysis: ImpactAnalysis, actor: str) -> None:
         saver = getattr(self.repository, "save_audit_log", None)
@@ -118,6 +276,154 @@ def _fallback_template(event: Event) -> ImpactAnalysisOutput:
     if event.event_type == "macro_policy":
         return _macro_policy_fallback(event)
     return _generic_fallback(event)
+
+
+def _legacy_graph(analysis: ImpactAnalysis) -> dict:
+    nodes: list[dict] = [
+        {
+            "node_id": "node_event",
+            "node_type": "event",
+            "label": analysis.event_title_snapshot,
+            "layer": 0,
+        }
+    ]
+    edges: list[dict] = []
+    chain_endpoints: dict[str, str] = {}
+    for chain_index, chain in enumerate(analysis.transmission_chains):
+        previous = "node_event"
+        for step_index, step in enumerate(chain.get("steps", [])):
+            node_id = f"node_legacy_{chain_index}_{step_index}"
+            nodes.append(
+                {
+                    "node_id": node_id,
+                    "node_type": "mechanism" if step_index == 0 else "variable",
+                    "label": step.get("description", ""),
+                    "layer": step_index + 1,
+                    "group": chain.get("chain_id"),
+                }
+            )
+            edges.append(
+                {
+                    "edge_id": f"edge_legacy_{chain_index}_{step_index}",
+                    "source_node_id": previous,
+                    "target_node_id": node_id,
+                    "mechanism": chain.get("mechanism", "legacy transmission"),
+                    "direction": "uncertain",
+                    "order": "direct" if step_index == 0 else "first_order",
+                    "horizon": "unknown",
+                    "inference_kind": "inference",
+                    "confidence": chain.get("confidence", 0.0),
+                    "evidence_refs": [],
+                }
+            )
+            previous = node_id
+        chain_endpoints[chain.get("chain_id", f"legacy_{chain_index}")] = previous
+
+    horizon_map = {"short": "2_5d", "medium": "1_4q", "long": "1y_plus"}
+    for impact_index, impact in enumerate(analysis.impacts):
+        node_id = f"node_legacy_impact_{impact_index}"
+        nodes.append(
+            {
+                "node_id": node_id,
+                "node_type": "impact",
+                "label": impact.get("target_name", "未命名影响对象"),
+                "layer": 4,
+                "group": impact.get("target_type"),
+            }
+        )
+        refs = [ref for ref in impact.get("chain_refs", []) if ref in chain_endpoints]
+        sources = [chain_endpoints[ref] for ref in refs] or ["node_event"]
+        for source_index, source_id in enumerate(sources):
+            edges.append(
+                {
+                    "edge_id": f"edge_legacy_impact_{impact_index}_{source_index}",
+                    "source_node_id": source_id,
+                    "target_node_id": node_id,
+                    "mechanism": (
+                        impact.get("rationale", "兼容影响映射")
+                        if refs
+                        else "兼容影响映射（未关联传导链）"
+                    ),
+                    "direction": impact.get("direction", "uncertain"),
+                    "order": "first_order" if refs else "direct",
+                    "horizon": horizon_map.get(impact.get("horizon"), "unknown"),
+                    "inference_kind": "inference",
+                    "confidence": impact.get("confidence", 0.0),
+                    "evidence_refs": [
+                        {"evidence_type": "claim", "evidence_id": claim_id, "stance": "supports"}
+                        for claim_id in impact.get("claim_ids", [])
+                    ],
+                }
+            )
+    return {"nodes": nodes, "edges": edges}
+
+
+def _legacy_projection(output: ImpactAnalysisOutputV2) -> tuple[list[dict], list[dict]]:
+    """将 V2 因果图投影为当前 API/前端仍使用的链和目标字段。"""
+    nodes = {node.node_id: node for node in output.causal_graph.nodes}
+    chains: list[dict] = []
+    for scenario in output.scenarios:
+        edges = [
+            edge for edge in output.causal_graph.edges if edge.edge_id in scenario.active_edge_ids
+        ]
+        if not edges:
+            continue
+        chain_id = f"chn_v2_{scenario.scenario_id.removeprefix('scn_')}"
+        chains.append(
+            TransmissionChain(
+                chain_id=chain_id,
+                mechanism=f"{scenario.name} 情景传导",
+                steps=[
+                    {
+                        "step": index,
+                        "description": (
+                            f"{nodes[edge.source_node_id].label} → "
+                            f"{nodes[edge.target_node_id].label}：{edge.mechanism}"
+                        ),
+                    }
+                    for index, edge in enumerate(edges)
+                    if edge.source_node_id in nodes and edge.target_node_id in nodes
+                ],
+                confidence=(sum(edge.confidence for edge in edges) / len(edges) if edges else 0.0),
+            ).model_dump()
+        )
+
+    impacts: list[dict] = []
+    for assessment in output.impact_assessments:
+        direction = "neutral"
+        magnitude = "uncertain"
+        if assessment.dimensions:
+            direction = assessment.dimensions[0].direction
+            magnitude = assessment.dimensions[0].magnitude
+        impacts.append(
+            ImpactTarget(
+                target_type=assessment.target_type,
+                target_name=assessment.target_name,
+                target_code=assessment.target_code,
+                direction=direction,
+                magnitude=magnitude,
+                horizon={
+                    "0_1d": "short",
+                    "2_5d": "short",
+                    "1_4w": "medium",
+                    "1_4q": "medium",
+                    "1y_plus": "long",
+                }.get(assessment.horizon, "uncertain"),
+                confidence=assessment.confidence,
+                rationale="；".join(assessment.exposure_path),
+                chain_refs=[
+                    f"chn_v2_{scenario.scenario_id.removeprefix('scn_')}"
+                    for scenario in output.scenarios
+                    if scenario.scenario_id == assessment.scenario_id
+                ],
+                claim_ids=[
+                    evidence.evidence_id
+                    for evidence in assessment.evidence_refs
+                    if evidence.evidence_type == "claim"
+                ],
+            ).model_dump()
+        )
+    return chains, impacts
 
 
 def _macro_policy_fallback(event: Event) -> ImpactAnalysisOutput:

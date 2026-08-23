@@ -7,10 +7,10 @@
 
 from typing import Any
 
-from app.analysis.schemas import ImpactAnalysisOutput
+from app.analysis.schemas import ImpactAnalysisOutput, ImpactAnalysisOutputV2
 from app.model_gateway.service import ModelGateway, ModelRequest
 
-AGENT_SCHEMA_VERSION = "v1"
+AGENT_SCHEMA_VERSION = "v2"
 
 
 class ImpactAnalystAgent:
@@ -28,7 +28,8 @@ class ImpactAnalystAgent:
         claims: list[Any],
         fact_card: Any | None,
         entities: list[Any],
-    ) -> ImpactAnalysisOutput | None:
+        context: dict[str, Any] | None = None,
+    ) -> ImpactAnalysisOutput | ImpactAnalysisOutputV2 | None:
         """调用 LLM；未配置 provider 或输出无法解析时返回 None（由服务层降级）。"""
         try:
             response = self.gateway.invoke(
@@ -36,7 +37,7 @@ class ImpactAnalystAgent:
                     operation=self.operation,
                     input_schema_version=AGENT_SCHEMA_VERSION,
                     output_schema_version=AGENT_SCHEMA_VERSION,
-                    payload=_build_payload(event, claims, fact_card, entities),
+                    payload=_build_payload(event, claims, fact_card, entities, context),
                     timeout_seconds=60,
                     system_prompt=_build_system_prompt(event),
                 )
@@ -46,11 +47,14 @@ class ImpactAnalystAgent:
 
         payload = response.payload if isinstance(response.payload, dict) else {}
         try:
-            output = ImpactAnalysisOutput.model_validate(payload)
-            output.model_run_id = response.run_id
-            return output
+            output = ImpactAnalysisOutputV2.model_validate(payload)
         except Exception:
-            return None
+            try:
+                output = ImpactAnalysisOutput.model_validate(payload)
+            except Exception:
+                return None
+        output.model_run_id = response.run_id
+        return output
 
 
 def _build_payload(
@@ -58,6 +62,7 @@ def _build_payload(
     claims: list[Any],
     fact_card: Any | None,
     entities: list[Any],
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """组装给模型的结构化上下文。"""
     return {
@@ -89,6 +94,7 @@ def _build_payload(
             }
             for entity in entities
         ],
+        "impact_context": context or {},
     }
 
 
@@ -107,43 +113,30 @@ def _build_system_prompt(event: Any) -> str:
         "推理该事件对宏观经济、市场、板块、行业上下游和资产价格的传导影响。"
         "只使用输入中已验证的信息，不要编造未提供的实体或数据。"
         "输出必须是合法 JSON，不要包含 markdown 代码块或其他说明文字。\n\n"
-        "输出需严格符合以下 JSON Schema（extra fields 不允许）：\n"
+        "优先输出 2.0.0 结构，extra fields 不允许：\n"
         "{\n"
-        '  "schema_version": "1.0.0",\n'
+        '  "schema_version": "2.0.0",\n'
         '  "summary": "用 2-4 句话概括核心影响逻辑（中文）",\n'
-        '  "transmission_chains": [\n'
-        "    {\n"
-        '      "chain_id": "chn_前缀加小写英文/数字/下划线，如 chn_rate",\n'
-        '      "mechanism": "传导机制名称（如 利率传导、流动性传导）",\n'
-        '      "steps": [\n'
-        "        {\"step\": 0, \"description\": \"第一步\"},\n"
-        "        ...\n"
-        "      ],\n"
-        '      "confidence": 0.0-1.0\n'
-        "    }\n"
-        "  ],\n"
-        '  "impacts": [\n'
-        "    {\n"
-        '      "target_type": "sector|industry|company|macro_variable|market|asset_class",\n'
-        '      "target_name": "受影响对象中文名称",\n'
-        '      "target_code": "可选标准化代码",\n'
-        '      "direction": "positive|negative|neutral|mixed",\n'
-        '      "magnitude": "strong|moderate|weak|uncertain",\n'
-        '      "horizon": "short|medium|long|uncertain",\n'
-        '      "confidence": 0.0-1.0,\n'
-        '      "rationale": "简要依据（1-2 句）",\n'
-        '      "chain_refs": ["chn_xxx"],\n'
-        '      "claim_ids": []\n'
-        "    }\n"
-        "  ],\n"
-        '  "macro_assumptions": ["分析依赖的宏观前提，如 市场已充分定价"],\n'
+        '  "context_snapshot": {"expected_baseline": "unknown", "surprise": "unknown"},\n'
+        '  "causal_graph": {"nodes": [{"node_id": "node_event", '
+        '"node_type": "event", "label": "事件"}], "edges": []},\n'
+        '  "scenarios": [{"scenario_id": "scn_base", "name": "base", '
+        '"assumptions": ["无额外假设"], "active_edge_ids": [], '
+        '"likelihood": "unknown"}],\n'
+        '  "impact_assessments": [{"assessment_id": "ia_1", '
+        '"scenario_id": "scn_base", "target_type": "sector", '
+        '"target_name": "目标", "exposure_path": ["事件→目标"], '
+        '"dimensions": [{"dimension": "other", '
+        '"direction": "uncertain", "magnitude": "uncertain"}], '
+        '"horizon": "unknown", "confidence": 0.0}],\n'
         '  "watch_items": ["后续值得跟踪的指标或事件"],\n'
-        '  "confidence": 0.0-1.0\n'
+        '  "quality_report": {"evidence_coverage": 0.0, '
+        '"unresolved_references": [], "warnings": [], "blockers": []}\n'
         "}\n\n"
         "约束：\n"
         "- 事件类型为 \"" + event.event_type + "\"，请优先使用该领域的经典传导框架。\n"
-        "- 至少给出 2 个、不超过 6 个 impacts。\n"
-        "- 每个 impact 的 rationale 必须具体，不能是泛泛而谈。\n"
+        "- 每条因果边必须尽量绑定 evidence_refs，不能编造证据 ID。\n"
+        "- 每个影响目标必须有 exposure_path；没有可靠数据时不得填写定量区间。\n"
         "- confidence 必须真实反映证据强度，不要全部为 0.9+。\n"
         "- 中文输出。"
     )
