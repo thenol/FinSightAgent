@@ -129,3 +129,13 @@ def test_http_trace_context_latency_and_error_metrics() -> None:
     assert latency.value >= 0
     assert latency.labels["route"] == "/observability-test"
     assert success.value == 0
+
+
+def test_metrics_endpoint_exports_prometheus_text(monkeypatch) -> None:
+    monkeypatch.setenv("FINSIGHT_METRICS_ENABLED", "true")
+    monkeypatch.setenv("FINSIGHT_REPOSITORY", "memory")
+    with TestClient(create_app()) as client:
+        client.get("/health")
+        metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert "finsight_operation_duration" in metrics.text

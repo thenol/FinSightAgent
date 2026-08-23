@@ -7,10 +7,12 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 
 from app.admin_ui import router as admin_router
 from app.api.auth import PASSWORD_HASH, TokenManager
 from app.api.errors import install_exception_handlers, install_openapi_error_examples
+from app.api.login_guard import LoginGuard, LoginGuardSettings
 from app.api.routes import router
 from app.application.pipeline import EventResearchPipeline
 from app.domain import User
@@ -27,7 +29,8 @@ from app.market.calendar import build_trading_calendar
 from app.market.master_data import seed_market_master_data
 from app.market.provider import UnavailableMarketDataProvider
 from app.platform.ids import new_id
-from app.platform.observability import Observability, TraceContext
+from app.platform.observability import InMemoryObservabilitySink, Observability, TraceContext
+from app.platform.prometheus import format_prometheus_metrics
 from app.platform.repository import InMemoryRepository, SqlAlchemyRepository
 from app.platform.settings import Settings
 
@@ -109,13 +112,10 @@ async def lifespan(app: FastAPI):
     )
     if settings.market_data_provider == "eastmoney":
         app.state.market_data_provider = eastmoney_provider
-    elif settings.market_data_provider == "bridge":
-        # Prefer the local browser bridge (session-aware and replayable), but
-        # route incomplete history through direct EastMoney and then AKShare.
-        app.state.market_data_provider = FallbackMarketDataProvider(
-            bridge_provider,
-            FallbackMarketDataProvider(eastmoney_provider, akshare_provider),
-        )
+    elif settings.market_data_provider in {"bridge", "auto"}:
+        # The bridge is the platform data boundary. Direct adapters remain
+        # explicit diagnostic options and are never silently mixed into a run.
+        app.state.market_data_provider = bridge_provider
     elif settings.market_data_provider == "akshare":
         app.state.market_data_provider = akshare_provider
     elif settings.market_data_provider == "none":
@@ -125,6 +125,13 @@ async def lifespan(app: FastAPI):
             eastmoney_provider, akshare_provider
         )
     app.state.token_manager = TokenManager(settings.jwt_secret)
+    app.state.login_guard = LoginGuard(
+        LoginGuardSettings(
+            max_failures=settings.login_max_failures,
+            lockout_seconds=settings.login_lockout_seconds,
+            failure_window_seconds=settings.login_failure_window_seconds,
+        )
+    )
     bootstrap_username = settings.bootstrap_admin_username
     bootstrap_password = settings.bootstrap_admin_password
     if bootstrap_username and bootstrap_password:
@@ -168,13 +175,21 @@ def create_app(
     *,
     llm_config_path: str | None = None,
 ) -> FastAPI:
+    settings = Settings.from_environment()
+    if observability is None and settings.metrics_enabled:
+        metrics_sink = InMemoryObservabilitySink()
+        observability = Observability(metrics_sink, metrics_sink)
+    else:
+        metrics_sink = None
+        observability = observability or Observability.no_op()
     application = FastAPI(
         title="FinSightAgent API",
         version="0.1.0",
         description="Evidence-first financial event research API",
         lifespan=lifespan,
     )
-    application.state.observability = observability or Observability.no_op()
+    application.state.observability = observability
+    application.state.metrics_sink = metrics_sink
     application.state.llm_config_path_override = llm_config_path
 
     @application.middleware("http")
@@ -229,6 +244,16 @@ def create_app(
             response.headers["X-Request-ID"] = request.state.request_id
             response.headers["traceparent"] = span.context.as_traceparent()
             return response
+
+    @application.get("/metrics", include_in_schema=False)
+    def metrics() -> PlainTextResponse:
+        sink = getattr(application.state, "metrics_sink", None)
+        if sink is None:
+            return PlainTextResponse("# metrics disabled\n", media_type="text/plain; version=0.0.4")
+        return PlainTextResponse(
+            format_prometheus_metrics(sink.metrics),
+            media_type="text/plain; version=0.0.4",
+        )
 
     install_exception_handlers(application)
     install_openapi_error_examples(application)
