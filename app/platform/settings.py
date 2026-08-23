@@ -27,6 +27,16 @@ class Settings:
     bootstrap_admin_password: str
     settings_fernet_key: str = ""
 
+    # Market data source routing.  ``auto`` means EastMoney with an explicit
+    # fallback capability; it never fabricates bars when both sources fail.
+    market_data_provider: str = "auto"
+    market_data_timeout_seconds: float = 15.0
+    market_data_bridge_url: str = "http://127.0.0.1:8765"
+    market_archive_root: str = ".data/market"
+    market_data_store: str = "local"
+    clickhouse_url: str = "clickhouse://localhost:8123/default"
+    minio_endpoint: str = "http://localhost:9000"
+
     default_rate_limit_per_minute: int = 10
     rsshub_base_url: str = "http://127.0.0.1:1200"
     fetch_timeout_seconds: float = 60.0
@@ -52,6 +62,8 @@ class Settings:
     auto_impact_analysis_enabled: bool = True
     # 自动生成影响分析的最小事件重要度。
     auto_impact_analysis_importance_threshold: float = 0.70
+    # 候选类型积累到该计数后，管理台标记可升格（DD-21 §2.4）。
+    candidate_type_promotion_threshold: int = 5
 
     def validate(self) -> "Settings":
         if self.environment not in {"development", "test", "staging", "production", "prod"}:
@@ -62,6 +74,20 @@ class Settings:
             parsed = urlparse(self.database_url)
             if parsed.scheme not in {"postgresql", "postgresql+psycopg"} or not parsed.hostname:
                 raise ValueError("FINSIGHT_DATABASE_URL_INVALID")
+        if self.market_data_provider not in {"auto", "bridge", "eastmoney", "akshare", "none"}:
+            raise ValueError("FINSIGHT_MARKET_DATA_PROVIDER_INVALID")
+        if self.market_data_timeout_seconds <= 0 or self.market_data_timeout_seconds > 300:
+            raise ValueError("FINSIGHT_MARKET_DATA_TIMEOUT_INVALID")
+        if urlparse(self.market_data_bridge_url).scheme not in {"http", "https"}:
+            raise ValueError("FINSIGHT_MARKET_DATA_BRIDGE_URL_INVALID")
+        if not self.market_archive_root:
+            raise ValueError("FINSIGHT_MARKET_ARCHIVE_ROOT_INVALID")
+        if self.market_data_store not in {"local", "clickhouse", "dual"}:
+            raise ValueError("FINSIGHT_MARKET_DATA_STORE_INVALID")
+        if not urlparse(self.clickhouse_url).scheme.startswith("clickhouse"):
+            raise ValueError("FINSIGHT_CLICKHOUSE_URL_INVALID")
+        if urlparse(self.minio_endpoint).scheme not in {"http", "https"}:
+            raise ValueError("FINSIGHT_MINIO_ENDPOINT_INVALID")
         if not urlparse(self.redis_url).scheme.startswith("redis"):
             raise ValueError("FINSIGHT_REDIS_URL_INVALID")
         artifact_root = Path(self.artifact_root)
@@ -96,6 +122,11 @@ class Settings:
             raise ValueError("FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD_INVALID")
         if not 0.0 <= self.auto_impact_analysis_importance_threshold <= 1.0:
             raise ValueError("FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD_INVALID")
+        if (
+            self.candidate_type_promotion_threshold < 1
+            or self.candidate_type_promotion_threshold > 1000
+        ):
+            raise ValueError("FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD_INVALID")
         return self
 
     @classmethod
@@ -116,6 +147,15 @@ class Settings:
             bootstrap_admin_username=os.getenv("FINSIGHT_BOOTSTRAP_ADMIN_USERNAME", ""),
             bootstrap_admin_password=os.getenv("FINSIGHT_BOOTSTRAP_ADMIN_PASSWORD", ""),
             settings_fernet_key=os.getenv("FINSIGHT_SETTINGS_FERNET_KEY", ""),
+            market_data_provider=os.getenv("MARKET_DATA_PROVIDER", "auto").strip().lower(),
+            market_data_timeout_seconds=float(os.getenv("MARKET_DATA_TIMEOUT_SECONDS", "15")),
+            market_data_bridge_url=os.getenv("MARKET_DATA_BRIDGE_URL", "http://127.0.0.1:8765"),
+            market_archive_root=os.getenv("MARKET_ARCHIVE_ROOT", ".data/market"),
+            market_data_store=os.getenv("MARKET_DATA_STORE", "local").strip().lower(),
+            clickhouse_url=os.getenv(
+                "CLICKHOUSE_URL", "clickhouse://localhost:8123/default"
+            ),
+            minio_endpoint=os.getenv("MINIO_ENDPOINT", "http://localhost:9000"),
             default_rate_limit_per_minute=int(
                 os.getenv("FINSIGHT_DEFAULT_RATE_LIMIT_PER_MINUTE", "10")
             ),
@@ -161,5 +201,8 @@ class Settings:
             in {"1", "true", "yes"},
             auto_impact_analysis_importance_threshold=float(
                 os.getenv("FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD", "0.70")
+            ),
+            candidate_type_promotion_threshold=int(
+                os.getenv("FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD", "5")
             ),
         ).validate()

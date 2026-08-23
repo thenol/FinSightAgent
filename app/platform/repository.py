@@ -31,12 +31,32 @@ from app.domain import (
     Entity,
     EntityLink,
     Event,
+    EventImpactRelation,
+    EventTypeRegistryEntry,
     EvidenceSpan,
     FactCard,
+    ForwardCatalyst,
+    ForwardImpactContribution,
+    ForwardImpactPoint,
+    ForwardImpactWindow,
+    FutureEvent,
+    FutureEventRevision,
+    FutureEventTargetImpact,
     ImpactAnalysis,
+    ImpactContribution,
+    ImpactGraphLayout,
+    ImpactTargetDefinition,
+    ImpactTargetMapping,
+    IndustryClassification,
+    IndustryTaxonomy,
     IngestRun,
+    InstrumentIndustryMembership,
     LlmAgentBinding,
     LlmProviderConfig,
+    MarketCalibrationVersion,
+    MarketForecastOutcome,
+    MarketForecastRun,
+    MarketMasterDataImportRun,
     MatchDecision,
     MergeReviewTask,
     ModelRun,
@@ -48,11 +68,14 @@ from app.domain import (
     ReviewTask,
     Security,
     Source,
+    TargetImpactSnapshot,
+    TargetImpactSnapshotContribution,
     ToolCall,
     User,
     WatchTrigger,
     WorkflowRun,
 )
+from app.market.provider import MarketInstrument
 from app.platform.asof import visible_as_of
 from app.platform.db_models import (
     AgentRegistrationModel,
@@ -73,15 +96,36 @@ from app.platform.db_models import (
     EmbeddingRecordModel,
     EntityModel,
     EventEntityModel,
+    EventImpactRelationModel,
     EventModel,
+    EventTypeRegistryModel,
     EvidenceSpanModel,
     FactCardModel,
+    ForwardCatalystModel,
+    ForwardImpactContributionModel,
+    ForwardImpactPointModel,
+    ForwardImpactWindowModel,
+    FutureEventModel,
+    FutureEventRevisionModel,
+    FutureEventTargetImpactModel,
     IdempotencyModel,
     ImpactAnalysisModel,
+    ImpactContributionModel,
+    ImpactGraphLayoutModel,
+    ImpactTargetDefinitionModel,
+    ImpactTargetMappingModel,
     InboxModel,
+    IndustryClassificationModel,
+    IndustryTaxonomyModel,
     IngestRunModel,
+    InstrumentIndustryMembershipModel,
     LlmAgentBindingModel,
     LlmProviderConfigModel,
+    MarketCalibrationVersionModel,
+    MarketForecastOutcomeModel,
+    MarketForecastRunModel,
+    MarketInstrumentModel,
+    MarketMasterDataImportRunModel,
     MatchDecisionModel,
     MergeReviewTaskModel,
     ModelRunModel,
@@ -94,6 +138,8 @@ from app.platform.db_models import (
     ReviewTaskModel,
     SecurityModel,
     SourceModel,
+    TargetImpactSnapshotContributionModel,
+    TargetImpactSnapshotModel,
     ToolCallModel,
     UserModel,
     WatchTriggerModel,
@@ -357,13 +403,9 @@ class Repository(Protocol):
 
     def save_parsed_document(self, parsed: ParsedDocument) -> None: ...
 
-    def get_parsed_document_by_document(
-        self, document_id: str
-    ) -> Optional[ParsedDocument]: ...
+    def get_parsed_document_by_document(self, document_id: str) -> Optional[ParsedDocument]: ...
 
-    def get_parsed_document_by_revision(
-        self, revision_id: str
-    ) -> Optional[ParsedDocument]: ...
+    def get_parsed_document_by_revision(self, revision_id: str) -> Optional[ParsedDocument]: ...
 
     def save_document_block(self, block: DocumentBlock) -> None: ...
 
@@ -383,9 +425,7 @@ class Repository(Protocol):
         self, chunk_id: str, model_version: str
     ) -> Optional[EmbeddingRecord]: ...
 
-    def list_embedding_records_by_chunks(
-        self, chunk_ids: list[str]
-    ) -> list[EmbeddingRecord]: ...
+    def list_embedding_records_by_chunks(self, chunk_ids: list[str]) -> list[EmbeddingRecord]: ...
 
     def find_similar_document_chunks(
         self,
@@ -427,13 +467,9 @@ class Repository(Protocol):
 
     def save_disclosure_group_membership(self, membership: DisclosureGroupMembership) -> None: ...
 
-    def list_disclosure_group_members(
-        self, group_id: str
-    ) -> list[DisclosureGroupMembership]: ...
+    def list_disclosure_group_members(self, group_id: str) -> list[DisclosureGroupMembership]: ...
 
-    def get_disclosure_group_for_document(
-        self, document_id: str
-    ) -> Optional[DisclosureGroup]: ...
+    def get_disclosure_group_for_document(self, document_id: str) -> Optional[DisclosureGroup]: ...
 
     def save_event(self, event: Event) -> None: ...
 
@@ -477,6 +513,16 @@ class Repository(Protocol):
 
     def update_watch_trigger(self, trigger: WatchTrigger) -> None: ...
 
+    def get_event_type_registry(self, type_label: str) -> Optional[EventTypeRegistryEntry]: ...
+
+    def list_event_type_registry(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeRegistryEntry]: ...
+
+    def save_event_type_registry(self, entry: EventTypeRegistryEntry) -> None: ...
+
+    def increment_event_type_registry_count(self, type_label: str) -> EventTypeRegistryEntry: ...
+
     def save_match_decision(self, decision: MatchDecision) -> None: ...
 
     def list_match_decisions(self, document_id: str) -> list[MatchDecision]: ...
@@ -516,6 +562,11 @@ class Repository(Protocol):
         as_of: Optional[datetime] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
+        *,
+        event_types: Optional[list[str]] = None,
+        entity_ids: Optional[list[str]] = None,
+        occurred_from: Optional[datetime] = None,
+        occurred_to: Optional[datetime] = None,
     ) -> list[Event]: ...
 
     def get_document(
@@ -581,15 +632,131 @@ class Repository(Protocol):
 
     def get_impact_analysis(self, impact_analysis_id: str) -> Optional["ImpactAnalysis"]: ...
 
-    def get_latest_impact_analysis_for_event(
-        self, event_id: str
-    ) -> Optional["ImpactAnalysis"]: ...
+    def get_latest_impact_analysis_for_event(self, event_id: str) -> Optional["ImpactAnalysis"]: ...
 
     def list_impact_analyses_for_event(
         self, event_id: str, limit: Optional[int] = None
     ) -> list["ImpactAnalysis"]: ...
 
     def update_impact_analysis(self, impact_analysis: "ImpactAnalysis") -> None: ...
+
+    def get_impact_graph_layout(
+        self, analysis_id: str, user_id: str
+    ) -> Optional[ImpactGraphLayout]: ...
+
+    def save_impact_graph_layout(self, layout: ImpactGraphLayout) -> None: ...
+
+    def delete_impact_graph_layout(self, analysis_id: str, user_id: str) -> None: ...
+
+    def save_impact_target(self, target: ImpactTargetDefinition) -> None: ...
+    def get_impact_target(self, target_id: str) -> Optional[ImpactTargetDefinition]: ...
+    def find_impact_target(
+        self, target_type: str, target_code: str, taxonomy_version: str = "default-v1"
+    ) -> Optional[ImpactTargetDefinition]: ...
+    def list_impact_targets(
+        self, target_type: Optional[str] = None
+    ) -> list[ImpactTargetDefinition]: ...
+    def save_market_instrument(self, value: MarketInstrument) -> None: ...
+    def get_market_instrument(self, instrument_id: str) -> Optional[MarketInstrument]: ...
+    def list_market_instruments(self, active: Optional[bool] = None) -> list[MarketInstrument]: ...
+    def save_industry_taxonomy(self, value: IndustryTaxonomy) -> None: ...
+    def list_industry_taxonomies(self, status: Optional[str] = None) -> list[IndustryTaxonomy]: ...
+    def save_industry_classification(self, value: IndustryClassification) -> None: ...
+    def list_industry_classifications(
+        self, taxonomy_id: Optional[str] = None
+    ) -> list[IndustryClassification]: ...
+    def save_instrument_industry_membership(self, value: InstrumentIndustryMembership) -> None: ...
+    def list_instrument_industry_memberships(
+        self, instrument_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[InstrumentIndustryMembership]: ...
+    def save_impact_target_mapping(self, value: ImpactTargetMapping) -> None: ...
+    def get_impact_target_mapping(self, mapping_id: str) -> Optional[ImpactTargetMapping]: ...
+    def update_impact_target_mapping(self, value: ImpactTargetMapping) -> None: ...
+    def list_impact_target_mappings(
+        self, target_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[ImpactTargetMapping]: ...
+    def save_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None: ...
+    def get_market_master_data_import_run(
+        self, run_id: str
+    ) -> Optional[MarketMasterDataImportRun]: ...
+    def find_market_master_data_import_run_by_hash(
+        self, source_hash: str
+    ) -> Optional[MarketMasterDataImportRun]: ...
+    def update_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None: ...
+    def list_market_master_data_import_runs(self) -> list[MarketMasterDataImportRun]: ...
+    def save_event_impact_relation(self, relation: EventImpactRelation) -> None: ...
+    def list_event_impact_relations(
+        self, event_id: Optional[str] = None
+    ) -> list[EventImpactRelation]: ...
+    def save_impact_contribution(self, contribution: ImpactContribution) -> None: ...
+    def list_impact_contributions(
+        self, target_id: Optional[str] = None
+    ) -> list[ImpactContribution]: ...
+    def save_target_impact_snapshot(
+        self, snapshot: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
+    ) -> None: ...
+    def get_latest_target_impact_snapshot(
+        self,
+        target_id: str,
+        horizon: Optional[str] = None,
+        scenario_set_id: str = "baseline",
+        as_of: Optional[datetime] = None,
+    ) -> Optional[TargetImpactSnapshot]: ...
+    def list_target_impact_snapshot_contributions(
+        self, snapshot_id: str
+    ) -> list[TargetImpactSnapshotContribution]: ...
+    def save_market_forecast_run(self, value: MarketForecastRun) -> None: ...
+    def get_market_forecast_run(self, forecast_id: str) -> Optional[MarketForecastRun]: ...
+    def find_market_forecast_run_by_source_hash(
+        self, source_hash: str
+    ) -> Optional[MarketForecastRun]: ...
+    def list_market_forecast_runs(
+        self,
+        instrument_id: Optional[str] = None,
+        horizon: Optional[int] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[MarketForecastRun]: ...
+    def save_market_forecast_outcome(self, value: MarketForecastOutcome) -> None: ...
+    def get_market_forecast_outcome(self, forecast_id: str) -> Optional[MarketForecastOutcome]: ...
+    def list_market_forecast_outcomes(
+        self, forecast_ids: Optional[list[str]] = None
+    ) -> list[MarketForecastOutcome]: ...
+    def save_market_calibration_version(self, value: MarketCalibrationVersion) -> None: ...
+    def get_market_calibration_version(
+        self, calibration_id: str
+    ) -> Optional[MarketCalibrationVersion]: ...
+    def update_market_calibration_version(self, value: MarketCalibrationVersion) -> None: ...
+    def list_market_calibration_versions(
+        self,
+        model_key: Optional[str] = None,
+        market: Optional[str] = None,
+        horizon: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> list[MarketCalibrationVersion]: ...
+
+    def save_forward_impact_window(self, value: ForwardImpactWindow) -> None: ...
+    def get_forward_impact_window(self, window_id: str) -> Optional[ForwardImpactWindow]: ...
+    def save_forward_catalyst(self, value: ForwardCatalyst) -> None: ...
+    def get_forward_catalyst(self, catalyst_id: str) -> Optional[ForwardCatalyst]: ...
+    def list_forward_catalysts(self, target_id: Optional[str] = None) -> list[ForwardCatalyst]: ...
+    def save_forward_contribution(self, value: ForwardImpactContribution) -> None: ...
+    def list_forward_contributions(self, window_id: str) -> list[ForwardImpactContribution]: ...
+    def save_forward_points(self, values: list[ForwardImpactPoint]) -> None: ...
+    def list_forward_points(
+        self, window_id: str, scenario_id: str = "baseline"
+    ) -> list[ForwardImpactPoint]: ...
+    def save_future_event(self, value: FutureEvent) -> None: ...
+    def get_future_event(self, event_id: str) -> Optional[FutureEvent]: ...
+    def list_future_events(self) -> list[FutureEvent]: ...
+    def save_future_event_revision(self, value: FutureEventRevision) -> None: ...
+    def get_future_event_revision(self, revision_id: str) -> Optional[FutureEventRevision]: ...
+    def list_future_event_revisions(self, event_id: str) -> list[FutureEventRevision]: ...
+    def save_future_event_target_impact(self, value: FutureEventTargetImpact) -> None: ...
+    def list_future_event_target_impacts(
+        self, event_id: Optional[str] = None, target_id: Optional[str] = None
+    ) -> list[FutureEventTargetImpact]: ...
 
     # Agent Runtime (DD-80)
     def save_agent_registration(self, registration: "AgentRegistration") -> None: ...
@@ -718,6 +885,7 @@ class InMemoryRepository:
         self.event_entities: dict[str, list[EntityLink]] = {}
         self.merge_review_tasks: list[MergeReviewTask] = []
         self.watch_triggers: dict[str, WatchTrigger] = {}
+        self.event_type_registry: dict[str, EventTypeRegistryEntry] = {}
         self.match_decisions: list[MatchDecision] = []
         self.evidence: dict[str, EvidenceSpan] = {}
         self.claims: dict[str, Claim] = {}
@@ -725,6 +893,28 @@ class InMemoryRepository:
         self.conflicts: list[ConflictRecord] = []
         self.fact_cards: dict[str, FactCard] = {}
         self.impact_analyses: dict[str, ImpactAnalysis] = {}
+        self.impact_graph_layouts: dict[tuple[str, str], ImpactGraphLayout] = {}
+        self.impact_targets: dict[str, ImpactTargetDefinition] = {}
+        self.market_instruments: dict[str, MarketInstrument] = {}
+        self.industry_taxonomies: dict[str, IndustryTaxonomy] = {}
+        self.industry_classifications: dict[str, IndustryClassification] = {}
+        self.instrument_industry_memberships: dict[str, InstrumentIndustryMembership] = {}
+        self.impact_target_mappings: dict[str, ImpactTargetMapping] = {}
+        self.market_master_data_import_runs: dict[str, MarketMasterDataImportRun] = {}
+        self.event_impact_relations: dict[str, EventImpactRelation] = {}
+        self.impact_contributions: dict[str, ImpactContribution] = {}
+        self.target_impact_snapshots: dict[str, TargetImpactSnapshot] = {}
+        self.target_impact_snapshot_contributions: list[TargetImpactSnapshotContribution] = []
+        self.market_forecast_runs: dict[str, MarketForecastRun] = {}
+        self.market_forecast_outcomes: dict[str, MarketForecastOutcome] = {}
+        self.market_calibration_versions: dict[str, MarketCalibrationVersion] = {}
+        self.forward_impact_windows: dict[str, ForwardImpactWindow] = {}
+        self.forward_catalysts: dict[str, ForwardCatalyst] = {}
+        self.forward_contributions: dict[str, ForwardImpactContribution] = {}
+        self.forward_points: dict[str, ForwardImpactPoint] = {}
+        self.future_events: dict[str, FutureEvent] = {}
+        self.future_event_revisions: dict[str, FutureEventRevision] = {}
+        self.future_event_target_impacts: dict[str, FutureEventTargetImpact] = {}
         self.briefs: dict[str, Brief] = {}
         self.parsed_documents: dict[str, ParsedDocument] = {}
         self.document_blocks: dict[str, DocumentBlock] = {}
@@ -1082,23 +1272,15 @@ class InMemoryRepository:
     def save_parsed_document(self, parsed: ParsedDocument) -> None:
         self.parsed_documents[parsed.id] = parsed
 
-    def get_parsed_document_by_document(
-        self, document_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_document(self, document_id: str) -> Optional[ParsedDocument]:
         values = [
-            value
-            for value in self.parsed_documents.values()
-            if value.document_id == document_id
+            value for value in self.parsed_documents.values() if value.document_id == document_id
         ]
         return max(values, key=lambda value: value.created_at or _MIN_TIMESTAMP) if values else None
 
-    def get_parsed_document_by_revision(
-        self, revision_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_revision(self, revision_id: str) -> Optional[ParsedDocument]:
         values = [
-            value
-            for value in self.parsed_documents.values()
-            if value.revision_id == revision_id
+            value for value in self.parsed_documents.values() if value.revision_id == revision_id
         ]
         return max(values, key=lambda value: value.created_at or _MIN_TIMESTAMP) if values else None
 
@@ -1141,9 +1323,7 @@ class InMemoryRepository:
             None,
         )
 
-    def list_embedding_records_by_chunks(
-        self, chunk_ids: list[str]
-    ) -> list[EmbeddingRecord]:
+    def list_embedding_records_by_chunks(self, chunk_ids: list[str]) -> list[EmbeddingRecord]:
         ids = set(chunk_ids)
         return [value for value in self.embedding_records.values() if value.chunk_id in ids]
 
@@ -1231,9 +1411,7 @@ class InMemoryRepository:
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:top_k]
 
-    def list_disclosure_groups_with_embeddings(
-        self, model_version: str
-    ) -> list[DisclosureGroup]:
+    def list_disclosure_groups_with_embeddings(self, model_version: str) -> list[DisclosureGroup]:
         return [
             value
             for value in self.disclosure_groups.values()
@@ -1290,9 +1468,7 @@ class InMemoryRepository:
 
     def get_disclosure_group_for_document(self, document_id: str) -> Optional[DisclosureGroup]:
         memberships = [
-            value
-            for value in self.disclosure_group_memberships
-            if value.document_id == document_id
+            value for value in self.disclosure_group_memberships if value.document_id == document_id
         ]
         if not memberships:
             return None
@@ -1351,9 +1527,7 @@ class InMemoryRepository:
         )
         if cursor:
             cursor_at, cursor_id = decode_cursor(cursor)
-            ordered = [
-                card for card in ordered if (card.as_of, card.id) < (cursor_at, cursor_id)
-            ]
+            ordered = [card for card in ordered if (card.as_of, card.id) < (cursor_at, cursor_id)]
         return ordered if limit is None else ordered[:limit]
 
     def list_published_reports(self, start: datetime, end: datetime) -> list[FactCard]:
@@ -1404,9 +1578,7 @@ class InMemoryRepository:
         return tasks
 
     def update_merge_review_task(self, task: MergeReviewTask) -> None:
-        self.merge_review_tasks = [
-            task if t.id == task.id else t for t in self.merge_review_tasks
-        ]
+        self.merge_review_tasks = [task if t.id == task.id else t for t in self.merge_review_tasks]
 
     def save_watch_trigger(self, trigger: WatchTrigger) -> None:
         self.watch_triggers[trigger.id] = trigger
@@ -1435,6 +1607,39 @@ class InMemoryRepository:
         if trigger.id not in self.watch_triggers:
             raise KeyError(f"WatchTrigger not found: {trigger.id}")
         self.watch_triggers[trigger.id] = trigger
+
+    def get_event_type_registry(self, type_label: str) -> Optional[EventTypeRegistryEntry]:
+        return self.event_type_registry.get(type_label)
+
+    def list_event_type_registry(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeRegistryEntry]:
+        entries = [
+            entry
+            for entry in self.event_type_registry.values()
+            if status is None or entry.status == status
+        ]
+        entries.sort(key=lambda e: (-e.event_count, e.type_label))
+        return entries
+
+    def save_event_type_registry(self, entry: EventTypeRegistryEntry) -> None:
+        self.event_type_registry[entry.type_label] = entry
+
+    def increment_event_type_registry_count(self, type_label: str) -> EventTypeRegistryEntry:
+        now = datetime.now(timezone.utc)
+        existing = self.event_type_registry.get(type_label)
+        if existing is None:
+            entry = EventTypeRegistryEntry(
+                type_label=type_label,
+                status="candidate",
+                event_count=1,
+                created_at=now,
+                updated_at=now,
+            )
+        else:
+            entry = replace(existing, event_count=existing.event_count + 1, updated_at=now)
+        self.event_type_registry[type_label] = entry
+        return entry
 
     def save_match_decision(self, decision: MatchDecision) -> None:
         self.match_decisions.append(decision)
@@ -1483,9 +1688,7 @@ class InMemoryRepository:
         return next((c for c in self.conflicts if c.id == conflict_id), None)
 
     def update_conflict(self, conflict: ConflictRecord) -> None:
-        self.conflicts = [
-            conflict if c.id == conflict.id else c for c in self.conflicts
-        ]
+        self.conflicts = [conflict if c.id == conflict.id else c for c in self.conflicts]
 
     def list_claim_evidence(self, claim_id: str) -> list[ClaimEvidenceRelation]:
         return list(self.claim_evidence.get(claim_id, []))
@@ -1522,11 +1725,10 @@ class InMemoryRepository:
     def get_impact_analysis(self, impact_analysis_id: str) -> Optional[ImpactAnalysis]:
         return self.impact_analyses.get(impact_analysis_id)
 
-    def get_latest_impact_analysis_for_event(
-        self, event_id: str
-    ) -> Optional[ImpactAnalysis]:
+    def get_latest_impact_analysis_for_event(self, event_id: str) -> Optional[ImpactAnalysis]:
         versions = [
-            ia for ia in self.impact_analyses.values()
+            ia
+            for ia in self.impact_analyses.values()
             if ia.event_id == event_id and ia.status != "superseded"
         ]
         if not versions:
@@ -1547,6 +1749,431 @@ class InMemoryRepository:
         if impact_analysis.id not in self.impact_analyses:
             raise KeyError(f"impact_analysis not found: {impact_analysis.id}")
         self.impact_analyses[impact_analysis.id] = impact_analysis
+
+    def get_impact_graph_layout(
+        self, analysis_id: str, user_id: str
+    ) -> Optional[ImpactGraphLayout]:
+        return self.impact_graph_layouts.get((analysis_id, user_id))
+
+    def save_impact_graph_layout(self, layout: ImpactGraphLayout) -> None:
+        self.impact_graph_layouts[(layout.analysis_id, layout.user_id)] = layout
+
+    def delete_impact_graph_layout(self, analysis_id: str, user_id: str) -> None:
+        self.impact_graph_layouts.pop((analysis_id, user_id), None)
+
+    def save_impact_target(self, target: ImpactTargetDefinition) -> None:
+        existing = self.find_impact_target(
+            target.target_type, target.target_code, target.taxonomy_version
+        )
+        if existing and existing.id != target.id:
+            raise ReportVersionConflict("IMPACT_TARGET_CONFLICT")
+        self.impact_targets[target.id] = target
+
+    def get_impact_target(self, target_id: str) -> Optional[ImpactTargetDefinition]:
+        return self.impact_targets.get(target_id)
+
+    def find_impact_target(
+        self, target_type: str, target_code: str, taxonomy_version: str = "default-v1"
+    ) -> Optional[ImpactTargetDefinition]:
+        return next(
+            (
+                item
+                for item in self.impact_targets.values()
+                if item.target_type == target_type
+                and item.target_code == target_code
+                and item.taxonomy_version == taxonomy_version
+            ),
+            None,
+        )
+
+    def list_impact_targets(
+        self, target_type: Optional[str] = None
+    ) -> list[ImpactTargetDefinition]:
+        items = list(self.impact_targets.values())
+        return sorted(
+            [item for item in items if target_type is None or item.target_type == target_type],
+            key=lambda item: item.canonical_name,
+        )
+
+    def save_market_instrument(self, value: MarketInstrument) -> None:
+        self.market_instruments[value.id] = value
+
+    def get_market_instrument(self, instrument_id: str) -> Optional[MarketInstrument]:
+        return self.market_instruments.get(instrument_id)
+
+    def list_market_instruments(self, active: Optional[bool] = None) -> list[MarketInstrument]:
+        return sorted(
+            [
+                item
+                for item in self.market_instruments.values()
+                if active is None or item.active is active
+            ],
+            key=lambda item: (item.market, item.instrument_type, item.symbol),
+        )
+
+    def save_industry_taxonomy(self, value: IndustryTaxonomy) -> None:
+        self.industry_taxonomies[value.id] = value
+
+    def list_industry_taxonomies(self, status: Optional[str] = None) -> list[IndustryTaxonomy]:
+        return sorted(
+            [
+                item
+                for item in self.industry_taxonomies.values()
+                if status is None or item.status == status
+            ],
+            key=lambda item: (item.standard, item.version),
+        )
+
+    def save_industry_classification(self, value: IndustryClassification) -> None:
+        self.industry_classifications[value.id] = value
+
+    def list_industry_classifications(
+        self, taxonomy_id: Optional[str] = None
+    ) -> list[IndustryClassification]:
+        return sorted(
+            [
+                item
+                for item in self.industry_classifications.values()
+                if taxonomy_id is None or item.taxonomy_id == taxonomy_id
+            ],
+            key=lambda item: (item.taxonomy_id, item.level, item.code),
+        )
+
+    def save_instrument_industry_membership(self, value: InstrumentIndustryMembership) -> None:
+        self.instrument_industry_memberships[value.id] = value
+
+    def list_instrument_industry_memberships(
+        self, instrument_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[InstrumentIndustryMembership]:
+        return sorted(
+            [
+                item
+                for item in self.instrument_industry_memberships.values()
+                if (instrument_id is None or item.instrument_id == instrument_id)
+                and (status is None or item.status == status)
+            ],
+            key=lambda item: (item.instrument_id, item.taxonomy_id, item.industry_code),
+        )
+
+    def save_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        self.impact_target_mappings[value.id] = value
+
+    def get_impact_target_mapping(self, mapping_id: str) -> Optional[ImpactTargetMapping]:
+        return self.impact_target_mappings.get(mapping_id)
+
+    def update_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        if value.id not in self.impact_target_mappings:
+            raise KeyError(f"impact target mapping not found: {value.id}")
+        self.impact_target_mappings[value.id] = value
+
+    def list_impact_target_mappings(
+        self, target_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[ImpactTargetMapping]:
+        return sorted(
+            [
+                item
+                for item in self.impact_target_mappings.values()
+                if (target_id is None or item.target_id == target_id)
+                and (status is None or item.status == status)
+            ],
+            key=lambda item: (item.target_id, item.mapping_type, item.mapping_code),
+        )
+
+    def save_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        if self.find_market_master_data_import_run_by_hash(value.source_hash) is None:
+            self.market_master_data_import_runs[value.id] = value
+
+    def get_market_master_data_import_run(self, run_id: str) -> Optional[MarketMasterDataImportRun]:
+        return self.market_master_data_import_runs.get(run_id)
+
+    def find_market_master_data_import_run_by_hash(
+        self, source_hash: str
+    ) -> Optional[MarketMasterDataImportRun]:
+        return next(
+            (
+                item
+                for item in self.market_master_data_import_runs.values()
+                if item.source_hash == source_hash
+            ),
+            None,
+        )
+
+    def update_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        if value.id not in self.market_master_data_import_runs:
+            raise KeyError(f"market master import run not found: {value.id}")
+        self.market_master_data_import_runs[value.id] = value
+
+    def list_market_master_data_import_runs(self) -> list[MarketMasterDataImportRun]:
+        return sorted(
+            self.market_master_data_import_runs.values(),
+            key=lambda item: item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+
+    def save_event_impact_relation(self, relation: EventImpactRelation) -> None:
+        self.event_impact_relations[relation.id] = relation
+
+    def list_event_impact_relations(
+        self, event_id: Optional[str] = None
+    ) -> list[EventImpactRelation]:
+        return [
+            item
+            for item in self.event_impact_relations.values()
+            if event_id is None
+            or item.source_event_id == event_id
+            or item.target_event_id == event_id
+        ]
+
+    def save_impact_contribution(self, contribution: ImpactContribution) -> None:
+        self.impact_contributions[contribution.id] = contribution
+
+    def list_impact_contributions(
+        self, target_id: Optional[str] = None
+    ) -> list[ImpactContribution]:
+        return [
+            item
+            for item in self.impact_contributions.values()
+            if target_id is None or item.target_id == target_id
+        ]
+
+    def save_target_impact_snapshot(
+        self, snapshot: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
+    ) -> None:
+        self.target_impact_snapshots[snapshot.id] = snapshot
+        self.target_impact_snapshot_contributions = [
+            item
+            for item in self.target_impact_snapshot_contributions
+            if item.snapshot_id != snapshot.id
+        ]
+        self.target_impact_snapshot_contributions.extend(contributions)
+
+    def get_latest_target_impact_snapshot(
+        self,
+        target_id: str,
+        horizon: Optional[str] = None,
+        scenario_set_id: str = "baseline",
+        as_of: Optional[datetime] = None,
+    ) -> Optional[TargetImpactSnapshot]:
+        items = [
+            item
+            for item in self.target_impact_snapshots.values()
+            if item.target_id == target_id
+            and item.scenario_set_id == scenario_set_id
+            and (horizon is None or item.horizon == horizon)
+            and (as_of is None or item.as_of <= as_of)
+        ]
+        return max(
+            items, key=lambda item: (item.as_of, item.created_at or datetime.min), default=None
+        )
+
+    def list_target_impact_snapshot_contributions(
+        self, snapshot_id: str
+    ) -> list[TargetImpactSnapshotContribution]:
+        return [
+            item
+            for item in self.target_impact_snapshot_contributions
+            if item.snapshot_id == snapshot_id
+        ]
+
+    def save_market_forecast_run(self, value: MarketForecastRun) -> None:
+        existing = self.find_market_forecast_run_by_source_hash(value.source_hash)
+        if existing is None:
+            self.market_forecast_runs[value.id] = value
+
+    def get_market_forecast_run(self, forecast_id: str) -> Optional[MarketForecastRun]:
+        return self.market_forecast_runs.get(forecast_id)
+
+    def find_market_forecast_run_by_source_hash(
+        self, source_hash: str
+    ) -> Optional[MarketForecastRun]:
+        return next(
+            (
+                item
+                for item in self.market_forecast_runs.values()
+                if item.source_hash == source_hash
+            ),
+            None,
+        )
+
+    def list_market_forecast_runs(
+        self,
+        instrument_id: Optional[str] = None,
+        horizon: Optional[int] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[MarketForecastRun]:
+        values = [
+            item
+            for item in self.market_forecast_runs.values()
+            if (instrument_id is None or item.instrument_id == instrument_id)
+            and (horizon is None or item.horizon == horizon)
+            and (start is None or item.as_of >= start)
+            and (end is None or item.as_of <= end)
+        ]
+        return sorted(values, key=lambda item: (item.as_of, item.id), reverse=True)[:limit]
+
+    def save_market_forecast_outcome(self, value: MarketForecastOutcome) -> None:
+        if self.get_market_forecast_outcome(value.forecast_id) is None:
+            self.market_forecast_outcomes[value.id] = value
+
+    def get_market_forecast_outcome(self, forecast_id: str) -> Optional[MarketForecastOutcome]:
+        return next(
+            (
+                item
+                for item in self.market_forecast_outcomes.values()
+                if item.forecast_id == forecast_id
+            ),
+            None,
+        )
+
+    def list_market_forecast_outcomes(
+        self, forecast_ids: Optional[list[str]] = None
+    ) -> list[MarketForecastOutcome]:
+        allowed = set(forecast_ids) if forecast_ids is not None else None
+        return sorted(
+            [
+                item
+                for item in self.market_forecast_outcomes.values()
+                if allowed is None or item.forecast_id in allowed
+            ],
+            key=lambda item: (item.outcome_observed_at, item.id),
+            reverse=True,
+        )
+
+    def save_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        existing = next(
+            (
+                item
+                for item in self.market_calibration_versions.values()
+                if (item.model_key, item.version, item.horizon, item.market)
+                == (value.model_key, value.version, value.horizon, value.market)
+            ),
+            None,
+        )
+        if existing is None:
+            self.market_calibration_versions[value.id] = value
+
+    def get_market_calibration_version(
+        self, calibration_id: str
+    ) -> Optional[MarketCalibrationVersion]:
+        return self.market_calibration_versions.get(calibration_id)
+
+    def update_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        if value.id not in self.market_calibration_versions:
+            raise KeyError(f"market calibration not found: {value.id}")
+        self.market_calibration_versions[value.id] = value
+
+    def list_market_calibration_versions(
+        self,
+        model_key: Optional[str] = None,
+        market: Optional[str] = None,
+        horizon: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> list[MarketCalibrationVersion]:
+        return sorted(
+            [
+                item
+                for item in self.market_calibration_versions.values()
+                if (model_key is None or item.model_key == model_key)
+                and (market is None or item.market == market)
+                and (horizon is None or item.horizon == horizon)
+                and (status is None or item.status == status)
+            ],
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+
+    def save_forward_impact_window(self, value: ForwardImpactWindow) -> None:
+        self.forward_impact_windows[value.id] = value
+
+    def get_forward_impact_window(self, window_id: str) -> Optional[ForwardImpactWindow]:
+        return self.forward_impact_windows.get(window_id)
+
+    def save_forward_catalyst(self, value: ForwardCatalyst) -> None:
+        self.forward_catalysts[value.id] = value
+
+    def get_forward_catalyst(self, catalyst_id: str) -> Optional[ForwardCatalyst]:
+        return self.forward_catalysts.get(catalyst_id)
+
+    def list_forward_catalysts(self, target_id: Optional[str] = None) -> list[ForwardCatalyst]:
+        return [
+            item
+            for item in self.forward_catalysts.values()
+            if target_id is None or item.target_id == target_id
+        ]
+
+    def save_forward_contribution(self, value: ForwardImpactContribution) -> None:
+        self.forward_contributions[value.id] = value
+
+    def list_forward_contributions(self, window_id: str) -> list[ForwardImpactContribution]:
+        return [item for item in self.forward_contributions.values() if item.window_id == window_id]
+
+    def save_forward_points(self, values: list[ForwardImpactPoint]) -> None:
+        for value in values:
+            self.forward_points[value.id] = value
+
+    def list_forward_points(
+        self, window_id: str, scenario_id: str = "baseline"
+    ) -> list[ForwardImpactPoint]:
+        return sorted(
+            [
+                item
+                for item in self.forward_points.values()
+                if item.window_id == window_id and item.scenario_id == scenario_id
+            ],
+            key=lambda item: item.point_at,
+        )
+
+    def save_future_event(self, value: FutureEvent) -> None:
+        self.future_events[value.id] = value
+
+    def get_future_event(self, event_id: str) -> Optional[FutureEvent]:
+        return self.future_events.get(event_id)
+
+    def list_future_events(self) -> list[FutureEvent]:
+        return list(self.future_events.values())
+
+    def save_future_event_revision(self, value: FutureEventRevision) -> None:
+        self.future_event_revisions[value.id] = value
+        event = self.future_events.get(value.future_event_id)
+        if event and (
+            event.current_revision_id is None
+            or value.revision_no >= self._revision_no(event.current_revision_id)
+        ):
+            self.future_events[event.id] = FutureEvent(
+                **{**event.__dict__, "current_revision_id": value.id}
+            )
+
+    def _revision_no(self, revision_id: str) -> int:
+        revision = self.future_event_revisions.get(revision_id)
+        return revision.revision_no if revision else -1
+
+    def get_future_event_revision(self, revision_id: str) -> Optional[FutureEventRevision]:
+        return self.future_event_revisions.get(revision_id)
+
+    def list_future_event_revisions(self, event_id: str) -> list[FutureEventRevision]:
+        return sorted(
+            [
+                item
+                for item in self.future_event_revisions.values()
+                if item.future_event_id == event_id
+            ],
+            key=lambda item: item.revision_no,
+        )
+
+    def save_future_event_target_impact(self, value: FutureEventTargetImpact) -> None:
+        self.future_event_target_impacts[value.id] = value
+
+    def list_future_event_target_impacts(
+        self, event_id: Optional[str] = None, target_id: Optional[str] = None
+    ) -> list[FutureEventTargetImpact]:
+        return [
+            item
+            for item in self.future_event_target_impacts.values()
+            if (event_id is None or item.future_event_id == event_id)
+            and (target_id is None or item.target_id == target_id)
+        ]
 
     # Agent Runtime (DD-80)
     def save_agent_registration(self, registration: AgentRegistration) -> None:
@@ -1605,8 +2232,22 @@ class InMemoryRepository:
         as_of: Optional[datetime] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
+        *,
+        event_types: Optional[list[str]] = None,
+        entity_ids: Optional[list[str]] = None,
+        occurred_from: Optional[datetime] = None,
+        occurred_to: Optional[datetime] = None,
     ) -> list[Event]:
         values = [event for event in self.events.values() if visible_as_of(event, as_of)]
+        if event_types:
+            values = [event for event in values if event.event_type in event_types]
+        if entity_ids:
+            entity_set = set(entity_ids)
+            values = [event for event in values if entity_set.intersection(event.entity_ids)]
+        if occurred_from is not None:
+            values = [event for event in values if event.occurred_at >= occurred_from]
+        if occurred_to is not None:
+            values = [event for event in values if event.occurred_at <= occurred_to]
         return _paginate(values, cursor, limit, lambda value: value.occurred_at)
 
     def get_document(
@@ -1787,9 +2428,7 @@ class InMemoryRepository:
         values = [_outbox_message_dict(value) for value in self.outbox]
         if dead_lettered is not None:
             values = [
-                value
-                for value in values
-                if (value.dead_lettered_at is not None) == dead_lettered
+                value for value in values if (value.dead_lettered_at is not None) == dead_lettered
             ]
         return _paginate(values, cursor, limit, lambda value: value.created_at)
 
@@ -1917,8 +2556,23 @@ class SqlAlchemyRepository:
         as_of: Optional[datetime] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
+        *,
+        event_types: Optional[list[str]] = None,
+        entity_ids: Optional[list[str]] = None,
+        occurred_from: Optional[datetime] = None,
+        occurred_to: Optional[datetime] = None,
     ) -> list[Event]:
-        return self._read(lambda repository: repository.list_events(as_of, limit, cursor))
+        return self._read(
+            lambda repository: repository.list_events(
+                as_of,
+                limit,
+                cursor,
+                event_types=event_types,
+                entity_ids=entity_ids,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+            )
+        )
 
     def get_event(self, event_id: str) -> Optional[Event]:
         return self._read(lambda repository: repository.get_event(event_id))
@@ -1943,9 +2597,7 @@ class SqlAlchemyRepository:
     def get_impact_analysis(self, impact_analysis_id: str) -> Optional[ImpactAnalysis]:
         return self._read(lambda repository: repository.get_impact_analysis(impact_analysis_id))
 
-    def get_latest_impact_analysis_for_event(
-        self, event_id: str
-    ) -> Optional[ImpactAnalysis]:
+    def get_latest_impact_analysis_for_event(self, event_id: str) -> Optional[ImpactAnalysis]:
         return self._read(
             lambda repository: repository.get_latest_impact_analysis_for_event(event_id)
         )
@@ -1960,6 +2612,296 @@ class SqlAlchemyRepository:
     def update_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
         with self.transaction() as repository:
             repository.update_impact_analysis(impact_analysis)
+
+    def get_impact_graph_layout(
+        self, analysis_id: str, user_id: str
+    ) -> Optional[ImpactGraphLayout]:
+        return self._read(
+            lambda repository: repository.get_impact_graph_layout(analysis_id, user_id)
+        )
+
+    def save_impact_graph_layout(self, layout: ImpactGraphLayout) -> None:
+        with self.transaction() as repository:
+            repository.save_impact_graph_layout(layout)
+
+    def delete_impact_graph_layout(self, analysis_id: str, user_id: str) -> None:
+        with self.transaction() as repository:
+            repository.delete_impact_graph_layout(analysis_id, user_id)
+
+    def save_impact_target(self, target: ImpactTargetDefinition) -> None:
+        with self.transaction() as repository:
+            repository.save_impact_target(target)
+
+    def get_impact_target(self, target_id: str) -> Optional[ImpactTargetDefinition]:
+        return self._read(lambda repository: repository.get_impact_target(target_id))
+
+    def find_impact_target(
+        self, target_type: str, target_code: str, taxonomy_version: str = "default-v1"
+    ) -> Optional[ImpactTargetDefinition]:
+        return self._read(
+            lambda repository: repository.find_impact_target(
+                target_type, target_code, taxonomy_version
+            )
+        )
+
+    def list_impact_targets(
+        self, target_type: Optional[str] = None
+    ) -> list[ImpactTargetDefinition]:
+        return self._read(lambda repository: repository.list_impact_targets(target_type))
+
+    def save_market_instrument(self, value: MarketInstrument) -> None:
+        with self.transaction() as repository:
+            repository.save_market_instrument(value)
+
+    def get_market_instrument(self, instrument_id: str) -> Optional[MarketInstrument]:
+        return self._read(lambda repository: repository.get_market_instrument(instrument_id))
+
+    def list_market_instruments(self, active: Optional[bool] = None) -> list[MarketInstrument]:
+        return self._read(lambda repository: repository.list_market_instruments(active))
+
+    def save_industry_taxonomy(self, value: IndustryTaxonomy) -> None:
+        with self.transaction() as repository:
+            repository.save_industry_taxonomy(value)
+
+    def list_industry_taxonomies(self, status: Optional[str] = None) -> list[IndustryTaxonomy]:
+        return self._read(lambda repository: repository.list_industry_taxonomies(status))
+
+    def save_industry_classification(self, value: IndustryClassification) -> None:
+        with self.transaction() as repository:
+            repository.save_industry_classification(value)
+
+    def list_industry_classifications(
+        self, taxonomy_id: Optional[str] = None
+    ) -> list[IndustryClassification]:
+        return self._read(lambda repository: repository.list_industry_classifications(taxonomy_id))
+
+    def save_instrument_industry_membership(self, value: InstrumentIndustryMembership) -> None:
+        with self.transaction() as repository:
+            repository.save_instrument_industry_membership(value)
+
+    def list_instrument_industry_memberships(
+        self, instrument_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[InstrumentIndustryMembership]:
+        return self._read(
+            lambda repository: repository.list_instrument_industry_memberships(
+                instrument_id, status
+            )
+        )
+
+    def save_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        with self.transaction() as repository:
+            repository.save_impact_target_mapping(value)
+
+    def get_impact_target_mapping(self, mapping_id: str) -> Optional[ImpactTargetMapping]:
+        return self._read(lambda repository: repository.get_impact_target_mapping(mapping_id))
+
+    def update_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        with self.transaction() as repository:
+            repository.update_impact_target_mapping(value)
+
+    def list_impact_target_mappings(
+        self, target_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[ImpactTargetMapping]:
+        return self._read(
+            lambda repository: repository.list_impact_target_mappings(target_id, status)
+        )
+
+    def save_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        with self.transaction() as repository:
+            repository.save_market_master_data_import_run(value)
+
+    def get_market_master_data_import_run(self, run_id: str) -> Optional[MarketMasterDataImportRun]:
+        return self._read(lambda repository: repository.get_market_master_data_import_run(run_id))
+
+    def find_market_master_data_import_run_by_hash(
+        self, source_hash: str
+    ) -> Optional[MarketMasterDataImportRun]:
+        return self._read(
+            lambda repository: repository.find_market_master_data_import_run_by_hash(source_hash)
+        )
+
+    def update_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        with self.transaction() as repository:
+            repository.update_market_master_data_import_run(value)
+
+    def list_market_master_data_import_runs(self) -> list[MarketMasterDataImportRun]:
+        return self._read(lambda repository: repository.list_market_master_data_import_runs())
+
+    def save_event_impact_relation(self, relation: EventImpactRelation) -> None:
+        with self.transaction() as repository:
+            repository.save_event_impact_relation(relation)
+
+    def list_event_impact_relations(
+        self, event_id: Optional[str] = None
+    ) -> list[EventImpactRelation]:
+        return self._read(lambda repository: repository.list_event_impact_relations(event_id))
+
+    def save_impact_contribution(self, contribution: ImpactContribution) -> None:
+        with self.transaction() as repository:
+            repository.save_impact_contribution(contribution)
+
+    def list_impact_contributions(
+        self, target_id: Optional[str] = None
+    ) -> list[ImpactContribution]:
+        return self._read(lambda repository: repository.list_impact_contributions(target_id))
+
+    def save_target_impact_snapshot(
+        self, snapshot: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
+    ) -> None:
+        with self.transaction() as repository:
+            repository.save_target_impact_snapshot(snapshot, contributions)
+
+    def get_latest_target_impact_snapshot(
+        self,
+        target_id: str,
+        horizon: Optional[str] = None,
+        scenario_set_id: str = "baseline",
+        as_of: Optional[datetime] = None,
+    ) -> Optional[TargetImpactSnapshot]:
+        return self._read(
+            lambda repository: repository.get_latest_target_impact_snapshot(
+                target_id, horizon, scenario_set_id, as_of
+            )
+        )
+
+    def list_target_impact_snapshot_contributions(
+        self, snapshot_id: str
+    ) -> list[TargetImpactSnapshotContribution]:
+        return self._read(
+            lambda repository: repository.list_target_impact_snapshot_contributions(snapshot_id)
+        )
+
+    def save_market_forecast_run(self, value: MarketForecastRun) -> None:
+        with self.transaction() as repository:
+            repository.save_market_forecast_run(value)
+
+    def get_market_forecast_run(self, forecast_id: str) -> Optional[MarketForecastRun]:
+        return self._read(lambda repository: repository.get_market_forecast_run(forecast_id))
+
+    def find_market_forecast_run_by_source_hash(
+        self, source_hash: str
+    ) -> Optional[MarketForecastRun]:
+        return self._read(
+            lambda repository: repository.find_market_forecast_run_by_source_hash(source_hash)
+        )
+
+    def list_market_forecast_runs(
+        self,
+        instrument_id: Optional[str] = None,
+        horizon: Optional[int] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[MarketForecastRun]:
+        return self._read(
+            lambda repository: repository.list_market_forecast_runs(
+                instrument_id, horizon, start, end, limit
+            )
+        )
+
+    def save_market_forecast_outcome(self, value: MarketForecastOutcome) -> None:
+        with self.transaction() as repository:
+            repository.save_market_forecast_outcome(value)
+
+    def get_market_forecast_outcome(self, forecast_id: str) -> Optional[MarketForecastOutcome]:
+        return self._read(lambda repository: repository.get_market_forecast_outcome(forecast_id))
+
+    def list_market_forecast_outcomes(
+        self, forecast_ids: Optional[list[str]] = None
+    ) -> list[MarketForecastOutcome]:
+        return self._read(lambda repository: repository.list_market_forecast_outcomes(forecast_ids))
+
+    def save_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        with self.transaction() as repository:
+            repository.save_market_calibration_version(value)
+
+    def get_market_calibration_version(
+        self, calibration_id: str
+    ) -> Optional[MarketCalibrationVersion]:
+        return self._read(
+            lambda repository: repository.get_market_calibration_version(calibration_id)
+        )
+
+    def update_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        with self.transaction() as repository:
+            repository.update_market_calibration_version(value)
+
+    def list_market_calibration_versions(
+        self,
+        model_key: Optional[str] = None,
+        market: Optional[str] = None,
+        horizon: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> list[MarketCalibrationVersion]:
+        return self._read(
+            lambda repository: repository.list_market_calibration_versions(
+                model_key, market, horizon, status
+            )
+        )
+
+    def save_forward_impact_window(self, value: ForwardImpactWindow) -> None:
+        with self.transaction() as repository:
+            repository.save_forward_impact_window(value)
+
+    def get_forward_impact_window(self, window_id: str) -> Optional[ForwardImpactWindow]:
+        return self._read(lambda repository: repository.get_forward_impact_window(window_id))
+
+    def save_forward_catalyst(self, value: ForwardCatalyst) -> None:
+        with self.transaction() as repository:
+            repository.save_forward_catalyst(value)
+
+    def get_forward_catalyst(self, catalyst_id: str) -> Optional[ForwardCatalyst]:
+        return self._read(lambda repository: repository.get_forward_catalyst(catalyst_id))
+
+    def list_forward_catalysts(self, target_id: Optional[str] = None) -> list[ForwardCatalyst]:
+        return self._read(lambda repository: repository.list_forward_catalysts(target_id))
+
+    def save_forward_contribution(self, value: ForwardImpactContribution) -> None:
+        with self.transaction() as repository:
+            repository.save_forward_contribution(value)
+
+    def list_forward_contributions(self, window_id: str) -> list[ForwardImpactContribution]:
+        return self._read(lambda repository: repository.list_forward_contributions(window_id))
+
+    def save_forward_points(self, values: list[ForwardImpactPoint]) -> None:
+        with self.transaction() as repository:
+            repository.save_forward_points(values)
+
+    def list_forward_points(
+        self, window_id: str, scenario_id: str = "baseline"
+    ) -> list[ForwardImpactPoint]:
+        return self._read(lambda repository: repository.list_forward_points(window_id, scenario_id))
+
+    def save_future_event(self, value: FutureEvent) -> None:
+        with self.transaction() as repository:
+            repository.save_future_event(value)
+
+    def get_future_event(self, event_id: str) -> Optional[FutureEvent]:
+        return self._read(lambda repository: repository.get_future_event(event_id))
+
+    def list_future_events(self) -> list[FutureEvent]:
+        return self._read(lambda repository: repository.list_future_events())
+
+    def save_future_event_revision(self, value: FutureEventRevision) -> None:
+        with self.transaction() as repository:
+            repository.save_future_event_revision(value)
+
+    def get_future_event_revision(self, revision_id: str) -> Optional[FutureEventRevision]:
+        return self._read(lambda repository: repository.get_future_event_revision(revision_id))
+
+    def list_future_event_revisions(self, event_id: str) -> list[FutureEventRevision]:
+        return self._read(lambda repository: repository.list_future_event_revisions(event_id))
+
+    def save_future_event_target_impact(self, value: FutureEventTargetImpact) -> None:
+        with self.transaction() as repository:
+            repository.save_future_event_target_impact(value)
+
+    def list_future_event_target_impacts(
+        self, event_id: Optional[str] = None, target_id: Optional[str] = None
+    ) -> list[FutureEventTargetImpact]:
+        return self._read(
+            lambda repository: repository.list_future_event_target_impacts(event_id, target_id)
+        )
 
     # Agent Runtime (DD-80)
     def save_agent_registration(self, registration: AgentRegistration) -> None:
@@ -1980,9 +2922,7 @@ class SqlAlchemyRepository:
         return self._read(lambda repository: repository.get_research_plan(plan_id))
 
     def get_research_plan_by_workflow(self, workflow_id: str) -> Optional[ResearchPlan]:
-        return self._read(
-            lambda repository: repository.get_research_plan_by_workflow(workflow_id)
-        )
+        return self._read(lambda repository: repository.get_research_plan_by_workflow(workflow_id))
 
     def list_research_plans(
         self,
@@ -1990,9 +2930,7 @@ class SqlAlchemyRepository:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> list[ResearchPlan]:
-        return self._read(
-            lambda repository: repository.list_research_plans(status, limit, cursor)
-        )
+        return self._read(lambda repository: repository.list_research_plans(status, limit, cursor))
 
     def update_research_plan(self, plan: ResearchPlan) -> None:
         with self.transaction() as repository:
@@ -2135,6 +3073,22 @@ class SqlAlchemyRepository:
         with self.transaction() as repository:
             repository.update_watch_trigger(trigger)
 
+    def get_event_type_registry(self, type_label: str) -> Optional[EventTypeRegistryEntry]:
+        return self._read(lambda repository: repository.get_event_type_registry(type_label))
+
+    def list_event_type_registry(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeRegistryEntry]:
+        return self._read(lambda repository: repository.list_event_type_registry(status))
+
+    def save_event_type_registry(self, entry: EventTypeRegistryEntry) -> None:
+        with self.transaction() as repository:
+            repository.save_event_type_registry(entry)
+
+    def increment_event_type_registry_count(self, type_label: str) -> EventTypeRegistryEntry:
+        with self.transaction() as repository:
+            return repository.increment_event_type_registry_count(type_label)
+
     def get_api_idempotent(self, key: str) -> Optional[ApiIdempotencyRecord]:
         return self._read(lambda repository: repository.get_api_idempotent(key))
 
@@ -2247,9 +3201,7 @@ class SqlAlchemyRepository:
         limit: Optional[int] = 20,
         cursor: Optional[str] = None,
     ) -> list[IngestRun]:
-        return self._read(
-            lambda repository: repository.list_ingest_runs(source_id, limit, cursor)
-        )
+        return self._read(lambda repository: repository.list_ingest_runs(source_id, limit, cursor))
 
     def save_llm_provider(self, config: LlmProviderConfig) -> None:
         with self.transaction() as repository:
@@ -2338,9 +3290,7 @@ class SqlAlchemyRepository:
     def list_node_attempts(
         self, workflow_id: str, node_name: Optional[str] = None
     ) -> list[NodeAttempt]:
-        return self._read(
-            lambda repository: repository.list_node_attempts(workflow_id, node_name)
-        )
+        return self._read(lambda repository: repository.list_node_attempts(workflow_id, node_name))
 
     def invalidate_node_attempts(self, workflow_id: str, node_names: list[str]) -> int:
         with self.transaction() as repository:
@@ -2362,16 +3312,12 @@ class SqlAlchemyRepository:
         with self.transaction() as repository:
             repository.save_parsed_document(parsed)
 
-    def get_parsed_document_by_document(
-        self, document_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_document(self, document_id: str) -> Optional[ParsedDocument]:
         return self._read(
             lambda repository: repository.get_parsed_document_by_document(document_id)
         )
 
-    def get_parsed_document_by_revision(
-        self, revision_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_revision(self, revision_id: str) -> Optional[ParsedDocument]:
         return self._read(
             lambda repository: repository.get_parsed_document_by_revision(revision_id)
         )
@@ -2393,9 +3339,7 @@ class SqlAlchemyRepository:
             repository.save_document_chunk(chunk)
 
     def get_document_chunks_for_block(self, block_id: str) -> list[DocumentChunk]:
-        return self._read(
-            lambda repository: repository.get_document_chunks_for_block(block_id)
-        )
+        return self._read(lambda repository: repository.get_document_chunks_for_block(block_id))
 
     def save_embedding_record(self, record: EmbeddingRecord) -> None:
         with self.transaction() as repository:
@@ -2413,12 +3357,8 @@ class SqlAlchemyRepository:
             )
         )
 
-    def list_embedding_records_by_chunks(
-        self, chunk_ids: list[str]
-    ) -> list[EmbeddingRecord]:
-        return self._read(
-            lambda repository: repository.list_embedding_records_by_chunks(chunk_ids)
-        )
+    def list_embedding_records_by_chunks(self, chunk_ids: list[str]) -> list[EmbeddingRecord]:
+        return self._read(lambda repository: repository.list_embedding_records_by_chunks(chunk_ids))
 
     def find_similar_document_chunks(
         self,
@@ -2458,9 +3398,7 @@ class SqlAlchemyRepository:
             )
         )
 
-    def list_disclosure_groups_with_embeddings(
-        self, model_version: str
-    ) -> list[DisclosureGroup]:
+    def list_disclosure_groups_with_embeddings(self, model_version: str) -> list[DisclosureGroup]:
         return self._read(
             lambda repository: repository.list_disclosure_groups_with_embeddings(model_version)
         )
@@ -2498,13 +3436,9 @@ class SqlAlchemyRepository:
             repository.save_disclosure_group_membership(membership)
 
     def list_disclosure_group_members(self, group_id: str) -> list[DisclosureGroupMembership]:
-        return self._read(
-            lambda repository: repository.list_disclosure_group_members(group_id)
-        )
+        return self._read(lambda repository: repository.list_disclosure_group_members(group_id))
 
-    def get_disclosure_group_for_document(
-        self, document_id: str
-    ) -> Optional[DisclosureGroup]:
+    def get_disclosure_group_for_document(self, document_id: str) -> Optional[DisclosureGroup]:
         return self._read(
             lambda repository: repository.get_disclosure_group_for_document(document_id)
         )
@@ -2514,18 +3448,14 @@ class SqlAlchemyRepository:
         self, document_id: str, *, include_deleted: bool = False
     ) -> Optional[Document]:
         return self._read(
-            lambda repository: repository.get_document(
-                document_id, include_deleted=include_deleted
-            )
+            lambda repository: repository.get_document(document_id, include_deleted=include_deleted)
         )
 
     def get_evidence(
         self, evidence_id: str, *, include_deleted: bool = False
     ) -> Optional[EvidenceSpan]:
         return self._read(
-            lambda repository: repository.get_evidence(
-                evidence_id, include_deleted=include_deleted
-            )
+            lambda repository: repository.get_evidence(evidence_id, include_deleted=include_deleted)
         )
 
     def set_document_retention_hold(self, document_id: str, hold: bool) -> Document:
@@ -3127,9 +4057,7 @@ class SqlAlchemyTransaction:
         self.session.add(ParsedDocumentModel(**data))
         self.session.flush()
 
-    def get_parsed_document_by_document(
-        self, document_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_document(self, document_id: str) -> Optional[ParsedDocument]:
         model = self.session.scalar(
             select(ParsedDocumentModel)
             .where(ParsedDocumentModel.document_id == document_id)
@@ -3137,9 +4065,7 @@ class SqlAlchemyTransaction:
         )
         return _parsed_document(model) if model else None
 
-    def get_parsed_document_by_revision(
-        self, revision_id: str
-    ) -> Optional[ParsedDocument]:
+    def get_parsed_document_by_revision(self, revision_id: str) -> Optional[ParsedDocument]:
         model = self.session.scalar(
             select(ParsedDocumentModel)
             .where(ParsedDocumentModel.revision_id == revision_id)
@@ -3203,14 +4129,11 @@ class SqlAlchemyTransaction:
         )
         return _embedding_record(model) if model else None
 
-    def list_embedding_records_by_chunks(
-        self, chunk_ids: list[str]
-    ) -> list[EmbeddingRecord]:
+    def list_embedding_records_by_chunks(self, chunk_ids: list[str]) -> list[EmbeddingRecord]:
         if not chunk_ids:
             return []
         models = self.session.scalars(
-            select(EmbeddingRecordModel)
-            .where(EmbeddingRecordModel.chunk_id.in_(chunk_ids))
+            select(EmbeddingRecordModel).where(EmbeddingRecordModel.chunk_id.in_(chunk_ids))
         )
         return [_embedding_record(model) for model in models]
 
@@ -3248,9 +4171,7 @@ class SqlAlchemyTransaction:
                 block_model = self.session.get(DocumentBlockModel, chunk_model.block_id)
                 if block_model is None:
                     continue
-                parsed_model = self.session.get(
-                    ParsedDocumentModel, block_model.parsed_document_id
-                )
+                parsed_model = self.session.get(ParsedDocumentModel, block_model.parsed_document_id)
                 if parsed_model is None:
                     continue
                 document_model = self.session.get(DocumentModel, parsed_model.document_id)
@@ -3324,9 +4245,7 @@ class SqlAlchemyTransaction:
                 block_model = self.session.get(DocumentBlockModel, chunk_model.block_id)
                 if block_model is None:
                     continue
-                parsed_model = self.session.get(
-                    ParsedDocumentModel, block_model.parsed_document_id
-                )
+                parsed_model = self.session.get(ParsedDocumentModel, block_model.parsed_document_id)
                 if parsed_model is None:
                     continue
                 document_model = self.session.get(DocumentModel, parsed_model.document_id)
@@ -3377,9 +4296,7 @@ class SqlAlchemyTransaction:
         rows = self.session.execute(stmt)
         return [(_document_chunk(model), float(rank)) for model, rank in rows]
 
-    def list_disclosure_groups_with_embeddings(
-        self, model_version: str
-    ) -> list[DisclosureGroup]:
+    def list_disclosure_groups_with_embeddings(self, model_version: str) -> list[DisclosureGroup]:
         models = self.session.scalars(
             select(DisclosureGroupModel)
             .where(DisclosureGroupModel.embedding_model_version == model_version)
@@ -3422,10 +4339,7 @@ class SqlAlchemyTransaction:
             .order_by(distance_expr.asc())
             .limit(top_k)
         )
-        return [
-            (_disclosure_group(model), round(1.0 - distance, 6))
-            for model, distance in rows
-        ]
+        return [(_disclosure_group(model), round(1.0 - distance, 6)) for model, distance in rows]
 
     def save_disclosure_group(self, value: DisclosureGroup) -> None:
         data = value.__dict__.copy()
@@ -3466,9 +4380,7 @@ class SqlAlchemyTransaction:
         )
         return [_disclosure_group_membership(model) for model in models]
 
-    def get_disclosure_group_for_document(
-        self, document_id: str
-    ) -> Optional[DisclosureGroup]:
+    def get_disclosure_group_for_document(self, document_id: str) -> Optional[DisclosureGroup]:
         model = self.session.scalar(
             select(DisclosureGroupMembershipModel)
             .where(DisclosureGroupMembershipModel.document_id == document_id)
@@ -3649,6 +4561,63 @@ class SqlAlchemyTransaction:
         model.condition = value.condition
         model.fired_at = value.fired_at
         self.session.flush()
+
+    def get_event_type_registry(self, type_label: str) -> Optional[EventTypeRegistryEntry]:
+        model = self.session.get(EventTypeRegistryModel, type_label)
+        return _event_type_registry(model) if model else None
+
+    def list_event_type_registry(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeRegistryEntry]:
+        statement = select(EventTypeRegistryModel).order_by(
+            EventTypeRegistryModel.event_count.desc(),
+            EventTypeRegistryModel.type_label,
+        )
+        if status:
+            statement = statement.where(EventTypeRegistryModel.status == status)
+        models = self.session.scalars(statement)
+        return [_event_type_registry(model) for model in models]
+
+    def save_event_type_registry(self, value: EventTypeRegistryEntry) -> None:
+        now = datetime.now(timezone.utc)
+        model = self.session.get(EventTypeRegistryModel, value.type_label)
+        if model is None:
+            self.session.add(
+                EventTypeRegistryModel(
+                    type_label=value.type_label,
+                    status=value.status,
+                    event_count=value.event_count,
+                    decided_by=value.decided_by,
+                    decided_at=value.decided_at,
+                    created_at=value.created_at or now,
+                    updated_at=value.updated_at or now,
+                )
+            )
+        else:
+            model.status = value.status
+            model.event_count = value.event_count
+            model.decided_by = value.decided_by
+            model.decided_at = value.decided_at
+            model.updated_at = value.updated_at or now
+        self.session.flush()
+
+    def increment_event_type_registry_count(self, type_label: str) -> EventTypeRegistryEntry:
+        now = datetime.now(timezone.utc)
+        model = self.session.get(EventTypeRegistryModel, type_label)
+        if model is None:
+            model = EventTypeRegistryModel(
+                type_label=type_label,
+                status="candidate",
+                event_count=1,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(model)
+        else:
+            model.event_count += 1
+            model.updated_at = now
+        self.session.flush()
+        return _event_type_registry(model)
 
     def save_match_decision(self, value: MatchDecision) -> None:
         self.session.add(
@@ -3848,9 +4817,7 @@ class SqlAlchemyTransaction:
         model = self.session.get(ImpactAnalysisModel, impact_analysis_id)
         return _impact_analysis(model) if model else None
 
-    def get_latest_impact_analysis_for_event(
-        self, event_id: str
-    ) -> Optional[ImpactAnalysis]:
+    def get_latest_impact_analysis_for_event(self, event_id: str) -> Optional[ImpactAnalysis]:
         statement = (
             select(ImpactAnalysisModel)
             .where(
@@ -3881,6 +4848,545 @@ class SqlAlchemyTransaction:
         if model is None:
             raise KeyError(f"impact_analysis not found: {value.id}")
         model.status = value.status
+        model.analysis_payload = value.analysis_payload or {}
+        model.quality_report = value.quality_report or {}
+        model.edit_revision = value.edit_revision
+        model.derived_from_id = value.derived_from_id
+
+    def get_impact_graph_layout(
+        self, analysis_id: str, user_id: str
+    ) -> Optional[ImpactGraphLayout]:
+        model = self.session.scalar(
+            select(ImpactGraphLayoutModel).where(
+                ImpactGraphLayoutModel.analysis_id == analysis_id,
+                ImpactGraphLayoutModel.user_id == user_id,
+            )
+        )
+        return _impact_graph_layout(model) if model else None
+
+    def save_impact_graph_layout(self, value: ImpactGraphLayout) -> None:
+        model = self.session.scalar(
+            select(ImpactGraphLayoutModel).where(
+                ImpactGraphLayoutModel.analysis_id == value.analysis_id,
+                ImpactGraphLayoutModel.user_id == value.user_id,
+            )
+        )
+        data = value.__dict__.copy()
+        data["updated_at"] = value.updated_at or datetime.now(timezone.utc)
+        if model is None:
+            self.session.add(ImpactGraphLayoutModel(id=new_id("igl"), **data))
+        else:
+            model.node_positions = value.node_positions
+            model.collapsed_groups = value.collapsed_groups
+            model.viewport = value.viewport
+            model.updated_at = data["updated_at"]
+
+    def delete_impact_graph_layout(self, analysis_id: str, user_id: str) -> None:
+        model = self.session.scalar(
+            select(ImpactGraphLayoutModel).where(
+                ImpactGraphLayoutModel.analysis_id == analysis_id,
+                ImpactGraphLayoutModel.user_id == user_id,
+            )
+        )
+        if model is not None:
+            self.session.delete(model)
+
+    def save_impact_target(self, value: ImpactTargetDefinition) -> None:
+        model = self.session.get(ImpactTargetDefinitionModel, value.id)
+        if model is None:
+            model = ImpactTargetDefinitionModel(**value.__dict__)
+            self.session.add(model)
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def get_impact_target(self, target_id: str) -> Optional[ImpactTargetDefinition]:
+        model = self.session.get(ImpactTargetDefinitionModel, target_id)
+        return _impact_target(model) if model else None
+
+    def find_impact_target(
+        self, target_type: str, target_code: str, taxonomy_version: str = "default-v1"
+    ) -> Optional[ImpactTargetDefinition]:
+        model = self.session.scalar(
+            select(ImpactTargetDefinitionModel).where(
+                ImpactTargetDefinitionModel.target_type == target_type,
+                ImpactTargetDefinitionModel.target_code == target_code,
+                ImpactTargetDefinitionModel.taxonomy_version == taxonomy_version,
+            )
+        )
+        return _impact_target(model) if model else None
+
+    def list_impact_targets(
+        self, target_type: Optional[str] = None
+    ) -> list[ImpactTargetDefinition]:
+        statement = select(ImpactTargetDefinitionModel).order_by(
+            ImpactTargetDefinitionModel.canonical_name
+        )
+        if target_type:
+            statement = statement.where(ImpactTargetDefinitionModel.target_type == target_type)
+        return [_impact_target(item) for item in self.session.scalars(statement)]
+
+    def save_market_instrument(self, value: MarketInstrument) -> None:
+        model = self.session.get(MarketInstrumentModel, value.id)
+        if model is None:
+            self.session.add(MarketInstrumentModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def get_market_instrument(self, instrument_id: str) -> Optional[MarketInstrument]:
+        model = self.session.get(MarketInstrumentModel, instrument_id)
+        return _market_instrument(model) if model else None
+
+    def list_market_instruments(self, active: Optional[bool] = None) -> list[MarketInstrument]:
+        statement = select(MarketInstrumentModel).order_by(
+            MarketInstrumentModel.market,
+            MarketInstrumentModel.instrument_type,
+            MarketInstrumentModel.symbol,
+        )
+        if active is not None:
+            statement = statement.where(MarketInstrumentModel.active == active)
+        return [_market_instrument(item) for item in self.session.scalars(statement)]
+
+    def save_industry_taxonomy(self, value: IndustryTaxonomy) -> None:
+        model = self.session.get(IndustryTaxonomyModel, value.id)
+        data = value.__dict__.copy()
+        data["created_at"] = value.created_at or datetime.now(timezone.utc)
+        if model is None:
+            self.session.add(IndustryTaxonomyModel(**data))
+        else:
+            for key, item in data.items():
+                setattr(model, key, item)
+
+    def list_industry_taxonomies(self, status: Optional[str] = None) -> list[IndustryTaxonomy]:
+        statement = select(IndustryTaxonomyModel).order_by(
+            IndustryTaxonomyModel.standard, IndustryTaxonomyModel.version
+        )
+        if status is not None:
+            statement = statement.where(IndustryTaxonomyModel.status == status)
+        return [_industry_taxonomy(item) for item in self.session.scalars(statement)]
+
+    def save_industry_classification(self, value: IndustryClassification) -> None:
+        model = self.session.get(IndustryClassificationModel, value.id)
+        if model is None:
+            self.session.add(IndustryClassificationModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def list_industry_classifications(
+        self, taxonomy_id: Optional[str] = None
+    ) -> list[IndustryClassification]:
+        statement = select(IndustryClassificationModel).order_by(
+            IndustryClassificationModel.taxonomy_id,
+            IndustryClassificationModel.level,
+            IndustryClassificationModel.code,
+        )
+        if taxonomy_id is not None:
+            statement = statement.where(IndustryClassificationModel.taxonomy_id == taxonomy_id)
+        return [_industry_classification(item) for item in self.session.scalars(statement)]
+
+    def save_instrument_industry_membership(self, value: InstrumentIndustryMembership) -> None:
+        model = self.session.get(InstrumentIndustryMembershipModel, value.id)
+        data = value.__dict__.copy()
+        data["created_at"] = value.created_at or datetime.now(timezone.utc)
+        if model is None:
+            self.session.add(InstrumentIndustryMembershipModel(**data))
+        else:
+            for key, item in data.items():
+                setattr(model, key, item)
+
+    def list_instrument_industry_memberships(
+        self, instrument_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[InstrumentIndustryMembership]:
+        statement = select(InstrumentIndustryMembershipModel).order_by(
+            InstrumentIndustryMembershipModel.instrument_id,
+            InstrumentIndustryMembershipModel.taxonomy_id,
+            InstrumentIndustryMembershipModel.industry_code,
+        )
+        if instrument_id is not None:
+            statement = statement.where(
+                InstrumentIndustryMembershipModel.instrument_id == instrument_id
+            )
+        if status is not None:
+            statement = statement.where(InstrumentIndustryMembershipModel.status == status)
+        return [_instrument_industry_membership(item) for item in self.session.scalars(statement)]
+
+    def save_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        if self.session.get(ImpactTargetMappingModel, value.id) is not None:
+            return
+        data = value.__dict__.copy()
+        data["created_at"] = value.created_at or datetime.now(timezone.utc)
+        self.session.add(ImpactTargetMappingModel(**data))
+
+    def get_impact_target_mapping(self, mapping_id: str) -> Optional[ImpactTargetMapping]:
+        model = self.session.get(ImpactTargetMappingModel, mapping_id)
+        return _impact_target_mapping(model) if model else None
+
+    def update_impact_target_mapping(self, value: ImpactTargetMapping) -> None:
+        model = self.session.get(ImpactTargetMappingModel, value.id)
+        if model is None:
+            raise KeyError(f"impact target mapping not found: {value.id}")
+        for key, item in value.__dict__.items():
+            setattr(model, key, item)
+
+    def list_impact_target_mappings(
+        self, target_id: Optional[str] = None, status: Optional[str] = None
+    ) -> list[ImpactTargetMapping]:
+        statement = select(ImpactTargetMappingModel).order_by(
+            ImpactTargetMappingModel.target_id,
+            ImpactTargetMappingModel.mapping_type,
+            ImpactTargetMappingModel.mapping_code,
+        )
+        if target_id is not None:
+            statement = statement.where(ImpactTargetMappingModel.target_id == target_id)
+        if status is not None:
+            statement = statement.where(ImpactTargetMappingModel.status == status)
+        return [_impact_target_mapping(item) for item in self.session.scalars(statement)]
+
+    def save_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        if self.find_market_master_data_import_run_by_hash(value.source_hash) is not None:
+            return
+        data = value.__dict__.copy()
+        data["created_at"] = value.created_at or datetime.now(timezone.utc)
+        self.session.add(MarketMasterDataImportRunModel(**data))
+
+    def get_market_master_data_import_run(self, run_id: str) -> Optional[MarketMasterDataImportRun]:
+        model = self.session.get(MarketMasterDataImportRunModel, run_id)
+        return _market_master_data_import_run(model) if model else None
+
+    def find_market_master_data_import_run_by_hash(
+        self, source_hash: str
+    ) -> Optional[MarketMasterDataImportRun]:
+        model = self.session.scalar(
+            select(MarketMasterDataImportRunModel).where(
+                MarketMasterDataImportRunModel.source_hash == source_hash
+            )
+        )
+        return _market_master_data_import_run(model) if model else None
+
+    def update_market_master_data_import_run(self, value: MarketMasterDataImportRun) -> None:
+        model = self.session.get(MarketMasterDataImportRunModel, value.id)
+        if model is None:
+            raise KeyError(f"market master import run not found: {value.id}")
+        for key, item in value.__dict__.items():
+            setattr(model, key, item)
+
+    def list_market_master_data_import_runs(self) -> list[MarketMasterDataImportRun]:
+        statement = select(MarketMasterDataImportRunModel).order_by(
+            MarketMasterDataImportRunModel.created_at.desc()
+        )
+        return [_market_master_data_import_run(item) for item in self.session.scalars(statement)]
+
+    def save_event_impact_relation(self, value: EventImpactRelation) -> None:
+        model = self.session.get(EventImpactRelationModel, value.id)
+        if model is None:
+            self.session.add(EventImpactRelationModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def list_event_impact_relations(
+        self, event_id: Optional[str] = None
+    ) -> list[EventImpactRelation]:
+        statement = select(EventImpactRelationModel).order_by(EventImpactRelationModel.created_at)
+        if event_id:
+            statement = statement.where(
+                (EventImpactRelationModel.source_event_id == event_id)
+                | (EventImpactRelationModel.target_event_id == event_id)
+            )
+        return [_event_impact_relation(item) for item in self.session.scalars(statement)]
+
+    def save_impact_contribution(self, value: ImpactContribution) -> None:
+        if self.session.get(ImpactContributionModel, value.id) is not None:
+            return
+        self.session.add(ImpactContributionModel(**value.__dict__))
+
+    def list_impact_contributions(
+        self, target_id: Optional[str] = None
+    ) -> list[ImpactContribution]:
+        statement = select(ImpactContributionModel).order_by(ImpactContributionModel.created_at)
+        if target_id:
+            statement = statement.where(ImpactContributionModel.target_id == target_id)
+        return [_impact_contribution(item) for item in self.session.scalars(statement)]
+
+    def save_target_impact_snapshot(
+        self, value: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
+    ) -> None:
+        model = self.session.get(TargetImpactSnapshotModel, value.id)
+        if model is None:
+            self.session.add(TargetImpactSnapshotModel(**value.__dict__))
+        for item in contributions:
+            existing = self.session.scalar(
+                select(TargetImpactSnapshotContributionModel).where(
+                    TargetImpactSnapshotContributionModel.snapshot_id == item.snapshot_id,
+                    TargetImpactSnapshotContributionModel.contribution_id == item.contribution_id,
+                )
+            )
+            if existing is None:
+                self.session.add(
+                    TargetImpactSnapshotContributionModel(id=new_id("tic"), **item.__dict__)
+                )
+
+    def get_latest_target_impact_snapshot(
+        self,
+        target_id: str,
+        horizon: Optional[str] = None,
+        scenario_set_id: str = "baseline",
+        as_of: Optional[datetime] = None,
+    ) -> Optional[TargetImpactSnapshot]:
+        statement = (
+            select(TargetImpactSnapshotModel)
+            .where(
+                TargetImpactSnapshotModel.target_id == target_id,
+                TargetImpactSnapshotModel.scenario_set_id == scenario_set_id,
+            )
+            .order_by(
+                TargetImpactSnapshotModel.as_of.desc(), TargetImpactSnapshotModel.created_at.desc()
+            )
+            .limit(1)
+        )
+        if horizon:
+            statement = statement.where(TargetImpactSnapshotModel.horizon == horizon)
+        if as_of is not None:
+            statement = statement.where(TargetImpactSnapshotModel.as_of <= as_of)
+        model = self.session.scalar(statement)
+        return _target_impact_snapshot(model) if model else None
+
+    def list_target_impact_snapshot_contributions(
+        self, snapshot_id: str
+    ) -> list[TargetImpactSnapshotContribution]:
+        statement = select(TargetImpactSnapshotContributionModel).where(
+            TargetImpactSnapshotContributionModel.snapshot_id == snapshot_id
+        )
+        return [
+            _target_impact_snapshot_contribution(item) for item in self.session.scalars(statement)
+        ]
+
+    def save_market_forecast_run(self, value: MarketForecastRun) -> None:
+        if self.find_market_forecast_run_by_source_hash(value.source_hash) is None:
+            self.session.add(MarketForecastRunModel(**value.__dict__))
+
+    def get_market_forecast_run(self, forecast_id: str) -> Optional[MarketForecastRun]:
+        model = self.session.get(MarketForecastRunModel, forecast_id)
+        return _market_forecast_run(model) if model else None
+
+    def find_market_forecast_run_by_source_hash(
+        self, source_hash: str
+    ) -> Optional[MarketForecastRun]:
+        model = self.session.scalar(
+            select(MarketForecastRunModel).where(MarketForecastRunModel.source_hash == source_hash)
+        )
+        return _market_forecast_run(model) if model else None
+
+    def list_market_forecast_runs(
+        self,
+        instrument_id: Optional[str] = None,
+        horizon: Optional[int] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        limit: int = 500,
+    ) -> list[MarketForecastRun]:
+        statement = select(MarketForecastRunModel).order_by(
+            MarketForecastRunModel.as_of.desc(), MarketForecastRunModel.id.desc()
+        )
+        if instrument_id is not None:
+            statement = statement.where(MarketForecastRunModel.instrument_id == instrument_id)
+        if horizon is not None:
+            statement = statement.where(MarketForecastRunModel.horizon == horizon)
+        if start is not None:
+            statement = statement.where(MarketForecastRunModel.as_of >= start)
+        if end is not None:
+            statement = statement.where(MarketForecastRunModel.as_of <= end)
+        return [_market_forecast_run(item) for item in self.session.scalars(statement.limit(limit))]
+
+    def save_market_forecast_outcome(self, value: MarketForecastOutcome) -> None:
+        if self.get_market_forecast_outcome(value.forecast_id) is None:
+            self.session.add(MarketForecastOutcomeModel(**value.__dict__))
+
+    def get_market_forecast_outcome(self, forecast_id: str) -> Optional[MarketForecastOutcome]:
+        model = self.session.scalar(
+            select(MarketForecastOutcomeModel).where(
+                MarketForecastOutcomeModel.forecast_id == forecast_id
+            )
+        )
+        return _market_forecast_outcome(model) if model else None
+
+    def list_market_forecast_outcomes(
+        self, forecast_ids: Optional[list[str]] = None
+    ) -> list[MarketForecastOutcome]:
+        statement = select(MarketForecastOutcomeModel).order_by(
+            MarketForecastOutcomeModel.outcome_observed_at.desc(),
+            MarketForecastOutcomeModel.id.desc(),
+        )
+        if forecast_ids is not None:
+            if not forecast_ids:
+                return []
+            statement = statement.where(MarketForecastOutcomeModel.forecast_id.in_(forecast_ids))
+        return [_market_forecast_outcome(item) for item in self.session.scalars(statement)]
+
+    def save_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        statement = select(MarketCalibrationVersionModel.id).where(
+            MarketCalibrationVersionModel.model_key == value.model_key,
+            MarketCalibrationVersionModel.version == value.version,
+            MarketCalibrationVersionModel.horizon == value.horizon,
+            MarketCalibrationVersionModel.market == value.market,
+        )
+        if self.session.scalar(statement) is None:
+            self.session.add(MarketCalibrationVersionModel(**value.__dict__))
+
+    def get_market_calibration_version(
+        self, calibration_id: str
+    ) -> Optional[MarketCalibrationVersion]:
+        model = self.session.get(MarketCalibrationVersionModel, calibration_id)
+        return _market_calibration_version(model) if model else None
+
+    def update_market_calibration_version(self, value: MarketCalibrationVersion) -> None:
+        model = self.session.get(MarketCalibrationVersionModel, value.id)
+        if model is None:
+            raise KeyError(f"market calibration not found: {value.id}")
+        model.status = value.status
+        model.published_at = value.published_at
+
+    def list_market_calibration_versions(
+        self,
+        model_key: Optional[str] = None,
+        market: Optional[str] = None,
+        horizon: Optional[int] = None,
+        status: Optional[str] = None,
+    ) -> list[MarketCalibrationVersion]:
+        statement = select(MarketCalibrationVersionModel).order_by(
+            MarketCalibrationVersionModel.created_at.desc(),
+            MarketCalibrationVersionModel.id.desc(),
+        )
+        filters = (
+            (MarketCalibrationVersionModel.model_key, model_key),
+            (MarketCalibrationVersionModel.market, market),
+            (MarketCalibrationVersionModel.horizon, horizon),
+            (MarketCalibrationVersionModel.status, status),
+        )
+        for column, value in filters:
+            if value is not None:
+                statement = statement.where(column == value)
+        return [_market_calibration_version(item) for item in self.session.scalars(statement)]
+
+    def save_forward_impact_window(self, value: ForwardImpactWindow) -> None:
+        model = self.session.get(ForwardImpactWindowModel, value.id)
+        if model is None:
+            self.session.add(ForwardImpactWindowModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def get_forward_impact_window(self, window_id: str) -> Optional[ForwardImpactWindow]:
+        model = self.session.get(ForwardImpactWindowModel, window_id)
+        return _forward_impact_window(model) if model else None
+
+    def save_forward_catalyst(self, value: ForwardCatalyst) -> None:
+        model = self.session.get(ForwardCatalystModel, value.id)
+        if model is None:
+            self.session.add(ForwardCatalystModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def get_forward_catalyst(self, catalyst_id: str) -> Optional[ForwardCatalyst]:
+        model = self.session.get(ForwardCatalystModel, catalyst_id)
+        return _forward_catalyst(model) if model else None
+
+    def list_forward_catalysts(self, target_id: Optional[str] = None) -> list[ForwardCatalyst]:
+        statement = select(ForwardCatalystModel).order_by(ForwardCatalystModel.created_at)
+        if target_id:
+            statement = statement.where(ForwardCatalystModel.target_id == target_id)
+        return [_forward_catalyst(item) for item in self.session.scalars(statement)]
+
+    def save_forward_contribution(self, value: ForwardImpactContribution) -> None:
+        if self.session.get(ForwardImpactContributionModel, value.id) is None:
+            self.session.add(ForwardImpactContributionModel(**value.__dict__))
+
+    def list_forward_contributions(self, window_id: str) -> list[ForwardImpactContribution]:
+        statement = select(ForwardImpactContributionModel).where(
+            ForwardImpactContributionModel.window_id == window_id
+        )
+        return [_forward_impact_contribution(item) for item in self.session.scalars(statement)]
+
+    def save_forward_points(self, values: list[ForwardImpactPoint]) -> None:
+        for value in values:
+            if self.session.get(ForwardImpactPointModel, value.id) is None:
+                self.session.add(ForwardImpactPointModel(**value.__dict__))
+
+    def list_forward_points(
+        self, window_id: str, scenario_id: str = "baseline"
+    ) -> list[ForwardImpactPoint]:
+        statement = (
+            select(ForwardImpactPointModel)
+            .where(
+                ForwardImpactPointModel.window_id == window_id,
+                ForwardImpactPointModel.scenario_id == scenario_id,
+            )
+            .order_by(ForwardImpactPointModel.point_at)
+        )
+        return [_forward_impact_point(item) for item in self.session.scalars(statement)]
+
+    def save_future_event(self, value: FutureEvent) -> None:
+        model = self.session.get(FutureEventModel, value.id)
+        if model is None:
+            self.session.add(FutureEventModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def get_future_event(self, event_id: str) -> Optional[FutureEvent]:
+        model = self.session.get(FutureEventModel, event_id)
+        return _future_event(model) if model else None
+
+    def list_future_events(self) -> list[FutureEvent]:
+        statement = select(FutureEventModel).order_by(FutureEventModel.created_at)
+        return [_future_event(item) for item in self.session.scalars(statement)]
+
+    def save_future_event_revision(self, value: FutureEventRevision) -> None:
+        if self.session.get(FutureEventRevisionModel, value.id) is not None:
+            return
+        self.session.add(FutureEventRevisionModel(**value.__dict__))
+        event = self.session.get(FutureEventModel, value.future_event_id)
+        if event is not None and (
+            event.current_revision_id is None
+            or value.revision_no
+            >= self.session.get(FutureEventRevisionModel, event.current_revision_id).revision_no
+        ):
+            event.current_revision_id = value.id
+
+    def get_future_event_revision(self, revision_id: str) -> Optional[FutureEventRevision]:
+        model = self.session.get(FutureEventRevisionModel, revision_id)
+        return _future_event_revision(model) if model else None
+
+    def list_future_event_revisions(self, event_id: str) -> list[FutureEventRevision]:
+        statement = (
+            select(FutureEventRevisionModel)
+            .where(FutureEventRevisionModel.future_event_id == event_id)
+            .order_by(FutureEventRevisionModel.revision_no)
+        )
+        return [_future_event_revision(item) for item in self.session.scalars(statement)]
+
+    def save_future_event_target_impact(self, value: FutureEventTargetImpact) -> None:
+        model = self.session.get(FutureEventTargetImpactModel, value.id)
+        if model is None:
+            self.session.add(FutureEventTargetImpactModel(**value.__dict__))
+        else:
+            for key, item in value.__dict__.items():
+                setattr(model, key, item)
+
+    def list_future_event_target_impacts(
+        self, event_id: Optional[str] = None, target_id: Optional[str] = None
+    ) -> list[FutureEventTargetImpact]:
+        statement = select(FutureEventTargetImpactModel).order_by(
+            FutureEventTargetImpactModel.created_at
+        )
+        if event_id:
+            statement = statement.where(FutureEventTargetImpactModel.future_event_id == event_id)
+        if target_id:
+            statement = statement.where(FutureEventTargetImpactModel.target_id == target_id)
+        return [_future_event_target_impact(item) for item in self.session.scalars(statement)]
 
     # Agent Runtime (DD-80)
     def save_agent_registration(self, registration: AgentRegistration) -> None:
@@ -4053,12 +5559,26 @@ class SqlAlchemyTransaction:
         as_of: Optional[datetime] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
+        *,
+        event_types: Optional[list[str]] = None,
+        entity_ids: Optional[list[str]] = None,
+        occurred_from: Optional[datetime] = None,
+        occurred_to: Optional[datetime] = None,
     ) -> list[Event]:
-        statement = select(EventModel).order_by(
-            EventModel.occurred_at.desc(), EventModel.id.desc()
-        )
+        statement = select(EventModel).order_by(EventModel.occurred_at.desc(), EventModel.id.desc())
         if as_of is not None:
             statement = statement.where(EventModel.occurred_at <= as_of)
+        if event_types:
+            statement = statement.where(EventModel.event_type.in_(event_types))
+        if occurred_from is not None:
+            statement = statement.where(EventModel.occurred_at >= occurred_from)
+        if occurred_to is not None:
+            statement = statement.where(EventModel.occurred_at <= occurred_to)
+        if entity_ids:
+            entity_events = select(EventEntityModel.event_id).where(
+                EventEntityModel.entity_id.in_(entity_ids)
+            )
+            statement = statement.where(EventModel.id.in_(entity_events))
         if cursor:
             statement = statement.where(
                 _cursor_filter(EventModel.occurred_at, EventModel.id, cursor)
@@ -4955,6 +6475,18 @@ def _watch_trigger(value: WatchTriggerModel) -> WatchTrigger:
     )
 
 
+def _event_type_registry(value: EventTypeRegistryModel) -> EventTypeRegistryEntry:
+    return EventTypeRegistryEntry(
+        type_label=value.type_label,
+        status=value.status,
+        event_count=value.event_count,
+        decided_by=value.decided_by,
+        decided_at=value.decided_at,
+        created_at=value.created_at,
+        updated_at=value.updated_at,
+    )
+
+
 def _fact_card(value: FactCardModel) -> FactCard:
     return FactCard(
         id=value.id,
@@ -4991,6 +6523,376 @@ def _impact_analysis(value: ImpactAnalysisModel) -> ImpactAnalysis:
         degraded=value.degraded or False,
         supersedes_id=value.supersedes_id,
         created_at=value.created_at,
+        analysis_payload=value.analysis_payload or {},
+        quality_report=value.quality_report or {},
+        edit_revision=value.edit_revision or 0,
+        derived_from_id=value.derived_from_id,
+    )
+
+
+def _impact_graph_layout(value: ImpactGraphLayoutModel) -> ImpactGraphLayout:
+    return ImpactGraphLayout(
+        analysis_id=value.analysis_id,
+        user_id=value.user_id,
+        node_positions=value.node_positions or {},
+        collapsed_groups=value.collapsed_groups or [],
+        viewport=value.viewport or {},
+        updated_at=value.updated_at,
+    )
+
+
+def _impact_target(value: ImpactTargetDefinitionModel) -> ImpactTargetDefinition:
+    return ImpactTargetDefinition(
+        id=value.id,
+        target_type=value.target_type,
+        target_code=value.target_code,
+        canonical_name=value.canonical_name,
+        taxonomy_version=value.taxonomy_version,
+        aliases=value.aliases or [],
+        valid_from=value.valid_from,
+        valid_to=value.valid_to,
+    )
+
+
+def _market_instrument(value: MarketInstrumentModel) -> MarketInstrument:
+    return MarketInstrument(
+        id=value.id,
+        market=value.market,
+        symbol=value.symbol,
+        name=value.name,
+        instrument_type=value.instrument_type,
+        exchange=value.exchange,
+        currency=value.currency,
+        timezone=value.timezone,
+        sector_code=value.sector_code,
+        sector_name=value.sector_name,
+        active=value.active,
+        valid_from=value.valid_from,
+        valid_to=value.valid_to,
+        provider_symbols=value.provider_symbols or {},
+    )
+
+
+def _industry_taxonomy(value: IndustryTaxonomyModel) -> IndustryTaxonomy:
+    return IndustryTaxonomy(
+        **{key: getattr(value, key) for key in IndustryTaxonomy.__dataclass_fields__}
+    )
+
+
+def _industry_classification(value: IndustryClassificationModel) -> IndustryClassification:
+    return IndustryClassification(
+        **{key: getattr(value, key) for key in IndustryClassification.__dataclass_fields__}
+    )
+
+
+def _instrument_industry_membership(
+    value: InstrumentIndustryMembershipModel,
+) -> InstrumentIndustryMembership:
+    return InstrumentIndustryMembership(
+        **{key: getattr(value, key) for key in InstrumentIndustryMembership.__dataclass_fields__}
+    )
+
+
+def _impact_target_mapping(value: ImpactTargetMappingModel) -> ImpactTargetMapping:
+    return ImpactTargetMapping(
+        **{key: getattr(value, key) for key in ImpactTargetMapping.__dataclass_fields__}
+    )
+
+
+def _market_master_data_import_run(
+    value: MarketMasterDataImportRunModel,
+) -> MarketMasterDataImportRun:
+    return MarketMasterDataImportRun(
+        **{key: getattr(value, key) for key in MarketMasterDataImportRun.__dataclass_fields__}
+    )
+
+
+def _event_impact_relation(value: EventImpactRelationModel) -> EventImpactRelation:
+    return EventImpactRelation(
+        id=value.id,
+        source_event_id=value.source_event_id,
+        target_event_id=value.target_event_id,
+        relation_type=value.relation_type,
+        dependency_weight=value.dependency_weight,
+        confidence=value.confidence,
+        evidence_refs=value.evidence_refs or [],
+        status=value.status,
+        created_at=value.created_at,
+    )
+
+
+def _impact_contribution(value: ImpactContributionModel) -> ImpactContribution:
+    return ImpactContribution(
+        id=value.id,
+        event_id=value.event_id,
+        analysis_id=value.analysis_id,
+        assessment_id=value.assessment_id,
+        target_id=value.target_id,
+        scenario_id=value.scenario_id,
+        direction=value.direction,
+        magnitude=value.magnitude,
+        horizon=value.horizon,
+        base_strength=value.base_strength,
+        effective_strength=value.effective_strength,
+        event_importance=value.event_importance,
+        assessment_confidence=value.assessment_confidence,
+        path_confidence=value.path_confidence,
+        dependency_weight=value.dependency_weight,
+        valid_from=value.valid_from,
+        expected_peak_at=value.expected_peak_at,
+        valid_to=value.valid_to,
+        rule_version=value.rule_version,
+        created_at=value.created_at,
+    )
+
+
+def _target_impact_snapshot(value: TargetImpactSnapshotModel) -> TargetImpactSnapshot:
+    return TargetImpactSnapshot(
+        id=value.id,
+        target_id=value.target_id,
+        as_of=value.as_of,
+        horizon=value.horizon,
+        scenario_set_id=value.scenario_set_id,
+        positive_gross=value.positive_gross,
+        negative_gross=value.negative_gross,
+        net_score=value.net_score,
+        direction=value.direction,
+        magnitude=value.magnitude,
+        confidence=value.confidence,
+        dominant_event_id=value.dominant_event_id,
+        previous_direction=value.previous_direction,
+        change_type=value.change_type,
+        source_hash=value.source_hash,
+        rule_version=value.rule_version,
+        explanation=value.explanation or "",
+        created_at=value.created_at,
+    )
+
+
+def _target_impact_snapshot_contribution(
+    value: TargetImpactSnapshotContributionModel,
+) -> TargetImpactSnapshotContribution:
+    return TargetImpactSnapshotContribution(
+        snapshot_id=value.snapshot_id,
+        contribution_id=value.contribution_id,
+        event_id=value.event_id,
+        direction=value.direction,
+        effective_strength=value.effective_strength,
+        contribution_share=value.contribution_share,
+    )
+
+
+def _market_forecast_run(value: MarketForecastRunModel) -> MarketForecastRun:
+    return MarketForecastRun(
+        id=value.id,
+        instrument_id=value.instrument_id,
+        as_of=value.as_of,
+        horizon=value.horizon,
+        direction=value.direction,
+        probabilities=value.probabilities,
+        expected_return_p10=value.expected_return_p10,
+        expected_return_p50=value.expected_return_p50,
+        expected_return_p90=value.expected_return_p90,
+        confidence=value.confidence,
+        forecast_status=value.forecast_status,
+        data_status=value.data_status,
+        calibration_version_id=value.calibration_version_id,
+        rule_version=value.rule_version,
+        factor_rule_version=value.factor_rule_version,
+        factor_source_hash=value.factor_source_hash,
+        source_hash=value.source_hash,
+        input_snapshot=value.input_snapshot or {},
+        created_by=value.created_by,
+        created_at=value.created_at,
+    )
+
+
+def _market_forecast_outcome(value: MarketForecastOutcomeModel) -> MarketForecastOutcome:
+    return MarketForecastOutcome(
+        id=value.id,
+        forecast_id=value.forecast_id,
+        outcome_observed_at=value.outcome_observed_at,
+        realized_return=value.realized_return,
+        outcome=value.outcome,
+        base_price=value.base_price,
+        outcome_price=value.outcome_price,
+        source=value.source,
+        available_at=value.available_at,
+        label_rule_version=value.label_rule_version,
+        created_at=value.created_at,
+    )
+
+
+def _market_calibration_version(
+    value: MarketCalibrationVersionModel,
+) -> MarketCalibrationVersion:
+    return MarketCalibrationVersion(
+        id=value.id,
+        model_key=value.model_key,
+        version=value.version,
+        horizon=value.horizon,
+        market=value.market,
+        status=value.status,
+        method=value.method,
+        parameters=value.parameters or {},
+        metrics=value.metrics or {},
+        train_start=value.train_start,
+        train_end=value.train_end,
+        sample_count=value.sample_count,
+        created_by=value.created_by,
+        created_at=value.created_at,
+        published_at=value.published_at,
+    )
+
+
+def _forward_impact_window(value: ForwardImpactWindowModel) -> ForwardImpactWindow:
+    return ForwardImpactWindow(
+        id=value.id,
+        target_id=value.target_id,
+        as_of=value.as_of,
+        window_start=value.window_start,
+        window_end=value.window_end,
+        event_types=value.event_types or [],
+        catalyst_ids=value.catalyst_ids or [],
+        included_kinds=value.included_kinds or [],
+        granularity=value.granularity,
+        scenario_set_id=value.scenario_set_id,
+        status=value.status,
+        rule_version=value.rule_version,
+        source_hash=value.source_hash,
+        created_by=value.created_by,
+        created_at=value.created_at,
+    )
+
+
+def _forward_catalyst(value: ForwardCatalystModel) -> ForwardCatalyst:
+    return ForwardCatalyst(
+        id=value.id,
+        target_id=value.target_id,
+        kind=value.kind,
+        title=value.title,
+        event_type=value.event_type,
+        scheduled_from=value.scheduled_from,
+        scheduled_to=value.scheduled_to,
+        trigger_definition=value.trigger_definition or {},
+        probability_low=value.probability_low,
+        probability_base=value.probability_base,
+        probability_high=value.probability_high,
+        probability_basis=value.probability_basis,
+        evidence_refs=value.evidence_refs or [],
+        status=value.status,
+        realized_event_id=value.realized_event_id,
+        created_by=value.created_by,
+        created_at=value.created_at,
+    )
+
+
+def _future_event(value: FutureEventModel) -> FutureEvent:
+    return FutureEvent(
+        id=value.id,
+        event_type=value.event_type,
+        kind=value.kind,
+        series_key=value.series_key,
+        external_id=value.external_id,
+        source_id=value.source_id,
+        current_revision_id=value.current_revision_id,
+        realized_event_id=value.realized_event_id,
+        created_by=value.created_by,
+        created_at=value.created_at,
+    )
+
+
+def _future_event_revision(value: FutureEventRevisionModel) -> FutureEventRevision:
+    return FutureEventRevision(
+        id=value.id,
+        future_event_id=value.future_event_id,
+        revision_no=value.revision_no,
+        title=value.title,
+        description=value.description or "",
+        scheduled_from=value.scheduled_from,
+        scheduled_to=value.scheduled_to,
+        source_timezone=value.source_timezone,
+        time_precision=value.time_precision,
+        status=value.status,
+        importance=value.importance,
+        probability_low=value.probability_low,
+        probability_base=value.probability_base,
+        probability_high=value.probability_high,
+        probability_basis=value.probability_basis,
+        source_url=value.source_url,
+        evidence_refs=value.evidence_refs or [],
+        available_at=value.available_at,
+        change_reason=value.change_reason or "",
+        supersedes_revision_id=value.supersedes_revision_id,
+        created_by=value.created_by,
+        created_at=value.created_at,
+    )
+
+
+def _future_event_target_impact(
+    value: FutureEventTargetImpactModel,
+) -> FutureEventTargetImpact:
+    return FutureEventTargetImpact(
+        id=value.id,
+        future_event_id=value.future_event_id,
+        revision_id=value.revision_id,
+        target_id=value.target_id,
+        scenario_id=value.scenario_id,
+        direction=value.direction,
+        magnitude=value.magnitude,
+        conditional_strength=value.conditional_strength,
+        occurrence_probability=value.occurrence_probability,
+        expected_strength=value.expected_strength,
+        confidence=value.confidence,
+        rationale=value.rationale or "",
+        onset_at=value.onset_at,
+        expected_peak_at=value.expected_peak_at,
+        valid_to=value.valid_to,
+        causal_edge_refs=value.causal_edge_refs or [],
+        evidence_refs=value.evidence_refs or [],
+        status=value.status,
+        created_at=value.created_at,
+    )
+
+
+def _forward_impact_contribution(
+    value: ForwardImpactContributionModel,
+) -> ForwardImpactContribution:
+    return ForwardImpactContribution(
+        id=value.id,
+        window_id=value.window_id,
+        catalyst_id=value.catalyst_id,
+        target_id=value.target_id,
+        scenario_id=value.scenario_id,
+        direction=value.direction,
+        magnitude=value.magnitude,
+        conditional_strength=value.conditional_strength,
+        occurrence_probability=value.occurrence_probability,
+        expected_strength=value.expected_strength,
+        confidence=value.confidence,
+        onset_at=value.onset_at,
+        expected_peak_at=value.expected_peak_at,
+        valid_to=value.valid_to,
+        causal_edge_refs=value.causal_edge_refs or [],
+        created_at=value.created_at,
+    )
+
+
+def _forward_impact_point(value: ForwardImpactPointModel) -> ForwardImpactPoint:
+    return ForwardImpactPoint(
+        id=value.id,
+        window_id=value.window_id,
+        point_at=value.point_at,
+        scenario_id=value.scenario_id,
+        positive_conditional=value.positive_conditional,
+        negative_conditional=value.negative_conditional,
+        net_conditional=value.net_conditional,
+        positive_expected=value.positive_expected,
+        negative_expected=value.negative_expected,
+        net_expected=value.net_expected,
+        direction=value.direction,
+        confidence=value.confidence,
+        dominant_catalyst_id=value.dominant_catalyst_id,
     )
 
 

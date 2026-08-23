@@ -463,6 +463,24 @@ class WatchTrigger:
 
 
 @dataclass(frozen=True)
+class EventTypeRegistryEntry:
+    """事件类型注册表（DD-21 §2.4 候选类型治理）。
+
+    一等类型（代码内 EVENT_SCHEMAS）之外的标签在此登记：
+    candidate（LLM 开放分类产出）→ accepted（人工升格，去掉强制 needs_review）
+    或 rejected（人工拒绝，后续同类事件落 cold）。
+    """
+
+    type_label: str
+    status: str = "candidate"  # candidate | accepted | rejected
+    event_count: int = 0
+    decided_by: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class MatchFeatures:
     """事件匹配特征分项，用于解释 match_score。"""
 
@@ -645,7 +663,7 @@ class ImpactAnalysis:
     id: str
     event_id: str
     version: int
-    status: str  # draft / approved / superseded
+    status: str  # draft / needs_review / approved / superseded / rejected
     event_title_snapshot: str
     summary: str
     transmission_chains: list[dict[str, Any]]
@@ -657,6 +675,404 @@ class ImpactAnalysis:
     degraded: bool = False
     supersedes_id: Optional[str] = None
     created_at: Optional[datetime] = None
+    analysis_payload: dict[str, Any] = field(default_factory=dict)
+    quality_report: dict[str, Any] = field(default_factory=dict)
+    edit_revision: int = 0
+    derived_from_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ImpactGraphLayout:
+    """用户级因果图画布布局，与分析语义版本分离。"""
+
+    analysis_id: str
+    user_id: str
+    node_positions: dict[str, dict[str, float]] = field(default_factory=dict)
+    collapsed_groups: list[str] = field(default_factory=list)
+    viewport: dict[str, float] = field(default_factory=dict)
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ImpactTargetDefinition:
+    """标准化影响目标，跨事件组合分析的稳定主键。"""
+
+    id: str
+    target_type: str
+    target_code: str
+    canonical_name: str
+    taxonomy_version: str = "default-v1"
+    aliases: list[str] = field(default_factory=list)
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class IndustryTaxonomy:
+    id: str
+    standard: str
+    version: str
+    name: str
+    status: str = "draft"
+    source: str = "manual"
+    effective_from: Optional[datetime] = None
+    effective_to: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class IndustryClassification:
+    id: str
+    taxonomy_id: str
+    code: str
+    name: str
+    level: int
+    parent_code: Optional[str] = None
+    aliases: list[str] = field(default_factory=list)
+    status: str = "active"
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class InstrumentIndustryMembership:
+    id: str
+    instrument_id: str
+    taxonomy_id: str
+    industry_code: str
+    weight: float = 1.0
+    is_primary: bool = True
+    status: str = "approved"
+    source: str = "manual"
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ImpactTargetMapping:
+    id: str
+    target_id: str
+    mapping_type: str  # instrument | industry | market
+    mapping_code: str
+    weight: float
+    confidence: float
+    status: str = "proposed"
+    reason: str = ""
+    source: str = "manual"
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    created_by: str = "system"
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class MarketMasterDataImportRun:
+    id: str
+    standard: str
+    version: str
+    source: str
+    source_hash: str
+    status: str
+    classification_count: int
+    membership_count: int
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    source_metadata: dict[str, Any] = field(default_factory=dict)
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class EventImpactRelation:
+    """两个独立事件之间的归因关系，防止组合分析重复计权。"""
+
+    id: str
+    source_event_id: str
+    target_event_id: str
+    relation_type: str  # same_incident | updates | causes | amplifies | offsets | independent
+    dependency_weight: float = 1.0
+    confidence: float = 0.0
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    status: str = "needs_review"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ImpactContribution:
+    """从已批准事件分析投影出的不可变单事件贡献。"""
+
+    id: str
+    event_id: str
+    analysis_id: str
+    assessment_id: str
+    target_id: str
+    scenario_id: str
+    direction: str
+    magnitude: str
+    horizon: str
+    base_strength: float
+    effective_strength: float
+    event_importance: float
+    assessment_confidence: float
+    path_confidence: float
+    dependency_weight: float = 1.0
+    valid_from: Optional[datetime] = None
+    expected_peak_at: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    rule_version: str = "impact-aggregation-v1"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class TargetImpactSnapshot:
+    """某一时点、目标和情景下的组合影响快照。"""
+
+    id: str
+    target_id: str
+    as_of: datetime
+    horizon: str
+    scenario_set_id: str
+    positive_gross: float
+    negative_gross: float
+    net_score: float
+    direction: str
+    magnitude: str
+    confidence: float
+    dominant_event_id: Optional[str]
+    previous_direction: Optional[str]
+    change_type: Optional[str]
+    source_hash: str
+    rule_version: str = "impact-aggregation-v1"
+    explanation: str = ""
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class TargetImpactSnapshotContribution:
+    snapshot_id: str
+    contribution_id: str
+    event_id: str
+    direction: str
+    effective_strength: float
+    contribution_share: float
+
+
+@dataclass(frozen=True)
+class MarketForecastRun:
+    """Immutable point-in-time forecast issued by the research platform."""
+
+    id: str
+    instrument_id: str
+    as_of: datetime
+    horizon: int
+    direction: str
+    probabilities: Optional[dict[str, float]]
+    expected_return_p10: Optional[float]
+    expected_return_p50: Optional[float]
+    expected_return_p90: Optional[float]
+    confidence: float
+    forecast_status: str
+    data_status: str
+    calibration_version_id: Optional[str]
+    rule_version: str
+    factor_rule_version: str
+    factor_source_hash: str
+    source_hash: str
+    input_snapshot: dict[str, Any] = field(default_factory=dict)
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class MarketForecastOutcome:
+    """Observed trading-horizon result linked to one immutable forecast."""
+
+    id: str
+    forecast_id: str
+    outcome_observed_at: datetime
+    realized_return: float
+    outcome: str
+    base_price: float
+    outcome_price: float
+    source: str
+    available_at: datetime
+    label_rule_version: str = "return-band-v1"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class MarketCalibrationVersion:
+    """Governed calibration artifact; only published versions may serve forecasts."""
+
+    id: str
+    model_key: str
+    version: str
+    horizon: int
+    market: str
+    status: str
+    method: str
+    parameters: dict[str, Any]
+    metrics: dict[str, Any]
+    train_start: datetime
+    train_end: datetime
+    sample_count: int
+    created_by: str
+    created_at: datetime
+    published_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ForwardImpactWindow:
+    """未来时间窗口内的行业前瞻分析请求与版本。"""
+
+    id: str
+    target_id: str
+    as_of: datetime
+    window_start: datetime
+    window_end: datetime
+    event_types: list[str] = field(default_factory=list)
+    catalyst_ids: list[str] = field(default_factory=list)
+    included_kinds: list[str] = field(default_factory=lambda: ["scheduled", "conditional"])
+    granularity: str = "auto"
+    scenario_set_id: str = "baseline"
+    status: str = "building"
+    rule_version: str = "forward-impact-v1"
+    source_hash: str = ""
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ForwardCatalyst:
+    """未来催化剂；尚未发生前不写入 Event。"""
+
+    id: str
+    target_id: str
+    kind: str  # scheduled | conditional | hypothetical
+    title: str
+    event_type: str
+    scheduled_from: Optional[datetime] = None
+    scheduled_to: Optional[datetime] = None
+    trigger_definition: dict[str, Any] = field(default_factory=dict)
+    probability_low: Optional[float] = None
+    probability_base: Optional[float] = None
+    probability_high: Optional[float] = None
+    probability_basis: str = "unknown"
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    status: str = "candidate"
+    realized_event_id: Optional[str] = None
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class FutureEvent:
+    """Stable identity for a not-yet-realized event calendar entry."""
+
+    id: str
+    event_type: str
+    kind: str
+    series_key: Optional[str] = None
+    external_id: Optional[str] = None
+    source_id: Optional[str] = None
+    current_revision_id: Optional[str] = None
+    realized_event_id: Optional[str] = None
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class FutureEventRevision:
+    """Immutable schedule/source revision for a FutureEvent."""
+
+    id: str
+    future_event_id: str
+    revision_no: int
+    title: str
+    description: str = ""
+    scheduled_from: Optional[datetime] = None
+    scheduled_to: Optional[datetime] = None
+    source_timezone: str = "Asia/Shanghai"
+    time_precision: str = "unknown"
+    status: str = "candidate"
+    importance: float = 0.5
+    probability_low: Optional[float] = None
+    probability_base: Optional[float] = None
+    probability_high: Optional[float] = None
+    probability_basis: str = "unknown"
+    source_url: Optional[str] = None
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    available_at: Optional[datetime] = None
+    change_reason: str = ""
+    supersedes_revision_id: Optional[str] = None
+    created_by: str = "system"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class FutureEventTargetImpact:
+    """A future event's reviewed impact on one standardized target."""
+
+    id: str
+    future_event_id: str
+    revision_id: str
+    target_id: str
+    scenario_id: str
+    direction: str
+    magnitude: str
+    conditional_strength: float
+    occurrence_probability: Optional[float] = None
+    expected_strength: Optional[float] = None
+    confidence: float = 0.0
+    rationale: str = ""
+    onset_at: Optional[datetime] = None
+    expected_peak_at: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    causal_edge_refs: list[str] = field(default_factory=list)
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    status: str = "candidate"
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ForwardImpactContribution:
+    id: str
+    window_id: str
+    catalyst_id: str
+    target_id: str
+    scenario_id: str
+    direction: str
+    magnitude: str
+    conditional_strength: float
+    occurrence_probability: Optional[float]
+    expected_strength: Optional[float]
+    confidence: float
+    onset_at: Optional[datetime] = None
+    expected_peak_at: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    causal_edge_refs: list[str] = field(default_factory=list)
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ForwardImpactPoint:
+    id: str
+    window_id: str
+    point_at: datetime
+    scenario_id: str
+    positive_conditional: float
+    negative_conditional: float
+    net_conditional: float
+    positive_expected: Optional[float]
+    negative_expected: Optional[float]
+    net_expected: Optional[float]
+    direction: str
+    confidence: float
+    dominant_catalyst_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -765,3 +1181,5 @@ class RetrievalTrace:
     fusion_method: Optional[str] = None
     backend_coverage: dict[str, int] = field(default_factory=dict)
     generated_at: Optional[datetime] = None
+    status: str = "succeeded"
+    degradation_reason: Optional[str] = None

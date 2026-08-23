@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Float,
     Index,
@@ -528,6 +529,19 @@ class WatchTriggerModel(Base):
     fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class EventTypeRegistryModel(Base):
+    __tablename__ = "event_type_registry"
+    __table_args__ = {"schema": "events"}
+
+    type_label: Mapped[str] = mapped_column(String(40), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="candidate", index=True)
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    decided_by: Mapped[Optional[str]] = mapped_column(String)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class MatchDecisionModel(Base):
     __tablename__ = "match_decisions"
     __table_args__ = {"schema": "events"}
@@ -661,6 +675,548 @@ class ImpactAnalysisModel(Base):
     degraded: Mapped[bool] = mapped_column(Boolean, default=False)
     supersedes_id: Mapped[Optional[str]] = mapped_column(String, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    analysis_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    quality_report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    edit_revision: Mapped[int] = mapped_column(default=0)
+    derived_from_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+
+
+class ImpactGraphLayoutModel(Base):
+    __tablename__ = "impact_graph_layouts"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "user_id", name="uq_impact_graph_layout_analysis_user"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    analysis_id: Mapped[str] = mapped_column(String, index=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    node_positions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    collapsed_groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    viewport: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImpactTargetDefinitionModel(Base):
+    __tablename__ = "impact_target_definitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_type",
+            "target_code",
+            "taxonomy_version",
+            name="uq_impact_target_definition_code",
+        ),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_type: Mapped[str] = mapped_column(String(32), index=True)
+    target_code: Mapped[str] = mapped_column(String(128), index=True)
+    canonical_name: Mapped[str] = mapped_column(Text)
+    taxonomy_version: Mapped[str] = mapped_column(String(64), default="default-v1")
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class MarketInstrumentModel(Base):
+    __tablename__ = "market_instruments"
+    __table_args__ = (
+        UniqueConstraint("market", "symbol", "instrument_type", name="uq_market_instrument"),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    market: Mapped[str] = mapped_column(String(16), index=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    instrument_type: Mapped[str] = mapped_column(String(32), index=True)
+    exchange: Mapped[Optional[str]] = mapped_column(String(32))
+    currency: Mapped[Optional[str]] = mapped_column(String(16))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    sector_code: Mapped[Optional[str]] = mapped_column(String(128), index=True)
+    sector_name: Mapped[Optional[str]] = mapped_column(String(200))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    valid_from: Mapped[Optional[date]] = mapped_column(Date)
+    valid_to: Mapped[Optional[date]] = mapped_column(Date)
+    provider_symbols: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+
+
+class IndustryTaxonomyModel(Base):
+    __tablename__ = "industry_taxonomies"
+    __table_args__ = (
+        UniqueConstraint("standard", "version", name="uq_industry_taxonomy_version"),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    standard: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    source: Mapped[str] = mapped_column(String(100), default="manual")
+    effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class IndustryClassificationModel(Base):
+    __tablename__ = "industry_classifications"
+    __table_args__ = (
+        UniqueConstraint("taxonomy_id", "code", name="uq_industry_classification_code"),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    taxonomy_id: Mapped[str] = mapped_column(String(128), index=True)
+    code: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    level: Mapped[int] = mapped_column(Integer)
+    parent_code: Mapped[Optional[str]] = mapped_column(String(128))
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class InstrumentIndustryMembershipModel(Base):
+    __tablename__ = "instrument_industry_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id",
+            "taxonomy_id",
+            "industry_code",
+            name="uq_instrument_industry_membership",
+        ),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    instrument_id: Mapped[str] = mapped_column(String(128), index=True)
+    taxonomy_id: Mapped[str] = mapped_column(String(128), index=True)
+    industry_code: Mapped[str] = mapped_column(String(128), index=True)
+    weight: Mapped[float] = mapped_column(Float, default=1.0)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(24), default="approved")
+    source: Mapped[str] = mapped_column(String(100), default="manual")
+    valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImpactTargetMappingModel(Base):
+    __tablename__ = "impact_target_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_id",
+            "mapping_type",
+            "mapping_code",
+            name="uq_impact_target_mapping",
+        ),
+        Index("ix_impact_target_mappings_lookup", "mapping_type", "mapping_code", "status"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(128), index=True)
+    mapping_type: Mapped[str] = mapped_column(String(24))
+    mapping_code: Mapped[str] = mapped_column(String(128))
+    weight: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(24), default="proposed")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(100), default="manual")
+    valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(100))
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(100))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MarketMasterDataImportRunModel(Base):
+    __tablename__ = "market_master_data_import_runs"
+    __table_args__ = (
+        UniqueConstraint("source_hash", name="uq_market_master_data_import_source_hash"),
+        Index(
+            "ix_market_master_data_import_version",
+            "standard",
+            "version",
+            "created_at",
+        ),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    standard: Mapped[str] = mapped_column(String(64))
+    version: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(100))
+    source_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    classification_count: Mapped[int] = mapped_column(Integer)
+    membership_count: Mapped[int] = mapped_column(Integer)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class EventImpactRelationModel(Base):
+    __tablename__ = "event_impact_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_event_id", "target_event_id", name="uq_event_impact_relation_pair"
+        ),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_event_id: Mapped[str] = mapped_column(String, index=True)
+    target_event_id: Mapped[str] = mapped_column(String, index=True)
+    relation_type: Mapped[str] = mapped_column(String(24))
+    dependency_weight: Mapped[float] = mapped_column()
+    confidence: Mapped[float] = mapped_column()
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="needs_review")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImpactContributionModel(Base):
+    __tablename__ = "impact_contributions"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "assessment_id", name="uq_impact_contribution_assessment"),
+        Index("ix_impact_contributions_target", "target_id", "created_at"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    analysis_id: Mapped[str] = mapped_column(String, index=True)
+    assessment_id: Mapped[str] = mapped_column(String)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    scenario_id: Mapped[str] = mapped_column(String)
+    direction: Mapped[str] = mapped_column(String(16))
+    magnitude: Mapped[str] = mapped_column(String(16))
+    horizon: Mapped[str] = mapped_column(String(16))
+    base_strength: Mapped[float] = mapped_column()
+    effective_strength: Mapped[float] = mapped_column()
+    event_importance: Mapped[float] = mapped_column()
+    assessment_confidence: Mapped[float] = mapped_column()
+    path_confidence: Mapped[float] = mapped_column()
+    dependency_weight: Mapped[float] = mapped_column(default=1.0)
+    valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expected_peak_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    rule_version: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TargetImpactSnapshotModel(Base):
+    __tablename__ = "target_impact_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_id",
+            "as_of",
+            "horizon",
+            "scenario_set_id",
+            "rule_version",
+            name="uq_target_impact_snapshot_key",
+        ),
+        Index("ix_target_impact_snapshots_target_created", "target_id", "created_at"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    horizon: Mapped[str] = mapped_column(String(16))
+    scenario_set_id: Mapped[str] = mapped_column(String(64))
+    positive_gross: Mapped[float] = mapped_column()
+    negative_gross: Mapped[float] = mapped_column()
+    net_score: Mapped[float] = mapped_column()
+    direction: Mapped[str] = mapped_column(String(16))
+    magnitude: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column()
+    dominant_event_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    previous_direction: Mapped[Optional[str]] = mapped_column(String(16))
+    change_type: Mapped[Optional[str]] = mapped_column(String(32))
+    source_hash: Mapped[str] = mapped_column(String(64))
+    rule_version: Mapped[str] = mapped_column(String(64))
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TargetImpactSnapshotContributionModel(Base):
+    __tablename__ = "target_impact_snapshot_contributions"
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "contribution_id", name="uq_snapshot_contribution"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(String, index=True)
+    contribution_id: Mapped[str] = mapped_column(String, index=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    direction: Mapped[str] = mapped_column(String(16))
+    effective_strength: Mapped[float] = mapped_column()
+    contribution_share: Mapped[float] = mapped_column()
+
+
+class MarketForecastRunModel(Base):
+    __tablename__ = "market_forecast_runs"
+    __table_args__ = (
+        UniqueConstraint("source_hash", name="uq_market_forecast_run_source_hash"),
+        Index("ix_market_forecast_runs_lookup", "instrument_id", "horizon", "as_of"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    instrument_id: Mapped[str] = mapped_column(String(128))
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    horizon: Mapped[int] = mapped_column(Integer)
+    direction: Mapped[str] = mapped_column(String(16))
+    probabilities: Mapped[Optional[dict[str, float]]] = mapped_column(JSON)
+    expected_return_p10: Mapped[Optional[float]] = mapped_column(Float)
+    expected_return_p50: Mapped[Optional[float]] = mapped_column(Float)
+    expected_return_p90: Mapped[Optional[float]] = mapped_column(Float)
+    confidence: Mapped[float] = mapped_column(Float)
+    forecast_status: Mapped[str] = mapped_column(String(32))
+    data_status: Mapped[str] = mapped_column(String(32))
+    calibration_version_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    rule_version: Mapped[str] = mapped_column(String(64))
+    factor_rule_version: Mapped[str] = mapped_column(String(64))
+    factor_source_hash: Mapped[str] = mapped_column(String(64))
+    source_hash: Mapped[str] = mapped_column(String(64))
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MarketForecastOutcomeModel(Base):
+    __tablename__ = "market_forecast_outcomes"
+    __table_args__ = (
+        UniqueConstraint("forecast_id", name="uq_market_forecast_outcome_forecast"),
+        Index("ix_market_forecast_outcomes_observed", "outcome_observed_at"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    forecast_id: Mapped[str] = mapped_column(String, index=True)
+    outcome_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    realized_return: Mapped[float] = mapped_column(Float)
+    outcome: Mapped[str] = mapped_column(String(16))
+    base_price: Mapped[float] = mapped_column(Float)
+    outcome_price: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(100))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    label_rule_version: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MarketCalibrationVersionModel(Base):
+    __tablename__ = "market_calibration_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_key",
+            "version",
+            "horizon",
+            "market",
+            name="uq_market_calibration_version",
+        ),
+        Index("ix_market_calibration_lookup", "model_key", "market", "horizon", "status"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    model_key: Mapped[str] = mapped_column(String(80))
+    version: Mapped[str] = mapped_column(String(40))
+    horizon: Mapped[int] = mapped_column(Integer)
+    market: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(24))
+    method: Mapped[str] = mapped_column(String(40))
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    train_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    train_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sample_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardImpactWindowModel(Base):
+    __tablename__ = "forward_impact_windows"
+    __table_args__ = ({"schema": "analysis"},)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    event_types: Mapped[list[str]] = mapped_column(JSON, default=list)
+    catalyst_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    included_kinds: Mapped[list[str]] = mapped_column(JSON, default=list)
+    granularity: Mapped[str] = mapped_column(String(12))
+    scenario_set_id: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    rule_version: Mapped[str] = mapped_column(String(64))
+    source_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardCatalystModel(Base):
+    __tablename__ = "forward_catalysts"
+    __table_args__ = ({"schema": "analysis"},)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(Text)
+    event_type: Mapped[str] = mapped_column(String(64))
+    scheduled_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    scheduled_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    trigger_definition: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    probability_low: Mapped[Optional[float]] = mapped_column()
+    probability_base: Mapped[Optional[float]] = mapped_column()
+    probability_high: Mapped[Optional[float]] = mapped_column()
+    probability_basis: Mapped[str] = mapped_column(String(64))
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24))
+    realized_event_id: Mapped[Optional[str]] = mapped_column(String)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FutureEventModel(Base):
+    __tablename__ = "future_events"
+    __table_args__ = ({"schema": "analysis"},)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    series_key: Mapped[Optional[str]] = mapped_column(String(128), index=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(256), index=True)
+    source_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    current_revision_id: Mapped[Optional[str]] = mapped_column(String)
+    realized_event_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FutureEventRevisionModel(Base):
+    __tablename__ = "future_event_revisions"
+    __table_args__ = (
+        UniqueConstraint("future_event_id", "revision_no", name="uq_future_event_revision"),
+        Index("ix_future_event_revision_schedule", "scheduled_from", "scheduled_to"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    future_event_id: Mapped[str] = mapped_column(String, index=True)
+    revision_no: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="")
+    scheduled_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    scheduled_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    source_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    time_precision: Mapped[str] = mapped_column(String(16), default="unknown")
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    importance: Mapped[float] = mapped_column(default=0.5)
+    probability_low: Mapped[Optional[float]] = mapped_column()
+    probability_base: Mapped[Optional[float]] = mapped_column()
+    probability_high: Mapped[Optional[float]] = mapped_column()
+    probability_basis: Mapped[str] = mapped_column(String(64), default="unknown")
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    available_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    change_reason: Mapped[str] = mapped_column(Text, default="")
+    supersedes_revision_id: Mapped[Optional[str]] = mapped_column(String)
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FutureEventTargetImpactModel(Base):
+    __tablename__ = "future_event_target_impacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "future_event_id",
+            "revision_id",
+            "target_id",
+            "scenario_id",
+            name="uq_future_event_target_impact",
+        ),
+        Index("ix_future_event_target_impact_target_time", "target_id", "onset_at", "valid_to"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    future_event_id: Mapped[str] = mapped_column(String, index=True)
+    revision_id: Mapped[str] = mapped_column(String, index=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(64), index=True)
+    direction: Mapped[str] = mapped_column(String(16))
+    magnitude: Mapped[str] = mapped_column(String(16))
+    conditional_strength: Mapped[float] = mapped_column()
+    occurrence_probability: Mapped[Optional[float]] = mapped_column()
+    expected_strength: Mapped[Optional[float]] = mapped_column()
+    confidence: Mapped[float] = mapped_column()
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    onset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expected_peak_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    causal_edge_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardImpactContributionModel(Base):
+    __tablename__ = "forward_impact_contributions"
+    __table_args__ = (
+        UniqueConstraint(
+            "window_id", "catalyst_id", "scenario_id", name="uq_forward_impact_contribution"
+        ),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    window_id: Mapped[str] = mapped_column(String, index=True)
+    catalyst_id: Mapped[str] = mapped_column(String, index=True)
+    target_id: Mapped[str] = mapped_column(String, index=True)
+    scenario_id: Mapped[str] = mapped_column(String)
+    direction: Mapped[str] = mapped_column(String(16))
+    magnitude: Mapped[str] = mapped_column(String(16))
+    conditional_strength: Mapped[float] = mapped_column()
+    occurrence_probability: Mapped[Optional[float]] = mapped_column()
+    expected_strength: Mapped[Optional[float]] = mapped_column()
+    confidence: Mapped[float] = mapped_column()
+    onset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expected_peak_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    causal_edge_refs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ForwardImpactPointModel(Base):
+    __tablename__ = "forward_impact_points"
+    __table_args__ = ({"schema": "analysis"},)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    window_id: Mapped[str] = mapped_column(String, index=True)
+    point_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    scenario_id: Mapped[str] = mapped_column(String)
+    positive_conditional: Mapped[float] = mapped_column()
+    negative_conditional: Mapped[float] = mapped_column()
+    net_conditional: Mapped[float] = mapped_column()
+    positive_expected: Mapped[Optional[float]] = mapped_column()
+    negative_expected: Mapped[Optional[float]] = mapped_column()
+    net_expected: Mapped[Optional[float]] = mapped_column()
+    direction: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column()
+    dominant_catalyst_id: Mapped[Optional[str]] = mapped_column(String)
 
 
 class BriefModel(Base):
