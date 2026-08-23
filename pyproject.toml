@@ -48,6 +48,9 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "postgres: requires FINSIGHT_POSTGRES_TEST_URL and a pgvector PostgreSQL",
+]
 
 [tool.ruff]
 line-length = 100
