@@ -1,4 +1,5 @@
 import re
+from collections import OrderedDict
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -19,6 +20,8 @@ from app.platform.ids import new_id
 from app.platform.repository import Repository
 from app.review.service import AutoReviewService
 
+_TIME_RESOLUTION_CACHE_LIMIT = 4096
+
 
 class EventService:
     def __init__(self, repository: Repository) -> None:
@@ -27,7 +30,7 @@ class EventService:
         self.classifier = EventClassifier()
         self.importance_calculator = ImportanceCalculator()
         self.time_parser = DeterministicEventTimeParser()
-        self._time_resolutions: dict[str, EventTimeResolution] = {}
+        self._time_resolutions: OrderedDict[str, EventTimeResolution] = OrderedDict()
 
     def classify(self, document: Document):
         return self.classifier.classify(document)
@@ -51,8 +54,19 @@ class EventService:
         )
 
     def get_time_resolution(self, event_id: str) -> Optional[EventTimeResolution]:
-        """Return resolution metadata for events handled by this service instance."""
-        return self._time_resolutions.get(event_id)
+        """Return resolution metadata, preferring cache then persisted Event payload."""
+        cached = self._time_resolutions.get(event_id)
+        if cached is not None:
+            self._time_resolutions.move_to_end(event_id)
+            return cached
+        event = self.repository.get_event(event_id)
+        if event is None:
+            return None
+        resolution = _resolution_from_payload(event.time_resolution)
+        if resolution is None:
+            return None
+        self._remember_time_resolution(event_id, resolution)
+        return resolution
 
     def create_event(
         self,
@@ -124,8 +138,9 @@ class EventService:
             confidence=result.confidence,
             classifier_version=result.schema_version,
             missing_required=result.missing_required,
+            time_resolution=_resolution_payload(time_resolution),
         )
-        self._time_resolutions[event.id] = time_resolution
+        self._remember_time_resolution(event.id, time_resolution)
         self.repository.save_event(event)
         self.repository.save_event_entities(event.id, links)
         if status in {"cold", "dormant"}:
@@ -225,8 +240,9 @@ class EventService:
             confidence=max(event.confidence, result.confidence),
             missing_required=sorted(set(event.missing_required) | set(result.missing_required)),
             version=event.version + 1,
+            time_resolution=_resolution_payload(time_resolution),
         )
-        self._time_resolutions[updated.id] = time_resolution
+        self._remember_time_resolution(updated.id, time_resolution)
         self.repository.update_event(updated)
         self.repository.save_event_entities(updated.id, links)
         return updated
@@ -234,6 +250,42 @@ class EventService:
     def _higher_urgency(self, first: str, second: str) -> str:
         ranks = {"low": 0, "normal": 1, "high": 2, "critical": 3}
         return first if ranks.get(first, 0) >= ranks.get(second, 0) else second
+
+    def _remember_time_resolution(
+        self, event_id: str, resolution: EventTimeResolution
+    ) -> None:
+        if event_id in self._time_resolutions:
+            self._time_resolutions.move_to_end(event_id)
+        self._time_resolutions[event_id] = resolution
+        while len(self._time_resolutions) > _TIME_RESOLUTION_CACHE_LIMIT:
+            self._time_resolutions.popitem(last=False)
+
+
+def _resolution_payload(resolution: EventTimeResolution) -> dict[str, str]:
+    return {
+        "occurred_at": resolution.occurred_at.isoformat(),
+        "resolution_method": resolution.resolution_method,
+        "explanation": resolution.explanation,
+        "parser_version": resolution.parser_version,
+    }
+
+
+def _resolution_from_payload(payload: dict[str, Any] | None) -> EventTimeResolution | None:
+    if not payload:
+        return None
+    occurred_at = payload.get("occurred_at")
+    method = payload.get("resolution_method")
+    if not occurred_at or not method:
+        return None
+    parsed = datetime.fromisoformat(str(occurred_at).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return EventTimeResolution(
+        occurred_at=parsed,
+        resolution_method=str(method),
+        explanation=str(payload.get("explanation") or ""),
+        parser_version=str(payload.get("parser_version") or ""),
+    )
 
 
 # 保留向后兼容：旧代码可能直接 import SECURITY_CODE 正则。

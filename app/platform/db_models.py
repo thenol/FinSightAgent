@@ -439,6 +439,7 @@ class EventModel(Base):
     confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0"))
     classifier_version: Mapped[str] = mapped_column(String(50), default="")
     missing_required: Mapped[list[str]] = mapped_column(JSON, default=list)
+    time_resolution: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     version: Mapped[int] = mapped_column(default=1)
 
 

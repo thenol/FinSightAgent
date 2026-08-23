@@ -4415,6 +4415,7 @@ class SqlAlchemyTransaction:
         model.confidence = Decimal(str(value.confidence))
         model.classifier_version = value.classifier_version
         model.missing_required = value.missing_required
+        model.time_resolution = value.time_resolution
         model.version = value.version
         self.session.flush()
 
@@ -6399,6 +6400,7 @@ def _event(value: EventModel) -> Event:
         confidence=float(value.confidence) if value.confidence is not None else 0.0,
         classifier_version=value.classifier_version or "",
         missing_required=value.missing_required if value.missing_required is not None else [],
+        time_resolution=value.time_resolution if value.time_resolution is not None else {},
     )
 
 

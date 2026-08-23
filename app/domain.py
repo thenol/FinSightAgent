@@ -376,6 +376,7 @@ class Event:
     confidence: float = 0.0
     classifier_version: str = ""
     missing_required: list[str] = field(default_factory=list)
+    time_resolution: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

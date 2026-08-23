@@ -150,3 +150,55 @@ def test_event_service_uses_resolved_time_and_exposes_resolution_metadata() -> N
     assert event.occurred_at == datetime(2026, 7, 10, tzinfo=timezone.utc)
     assert resolution is not None
     assert resolution.resolution_method == "explicit_text_date"
+
+
+def test_time_resolution_survives_new_service_instance() -> None:
+    document = Document(
+        id="doc_time_persist",
+        source_id="src_sse",
+        source_tier="S",
+        external_id="ext-time-persist",
+        canonical_url="https://example.test/time-persist",
+        title="重大合同",
+        content="公司于2026年7月10日与客户签订重大合同，合同金额为1亿元。",
+        content_hash="hash",
+        published_at=PUBLISHED_AT,
+        ingested_at=INGESTED_AT,
+    )
+    repository = InMemoryRepository()
+    event = EventService(repository).create_event(document)
+
+    resolution = EventService(repository).get_time_resolution(event.id)
+    persisted = repository.get_event(event.id)
+
+    assert persisted is not None
+    assert persisted.time_resolution["resolution_method"] == "explicit_text_date"
+    assert resolution is not None
+    assert resolution.occurred_at == datetime(2026, 7, 10, tzinfo=timezone.utc)
+    assert resolution.resolution_method == "explicit_text_date"
+
+
+def test_time_resolution_cache_evicts_oldest_entry() -> None:
+    from app.events import service as event_service
+
+    repository = InMemoryRepository()
+    instance = EventService(repository)
+    original_limit = event_service._TIME_RESOLUTION_CACHE_LIMIT
+    event_service._TIME_RESOLUTION_CACHE_LIMIT = 2
+    try:
+        for index in range(3):
+            instance._remember_time_resolution(
+                f"evt_{index}",
+                DeterministicEventTimeParser().parse(
+                    event_type="major_contract",
+                    key_fields={},
+                    text="公司于2026年7月10日签订重大合同。",
+                    published_at=PUBLISHED_AT,
+                    ingested_at=INGESTED_AT,
+                ),
+            )
+        assert "evt_0" not in instance._time_resolutions
+        assert "evt_1" in instance._time_resolutions
+        assert "evt_2" in instance._time_resolutions
+    finally:
+        event_service._TIME_RESOLUTION_CACHE_LIMIT = original_limit
