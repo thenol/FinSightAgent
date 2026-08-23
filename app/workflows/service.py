@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -32,6 +33,8 @@ from app.workflows.errors import (
     should_retry,
 )
 from app.workflows.invalidation import apply_invalidation, nodes_to_invalidate
+
+logger = logging.getLogger(__name__)
 
 
 class ResearchState(TypedDict, total=False):
@@ -233,7 +236,14 @@ class WorkflowService:
     def _checkpoint_values(self, thread_id: str) -> dict[str, Any]:
         try:
             snapshot = self.graph.get_state({"configurable": {"thread_id": thread_id}})
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "checkpoint read failed: thread_id=%s type=%s error=%s",
+                thread_id,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return {}
         if snapshot is None:
             return {}
@@ -248,7 +258,14 @@ class WorkflowService:
         if recover:
             try:
                 snapshot = self.graph.get_state(config)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "checkpoint recover failed: thread_id=%s type=%s error=%s",
+                    thread_id,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
                 snapshot = None
             if snapshot is not None and getattr(snapshot, "next", ()):
                 # None resumes the pending task from its durable checkpoint. Supplying

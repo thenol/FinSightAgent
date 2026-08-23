@@ -100,6 +100,66 @@ def test_impact_analysis_service_fallback() -> None:
     assert analysis.summary
     assert len(analysis.impacts) >= 1
     assert analysis.generated_by == "agent:impact_analyst"
+    assert analysis.quality_report["blockers"] == ["model_unavailable"]
+    assert analysis.quality_report["model_failure"]["code"] in {
+        "schema_invalid",
+        "invoke_error",
+    }
+
+
+def test_impact_analysis_records_timeout_root_cause(caplog) -> None:
+    repo = _make_repo()
+    event = _save_event(repo)
+
+    class TimeoutProvider:
+        name = "timeout"
+        model = "test"
+        estimated_cost_usd = 0.0
+
+        def invoke(self, request):
+            raise TimeoutError("gateway timeout")
+
+    from app.model_gateway.service import ModelGateway
+
+    agent = ImpactAnalystAgent(ModelGateway(repo, provider=TimeoutProvider()))
+    with caplog.at_level("WARNING"):
+        analysis = ImpactAnalysisService(repo, agent=agent).generate(event.id)
+
+    assert analysis.degraded is True
+    failure = analysis.quality_report["model_failure"]
+    assert failure["code"] == "timeout"
+    assert failure["exception_type"] == "TimeoutError"
+    assert failure["stage"] == "invoke"
+    assert "gateway timeout" in caplog.text
+    audits = [
+        item for item in repo.list_audit_logs() if item.action == "impact_analysis.generated"
+    ]
+    assert audits[-1].details["model_failure"]["code"] == "timeout"
+
+
+def test_impact_analysis_records_schema_parse_failure(caplog) -> None:
+    repo = _make_repo()
+    event = _save_event(repo)
+
+    class InvalidPayloadProvider:
+        name = "invalid"
+        model = "test"
+        estimated_cost_usd = 0.0
+
+        def invoke(self, request):
+            return {"not": "an impact analysis"}
+
+    from app.model_gateway.service import ModelGateway
+
+    agent = ImpactAnalystAgent(ModelGateway(repo, provider=InvalidPayloadProvider()))
+    with caplog.at_level("WARNING"):
+        analysis = ImpactAnalysisService(repo, agent=agent).generate(event.id)
+
+    assert analysis.degraded is True
+    failure = analysis.quality_report["model_failure"]
+    assert failure["code"] == "schema_invalid"
+    assert failure["stage"] == "schema"
+    assert "schema_invalid" in caplog.text
 
 
 def test_impact_analysis_service_with_mock_agent() -> None:

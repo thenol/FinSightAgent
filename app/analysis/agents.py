@@ -5,10 +5,14 @@
 降级为规则模板。
 """
 
+import logging
 from typing import Any
 
 from app.analysis.schemas import ImpactAnalysisOutput, ImpactAnalysisOutputV2
+from app.model_gateway.failures import ModelCallFailure, record_model_failure
 from app.model_gateway.service import ModelGateway, ModelRequest
+
+logger = logging.getLogger(__name__)
 
 AGENT_SCHEMA_VERSION = "v2"
 
@@ -21,6 +25,7 @@ class ImpactAnalystAgent:
 
     def __init__(self, gateway: ModelGateway) -> None:
         self.gateway = gateway
+        self.last_failure: ModelCallFailure | None = None
 
     def analyze(
         self,
@@ -31,6 +36,7 @@ class ImpactAnalystAgent:
         context: dict[str, Any] | None = None,
     ) -> ImpactAnalysisOutput | ImpactAnalysisOutputV2 | None:
         """调用 LLM；未配置 provider 或输出无法解析时返回 None（由服务层降级）。"""
+        self.last_failure = None
         try:
             response = self.gateway.invoke(
                 ModelRequest(
@@ -42,16 +48,27 @@ class ImpactAnalystAgent:
                     system_prompt=_build_system_prompt(event),
                 )
             )
-        except Exception:
+        except Exception as exc:
+            self.last_failure = record_model_failure(
+                logger, operation=self.operation, stage="invoke", exc=exc
+            )
             return None
 
         payload = response.payload if isinstance(response.payload, dict) else {}
         try:
             output = ImpactAnalysisOutputV2.model_validate(payload)
-        except Exception:
+        except Exception as v2_exc:
             try:
                 output = ImpactAnalysisOutput.model_validate(payload)
-            except Exception:
+            except Exception as v1_exc:
+                self.last_failure = record_model_failure(
+                    logger, operation=self.operation, stage="schema", exc=v1_exc
+                )
+                logger.info(
+                    "impact analysis v2 schema also rejected: type=%s error=%s",
+                    type(v2_exc).__name__,
+                    v2_exc,
+                )
                 return None
         output.model_run_id = response.run_id
         return output

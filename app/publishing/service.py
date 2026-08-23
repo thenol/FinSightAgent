@@ -1,3 +1,4 @@
+import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
@@ -8,6 +9,8 @@ from app.platform.ids import new_id
 from app.platform.repository import Repository
 from app.platform.settings import Settings
 from app.review.service import AutoReviewService
+
+logger = logging.getLogger(__name__)
 
 
 class FactCardService:
@@ -139,6 +142,11 @@ class FactCardService:
         service = self.impact_service or ImpactAnalysisService(self.repository, self.settings)
         try:
             service.generate(event_id, actor="system:auto")
-        except Exception:
-            # 自动生成失败不应阻塞发布流程；页面保留手动生成入口。
-            pass
+        except Exception as exc:
+            logger.warning(
+                "auto impact analysis failed: event_id=%s type=%s error=%s",
+                event_id,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )

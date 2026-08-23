@@ -306,3 +306,26 @@ def test_merge_review_auto_new_event_for_low_score() -> None:
 def test_min_confidence_threshold_blocks_weak_llm_decision() -> None:
     decision = AutoReviewDecision(decision="approve", confidence=0.5, reason="weak", escalate=False)
     assert decision.confidence < 0.85
+
+
+def test_default_reviewer_escalates_with_timeout_root_cause(caplog) -> None:
+    from app.model_gateway.service import ModelGateway
+    from app.review.agents import DefaultReviewerAgent
+
+    class TimeoutProvider:
+        name = "timeout"
+        model = "test"
+        estimated_cost_usd = 0.0
+
+        def invoke(self, request):
+            raise TimeoutError("reviewer timeout")
+
+    repo = _make_repo()
+    agent = DefaultReviewerAgent(ModelGateway(repo, provider=TimeoutProvider()))
+    with caplog.at_level("WARNING"):
+        decision = agent.decide({"task_type": "claim_conflict"})
+
+    assert decision.escalate is True
+    assert "timeout" in decision.reason
+    assert "TimeoutError" in decision.reason
+    assert "reviewer timeout" in caplog.text

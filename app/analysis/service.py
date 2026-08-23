@@ -57,6 +57,7 @@ class ImpactAnalysisService:
             event, claims, fact_card, entities, context=context.to_payload()
         )
         degraded = output is None
+        model_failure = getattr(self.agent, "last_failure", None)
         if degraded:
             output = _fallback_template(event)
 
@@ -64,6 +65,7 @@ class ImpactAnalysisService:
         quality_report = {
             "gate_passed": not degraded,
             "blockers": ["model_unavailable"] if degraded else [],
+            "model_failure": model_failure.as_dict() if model_failure is not None else None,
         }
         if isinstance(output, ImpactAnalysisOutputV2):
             mechanism_result = self.mechanism_generator.generate(output)
@@ -265,6 +267,8 @@ class ImpactAnalysisService:
                     "degraded": analysis.degraded,
                     "model_run_id": analysis.model_run_id,
                     "impact_count": len(analysis.impacts),
+                    "model_failure": (analysis.quality_report or {}).get("model_failure"),
+                    "blockers": (analysis.quality_report or {}).get("blockers", []),
                 },
                 created_at=datetime.now(timezone.utc),
             )

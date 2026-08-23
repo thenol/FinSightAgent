@@ -7,6 +7,7 @@ BudgetManager、NodeAttempt 和 ReviewTask 机制。每个任务调用对应的 
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ from app.workflows.errors import (
     default_sleep,
     should_retry,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicWorkflowError(RuntimeError):
@@ -345,8 +348,14 @@ class DynamicWorkflowService:
                 "backend_coverage": trace.backend_coverage,
                 "model_run_id": None,
             }
-        except Exception:
-            # 检索失败不阻塞后续任务；返回空结果并标记降级
+        except Exception as exc:
+            logger.warning(
+                "dynamic retriever failed: workflow_id=%s type=%s error=%s",
+                run.id,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return {
                 "candidate_count": 0,
                 "items": [],

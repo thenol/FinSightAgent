@@ -4,6 +4,7 @@ MVP 采用规则模板为主、LLM 可选增强的策略。Planner 不直接调�
 受 Schema 约束的计划结构；Supervisor（执行引擎）拥有最终执行决定权。
 """
 
+import logging
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -12,8 +13,11 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain import ResearchPlan, ResearchTask
+from app.model_gateway.failures import record_model_failure
 from app.model_gateway.service import ModelRequest
 from app.platform.ids import new_id
+
+logger = logging.getLogger(__name__)
 
 
 class TaskAdjustment(BaseModel):
@@ -366,8 +370,8 @@ class ResearchPlanner:
                 )
             )
             parsed = PlanAdjustmentOutput.model_validate(response.payload)
-        except Exception:
-            # LLM 调用或 Schema 解析失败时回退到规则模板，不阻塞计划生成
+        except Exception as exc:
+            record_model_failure(logger, operation="plan", stage="plan_adjust", exc=exc)
             return tasks
 
         task_map: dict[str, ResearchTask] = {t.name: t for t in tasks}
