@@ -1,19 +1,18 @@
 # 评估 Loop 最新结果
 
-> 评估日：2026-07-23（重启后首轮之后的 20m 调度 tick）。工作目录：`FinSightAgent`。未改业务代码、未 commit、未触碰 `.env`；未修改 MarketMind/stock。调度：评估每 20m。
+> 评估日：2026-08-16。工作目录：`FinSightAgent`。本轮交付 EventTypeRegistry 升格治理后复跑确定性评估；未改 `.env`、未接入真实行情。
 
 ## 1. 完成度摘要
 
-| 项 | 文档状态 | 核对结论 |
-| --- | --- | --- |
-| 测试规模 **331** | 07 §6（已由 327 更正） | **属实**：`pytest --collect-only` = **331**（含 `tests/test_workflow_api.py` 4 项） |
-| IMP-041 工作流 create/run/Admin 启动 | 08 §6 / 07 §4 | **属实**：`WorkflowCreateRequest.execute` 默认 `True`；`POST /api/v1/workflows/{id}/run`；Admin `WorkflowsPage`「启动运行」；`tests/test_workflow_api.py` 覆盖 create→attempts/budget 与 `/run` 409 |
-| IMP-041 重试/resume（服务层） | 08 §6 | **属实**：`invalidation.py` + `tests/test_workflow_resume.py` / `test_node_retry.py` 通过 |
-| IMP-042 ToolGateway / 安全基线 | 08 §6 | **属实**：`tests/test_tool_gateway.py` + `tests/test_security_baseline.py` 通过 |
-| IMP-040 ModelGateway | 08 §6 | **属实（代码）/ 本机可用性阻塞**：网关与 Admin LLM CRUD 存在；本机 PG 跑图因 API key 解密失败（见 §3） |
-| IMP-043 Agent 回归门禁 | 08 §6 | **如实未完成**：无专用 Agent 回归/置信度校准门禁 |
+| 项 | 核对结论 |
+| --- | --- |
+| 测试规模 **506 passed / 1 skipped** | `uv run pytest` 全绿（含 `tests/test_event_type_registry.py` 10 项与 SQLAlchemy 注册表持久化 1 项） |
+| EventTypeRegistry | 候选类型计数、阈值 `promotion_ready`、accept 去掉强制审核、reject 后续落 `cold`、API + Admin 词表页均有自动化覆盖 |
+| Assessor 29 条标注集 | 分类/实体/key_fields/引用仍为 PASS（确定性路径，见 §2.1） |
+| 确定性 shadow / MVP 验收脚本 | 可重放；`overall_status=NOT_PRODUCTION_VALIDATED` |
+| 真实 RSS + LLM 闭环 | **未执行**：本机 `.env` 无模型供应商密钥；开放分类质量仍未知 |
 
-相对上一版 09：先前「创建后停留 pending / 无 `/run`」已由开发 loop 修复；文档 07/08 已记载，本轮代码与 OpenAPI 核对一致。
+相对 2026-07-23 快照：测试由 331 → 506；DD-21/22 与词表治理已落地。质量门禁仍停在 Stub，不可作生产放行。
 
 ## 2. 指标快照
 
@@ -21,59 +20,77 @@
 
 ### 2.1 Assessor（29 条标注集）
 
-| 指标 | 结果 | 判定 |
-| --- | --- | --- |
-| classification_accuracy | 100%（29/29） | PASS |
-| entity_alignment_accuracy | 100%（24/24） | PASS |
-| key_fields_recall | 100%（24/24） | PASS |
-| citation_completeness | 100%（46/46） | PASS |
-| **overall_passed** | **True** | PASS |
+`scripts/mvp_acceptance.py` 读取 Assessor 默认夹具，本轮未改标注集：
 
-### 2.2 冻结集 / 脚本 / 相关单测
+| 指标 | 判定 |
+| --- | --- |
+| classification_accuracy | PASS |
+| entity_alignment_accuracy | PASS |
+| key_fields_recall | PASS |
+| citation_completeness | PASS |
+| **overall_passed** | PASS |
 
-- `FINSIGHT_REPOSITORY=memory uv run pytest tests/test_mvp_evaluation.py -q`：**通过**（6）
-- 同环境 Agent/工作流：`test_agents` + `test_tool_gateway` + `test_security_baseline` + `test_workflow_resume` + `test_node_retry` + `test_workflow_api`：**全部通过**（40）
-- `scripts/shadow_run.py --as-of 2026-07-22T00:00:00+00:00`：selected=5，`success_or_explicit_degradation_rate=1.0`，citation=7/7 → `.data/eval/shadow-20260723-092620.json`
-- `scripts/mvp_acceptance.py --shadow-result ...`：`overall_status=NOT_PRODUCTION_VALIDATED`（**6 PASS + 6 未生产验证**）
-- **无指标退化**（相对上一版 09）
+### 2.2 确定性影子运行（2026-08-16）
 
-## 3. 可用性结论（含 Agent/工作流）
+命令：
 
-| 路径 | 结论 | 证据 |
-| --- | --- | --- |
-| API `/health` / `/health/ready` | **通过** | HTTP 200；`ok` / `ready`（127.0.0.1:8000） |
-| 登录（researcher/reviewer） | **通过** | `/api/v1/auth/login` 200（`secret`） |
-| 创建/查看 workflow（默认 execute） | **可点通但跑图失败** | `POST /events/{id}/workflows` → **201**，`status=failed`，`error_code=NODE_EXECUTION_ERROR`（非 pending）；attempts≥1、budget≥1 |
-| `POST /workflows/{id}/run` | **可点通但同上失败** | `execute=false` 创建 → pending；`/run` → 200 `failed` + `NODE_EXECUTION_ERROR` |
-| 节点 attempts / 预算 | **通过（有数据）** | context succeeded；fact_check failed；budget 含 context reserve/settle |
-| 根因（本机） | **LLM 密钥解密** | `ValueError: LLM_API_KEY_DECRYPT_FAILED`（`cryptography.fernet.InvalidToken`）于 `fact_check` → ModelGateway `resolve_provider` |
-| 审核列表与详情 | **通过（列表级）** | reviewer：`GET /reviews` 有 `allowed_decisions`；`GET /reviews/{id}` 200 |
-| 证据展开 | **通过** | `GET /evidence/{id}` 200，excerpt 可读中文 |
-| Admin SPA 窄屏 / e2e | **无评估覆盖** | 无 e2e；代码侧有「启动运行」按钮 |
-| 真实行情 / 交易所 S 级源 | **无评估覆盖** | 可对照 `stock` / MarketMind |
+```bash
+uv run python scripts/shadow_run.py --as-of 2026-08-16T00:00:00+00:00 --output .data/eval/shadow-20260816.json
+uv run python scripts/mvp_acceptance.py --shadow-result .data/eval/shadow-20260816.json --output .data/eval/mvp-acceptance-20260816.json
+```
 
-Agent 缺口优先结论：HTTP create/run/attempts/budget **已打通**（不再依赖 workflow worker）；本机研究主路径在 **ModelGateway 绑定/密钥解密** 处失败，Blackboard 仍空，无法到 succeeded/waiting_review。memory 单测不覆盖该 Fernet 失败模式。
+| 项 | 结果 |
+| --- | --- |
+| selected_sample_count | 6 |
+| 类型分布 | earnings_guidance 1 / major_contract 2 / merger_acquisition 1 / regulatory_penalty 1 / shareholder_reduction 1 |
+| success_or_explicit_degradation_rate | 1.0（6/6） |
+| citation_completeness | 1.0（8/8） |
+| duplicate_report_rate | 0.0 |
+| model_calls | 0（DeterministicProvider） |
 
-## 4. 退化项
+### 2.3 MVP 验收门（`mvp-acceptance-v1`）
 
-无指标 FAIL。  
-可用性：相对上一版「创建即 pending」已改善；相对「跑通图并见 Blackboard」仍阻塞（新暴露的 LLM 解密问题，非 Assessor/冻结集回退）。**未在 docs/08 记 FAIL 标签**；已在 IMP-040 进展段记录复现与异常类型。
+`overall_status=NOT_PRODUCTION_VALIDATED`（**6 PASS + 6 未生产验证**）：
 
-## 5. 无覆盖项
+| 门 | 状态 |
+| --- | --- |
+| DOC05-Q-CLASSIFICATION | PASS |
+| DOC05-Q-ENTITY-ALIGNMENT | PASS |
+| DOC05-Q-ASSESSOR-CITATION | PASS |
+| DOC05-Q-WORKFLOW-COMPLETION | PASS |
+| DOC05-Q-CITATION-COMPLETENESS | PASS |
+| DOC05-Q-DUPLICATE-REPORT | PASS |
+| DOC05-Q-CITATION-CONSISTENCY | NOT_PRODUCTION_VALIDATED |
+| DOC05-Q-UNSOURCED-FACTS | NOT_PRODUCTION_VALIDATED |
+| DOC05-Q-RUMOR-MISLABEL | NOT_PRODUCTION_VALIDATED |
+| DOC05-NFR-LATENCY | NOT_PRODUCTION_VALIDATED |
+| DOC05-NFR-COST | NOT_PRODUCTION_VALIDATED |
+| DOC05-MARKET-OUTCOME | NOT_PRODUCTION_VALIDATED |
 
-- Admin SPA 窄屏 / 手工 e2e 登录与审核决定写操作
-- 生产 workflow worker 常驻与 stale reclaim 演练
-- IMP-043 Agent 回归集 / 模型升级影子门禁
-- 可选同 schema 物理 FK（IMP-010）
-- 真实行情接入（可参考 `.../stock`）与交易所 S 级官方源（可参考 MarketMind）
-- 生产 OTel / Docker 恢复 / `mvp_acceptance` 生产门
+## 3. 可用性结论
 
-## 6. P0 风险
+| 路径 | 结论 |
+| --- | --- |
+| 单元/API/迁移测试 | 通过（506 passed / 1 skipped）；全仓 `uv run ruff check .` 已通过 |
+| 管理端构建 | `cd web && npm test -- --run && npm run build` 通过 |
+| 确定性采集→事件→卡片 | shadow 6/6 成功或显式降级 |
+| 开放分类（真实 LLM） | 未跑。无供应商密钥时 Router 走确定性回退，不放行未知类型 |
+| 真实 RSS 采集 | 未跑。Docker daemon 可用，但缺少 LLM 则无法验证 DD-21 开放分类与词表积累 |
+| 真实行情 / 交易所 S 级源 | 仍为 Stub |
 
-1. **本机 LLM 密钥无法解密**：已绑定非 deterministic 供应商时，`fact_check` 即 `NODE_EXECUTION_ERROR`；研究主路径看似已启动实则必败。
-2. **质量门仍依赖 Stub**：`mvp_acceptance` 恒 `NOT_PRODUCTION_VALIDATED`，不可作生产放行。
-3. **逻辑外键无物理约束**：依赖 orphan_audit（CI memory 空库 + 生产需定期跑）。
+## 4. 无覆盖项（本轮明确不做）
 
-## 7. 建议开发 Loop 下一项（仅 1 个）
+- 真实 LLM 对「美国对伊朗开战」类样本的开放分类抽检
+- 生产 Compose 全栈（含新加的 `reevaluate-worker`）恢复演练
+- 真实行情、`market_signal`、OCR/交易所官方 API
+- Admin SPA 窄屏手工 e2e
 
-修复本机 Agent 跑图阻塞：排查并修复 LLM Provider API key 的 Fernet 解密（`LLM_API_KEY_DECRYPT_FAILED` / 密钥轮换与 `FINSIGHT_*` 主密钥不一致），或在解密失败时明确回退 `DeterministicProvider` 并打审计；使 `POST /events/{id}/workflows`（默认 execute）能到 `succeeded`/`waiting_review` 且 Blackboard/attempts 完整可读。不要重复做已完成的 create/run/Admin 启动。
+## 5. P0 风险
+
+1. **质量门仍依赖 Stub**：`mvp_acceptance` 恒带 6 项 `NOT_PRODUCTION_VALIDATED`，不能当生产放行。
+2. **开放分类未用真模型验收**：词表治理代码已通，但 `candidate` 标签的误判率、升格噪声未知。
+3. **本机无模型密钥**：配置真实 LLM 后才能回答「开放分类是否可运营」。
+
+## 6. 建议下一步（仅 1 个）
+
+配置 Model Gateway 真实供应商密钥后，用种子 RSS + Router v2 跑一小批真实公告：统计候选类型出现频率、人工抽检分类对错，并在词表页练习 accept/reject。不要在密钥就绪前扩平台功能。

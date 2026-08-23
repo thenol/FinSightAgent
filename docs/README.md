@@ -20,6 +20,8 @@
 | L3 | [详细设计](./design/README.md) | 开发、测试、运维 | 模块内部如何实现和验证 |
 | 横切 | [架构决策记录](./06-architecture-decisions.md) | 产品、架构师、技术负责人 | 关键取舍是什么，哪些问题待确认 |
 | 横切 | [工作进度清单](./07-work-progress.md) | 全体贡献者 | 已完成什么，下一步做什么 |
+| 市场数据 | [EastMoney Bridge 接入与恢复](./design/81-eastmoney-bridge-operation-and-recovery.md) | 市场数据/平台运行 | 桥接启动、采集、33%问题诊断与恢复 |
+| 市场数据 | [市场主数据版本化导入](./design/82-market-master-data-import.md) | 数据治理、研究、平台开发 | 行业分类快照校验、暂存、发布与切换 |
 | 横切 | [改进项 Backlog](./08-improvement-backlog.md) | 产品、架构、开发、测试 | 还有哪些缺口，如何改进 |
 | 横切 | [评估 Loop 最新结果](./09-eval-latest.md) | 产品、开发、测试 | 最近一次完成度核对与质量门结果 |
 | 横切 | [平台待开发清单](./10-platform-development-backlog.md) | 架构、产品、数据、算法、开发、运维 | 目标金融智能平台还需建设哪些能力 |

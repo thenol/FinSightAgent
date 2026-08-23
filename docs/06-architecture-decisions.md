@@ -135,6 +135,7 @@
   - 无 LLM 时回退确定性行为，与 v1 完全一致（不放行未知内容）。
 - 备选：继续扩充关键词白名单（不可扩展，每类都要发版）；完全丢弃分类、全量 LLM 打分（成本高、可审计性差）。
 - 影响：`event_route` 输出契约升级 v2（`relevance`/`importance` 字段）；`out_of_scope` 语义重定义为"无经济相关性"；新增 `geopolitical_event` 一等类型与 `geopolitical_action` 谓词；候选类型事件可触发工作流与影响分析但不进每日简报。详见 DD-21。
+- 实现状态（2026-08-16）：`events.event_type_registry` 已接入计数、阈值标记、accept/reject API 与管理后台词表页。accepted 去掉强制 `needs_review`；rejected 后续同类事件落 `cold`。完整 Schema 发版仍为后续工作。
 - 复审条件：候选类型误判率超标，或 LLM 路由成本超预算。
 
 ### ADR-022：事件无终态——cold 状态与监听重估（Watch Triggers）

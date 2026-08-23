@@ -1,6 +1,6 @@
 # 工作进度清单
 
-> 最后更新：2026-08-15（WP-08 Agent Runtime 已交付含动态研究前端；事件分流 v2/DD-21 与全量记忆重估/DD-22 已交付）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
+> 最后更新：2026-08-16（进入真实研究闭环生产化准备阶段）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
 ## 1. 方案与详细设计
 
@@ -64,7 +64,7 @@
 
 ## 6. 评估与上线准备
 
-- [x] 建立单元、API、Repository、消息、Revision、聚类、RSS、PDF、认证、审核、Agent、工具网关、预算、幂等、Blackboard、报告装配、Guardrail、每日简报、持久化代理、迁移、离线评估、安全基线、节点重试、工作流降级与恢复、Fetcher/种子源/守卫、管理后台 API、LLM 配置、来源调度、Document Parser、Semantic Chunker、Disclosure Group、Pipeline 文档智能接入、Embedding 生命周期与语义去重、pgvector 语义召回、Hybrid Retrieval 向量召回与过滤等测试；`uv run pytest` 当前 **394 passed，1 skipped**（2026-07-30，新增 `tests/test_fusion.py` 与 `tests/test_retrieval.py` hybrid 召回用例）；`tests/conftest.py` 全局强制 `FINSIGHT_REPOSITORY=memory` 并默认关闭工作流自动触发，避免本机 postgresql 环境让 `create_app()` API 测试假红。
+- [x] 建立单元、API、Repository、消息、Revision、聚类、RSS、PDF、认证、审核、Agent、工具网关、预算、幂等、Blackboard、报告装配、Guardrail、每日简报、持久化代理、迁移、离线评估、安全基线、节点重试、工作流降级与恢复、Fetcher/种子源/守卫、管理后台 API、LLM 配置、来源调度、Document Parser、Semantic Chunker、Disclosure Group、Pipeline 文档智能接入、Embedding 生命周期与语义去重、pgvector 语义召回、Hybrid Retrieval 向量召回与过滤等测试；`uv run pytest` 当前 **506 passed，1 skipped**（2026-08-16，含 EventTypeRegistry 治理用例）；`tests/conftest.py` 全局强制 `FINSIGHT_REPOSITORY=memory` 并默认关闭工作流自动触发，避免本机 postgresql 环境让 `create_app()` API 测试假红。
 - [x] Ruff、JSON 语法、Markdown 链接和 Compose 配置检查通过。
 - [x] 完成 Uvicorn `/health` 烟雾测试。
 - [x] 建立五类事件标注集（29 条正/反/边界样本）与离线评估任务（Assessor 跑分类/实体/key_fields/引用四指标，当前标注集基线全部 PASS：分类 100%、实体 100%、字段召回 100%、引用 100%）。
@@ -192,6 +192,17 @@
 
 完成条件：宏观事件可进入研究管道；影响分析可独立版本化生成；前端能用图+表展示事件对股市、板块、宏观变量的传导影响；所有变更通过测试与 lint。
 
+## 11.5 影响分析专业化升级（当前开发中）
+
+- [-] 已新增 `ImpactAnalysisOutputV2`：因果节点/边、证据绑定、情景、影响维度和质量报告契约。
+- [-] 已新增 `validate_impact_output()` 结构门禁，检查悬空边、情景引用、目标路径、证据覆盖和无证据定量结论。
+- [x] 已接入 V2 快照/质量报告字段、PostgreSQL/内存 Repository 和 Alembic `20260816_0022`；Agent 优先解析 V2 并由服务层投影兼容字段。
+- [-] 已实现 `draft → needs_review → approved → superseded` 基础状态流转与审核 API，降级结果不得自动批准；事务并发测试待补齐。
+- [-] 已新增并接入 `ImpactContextBuilder`、`MechanismGenerator` 和 `ImpactCritic`：按事件 `as_of` 过滤 verified Claim、事实卡片和混合检索结果，并执行因果边、循环和目标图谱一致性检查；Expectation Analyzer、Scenario Engine 和 Synthesizer 尚未拆分。
+- [-] 已实现稳定分层因果 DAG、节点类型语义、情景切换、时间范围过滤、节点路径聚焦、因果边证据入口和版本对比；证据详情权限化展示待完善。
+
+详细执行项见 [Impact Analysis V2 待开发清单](./11-impact-analysis-v2-todo.md)。
+
 ## 12. 下一交付批次：Hybrid Retrieval（WP-07）
 
 目标：在已有向量/关键词/混合 DocumentChunk 检索基础上，补齐 Graph-like、Structured SQL、Time-series 检索与 Query Planner，并暴露统一检索 API。
@@ -275,11 +286,11 @@
 - [x] `tests/test_event_router.py` 重写为 v2 契约（12 用例，含 LLM stub 候选类型、非法标签降级、irrelevant 归档、候选类型端到端）。
 - [x] `tests/test_classifier.py` 新增 geopolitical 抽取/必填缺失/Claim 模板用例（3 个）。
 - [x] `tests/test_briefs.py` 新增候选类型排除用例。
-- [x] `uv run pytest -q` 全绿，`uv run ruff check .` 全绿。
+- [x] `uv run pytest -q` 全绿；已修复 15 个存量测试文件 lint 错误，当前全仓 `uv run ruff check .` 通过并纳入 CI 门禁。
 
 ### 14.3 后续迭代
 
-- [ ] 候选类型积累阈值统计与升格操作（`FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD`，默认 5；本轮仅落库标记）。
+- [x] 候选类型积累阈值统计与升格操作（`FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD`，默认 5；`events.event_type_registry` + accept/reject API + Admin 词表页）。
 - [ ] 审核风险分层路由（高置信低风险自动放行）。
 - [ ] 重要度动态化（来源密度/传播速度/市场反馈参与计算）。
 - [ ] 真实 LLM 端到端验证（DeepSeek 对"美国对伊朗开战"类样本的开放分类质量）。
@@ -310,7 +321,181 @@
 - [ ] `market_signal` 触发器（行情异动回扫冷文档，依赖真实行情数据接入）。
 - [ ] `user_query` 触发器（动态研究检索命中冷文档时触发正式事件化，需检索埋点）。
 - [ ] 展示层排序视图（简报/审核按分数排序 + 可展开全部，替代状态过滤）。
-- [ ] 大型受控分类法治理流程（候选类型评审入词表的后台操作）。
+- [x] 大型受控分类法治理流程（候选类型评审入词表：accept/reject API 与 Admin 页；完整 Schema 发版仍待后续）。
 - [ ] 重估升级后自动重启研究管道的深度衔接（当前停在 needs_review 人工确认）。
 
 完成条件：Router 不再自动产出终态归档；cold/dormant 事件挂监听条件并可被信号升级；重估全程留审计；所有变更通过测试与 lint。
+
+## 16. 下一交付批次：候选类型词表治理（DD-21 §2.4）
+
+目标：让 LLM 发明的类型标签成为可计数、可升格、可拒绝的受控词表。
+
+### 16.1 已交付
+
+- [x] `events.event_type_registry` 迁移 `20260815_0021` 接通 Repository 三层（protocol / InMemory / SqlAlchemy）。
+- [x] 新事件落库时对开放分类标签 `upsert` 并累加 `event_count`（合并到已有事件不重复计数）。
+- [x] `FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD`（默认 5）；列表接口标记 `promotion_ready`。
+- [x] `GET /api/v1/event-types`、`POST .../accept`、`POST .../reject`；审计 `event_type.promoted` / `event_type.rejected`。
+- [x] accepted 去掉强制 `candidate_type_confirmation`；rejected 后续同类事件落 `cold` 并挂默认 watch trigger。
+- [x] Admin「事件类型」页；Compose 补 `reevaluate-worker`。
+
+### 16.2 验证
+
+- [x] `tests/test_event_type_registry.py` 覆盖计数、升格、拒绝、简报准入、API 与阈值配置。
+- [x] `uv run pytest` **506 passed / 1 skipped**；`uv run ruff check` 变更文件通过；`cd web && npm test -- --run && npm run build` 通过。
+- [x] 确定性 `scripts/shadow_run.py` + `scripts/mvp_acceptance.py` 复跑：6 PASS + 6 `NOT_PRODUCTION_VALIDATED`。真实 RSS + LLM 闭环因本机无模型密钥未执行，见 [09-eval-latest.md](./09-eval-latest.md)。
+
+### 16.3 后续迭代
+
+- [ ] 升格时自动补齐 EventSchema / key_fields / 标注集（当前只改运行时门控）。
+- [ ] 配置真实 LLM 后抽检开放分类质量与候选类型噪声。
+
+## 17. 下一交付批次：真实研究闭环生产化（12 周）
+
+目标：以 A 股公司事件和宏观重大事件为双场景，将真实官方数据、Hybrid Retrieval、动态 Agent、证据约束报告和影子运行连成可验收闭环。本批次不将行情收益分析标记为生产能力，行情仅完成供应商无关接口和 `unavailable` 能力状态。
+
+### 17.1 第 1–2 周：工程基线与真实数据入口
+
+- [x] 修复全仓 Ruff 错误，统一 CI 与进度文档的测试/生产验证口径。
+- [ ] 固化 EventTypeRegistry、cold 监听和候选类型治理的当前未提交变更。
+- [ ] 接入上交所、深交所公告及人民银行/国家统计局宏观源；保存原始响应、`available_at`、许可和解析版本。
+- [ ] 冻结 120 个公司事件、80 个宏观事件的人工评测集。
+
+### 17.2 第 3–4 周：真实 Hybrid Retrieval
+
+- [x] Structured Retrieval 查询下推 SQL，移除大范围内存过滤；Repository 的 InMemory/SQLAlchemy 路径统一支持事件类型、实体、时间范围和 `as_of` 过滤，并新增 API 回归测试。
+- [x] 将当前 Graph-like 路径明确为 Relation Retrieval，补齐 Entity→Event→Document→Chunk 关联、关系路径/跳数审计和 `as_of` 版本过滤；保留 `graph` API 兼容别名。
+- [x] 将 Time-series 改为正式 `MarketDataProvider` 能力接口；默认无行情源时返回结构化 `unavailable`，禁止事件时间排序伪装行情。
+- [ ] 引入 `RetrievalPlanV2`、`RetrievedItemV2`、`ContextBundleV2`、Reranker 和完整检索轨迹。
+
+### 17.3 第 5–6 周：统一动态 Agent Runtime
+
+- [ ] 动态 ResearchPlan 使用 LangGraph Checkpointer，收敛自定义 DAG 与固定工作流的状态/恢复语义。
+- [ ] 所有任务使用版本化输入输出 Schema，移除 `object()` 占位依赖和宽泛静默降级。
+- [ ] Fact/Company/Industry/Regulatory Agent 消费真实检索和证据；Market Agent 无数据时只能输出 `insufficient_data`。
+- [ ] Specialist 输出统一写入 Claim/Evidence/Provenance。
+
+### 17.4 第 7–8 周：证据约束影响分析与报告
+
+- [ ] Impact Analysis 的每条传导链和影响目标绑定 Claim、RetrievedItem 或显式 `inferred` 标记。
+- [ ] 报告分离事实、推断、假设、风险和观察项；数字和结论必须可引用。
+- [ ] Guardrail 增加无依据影响、能力缺失却给出确定结论、未来数据泄漏和推断冒充事实检查。
+- [ ] 前端展示 Query Plan、检索轨迹、证据链、截止时间和降级原因。
+
+### 17.5 第 9–10 周：真实模型与评测
+
+- [ ] 使用 DeepSeek 主模型完成真实 Router、Planner、Agent 和报告抽检；Schema 失败最多修复一次，之后转人工或显式降级。
+- [ ] 建立分类、实体、Recall@10、nDCG@10、引用完整率、无来源事实率、时间泄漏率、成本和延迟评测。
+- [ ] 验证 candidate type 噪声、accept/reject、cold 重估和真实 LLM 与确定性 Router 的差异。
+
+### 17.6 第 11–12 周：影子运行与生产演练
+
+- [ ] 完成 PostgreSQL/pgvector、Redis、API、Outbox、Source、Reevaluation、Impact Analysis 和 Dynamic Research Worker 部署演练。
+- [ ] 连续影子运行不少于 14 天；公司和宏观场景各形成至少 30 个真实研究结果。
+- [ ] 完成重启、重复消息、模型超时、检索失败、预算耗尽、人工恢复、文档修订和删除演练。
+- [ ] 形成运行仪表盘、告警、备份恢复、模型回退、索引重建和数据源故障手册。
+
+### 17.7 本批次验收门
+
+- [x] 全仓 Ruff 零错误，后端/迁移/前端测试通过。
+- [ ] 官方源采集成功率 ≥99%；Retrieval Recall@10 ≥0.85；nDCG@10 ≥0.75。
+- [ ] 时间泄漏率为 0；引用完整率 100%；无来源关键数字为 0。
+- [ ] 真实模型 Schema 有效率 ≥99%；必需任务成功率 ≥95%。
+- [ ] 检索 P95 ≤2 秒；异步研究 P95 ≤180 秒；连续 14 天无未处理死信。
+
+行情收益分析、市场异动监听、Neo4j、Kafka、ClickHouse、Temporal 和完整多租户不属于本批次生产验收范围。
+
+### 17.13 多市场行情与市场展望基础（2026-08-18）
+
+- [x] 统一 `app.market.provider` 行情契约，增加 A/H/US、5 分钟/日线、交易日历、快照、供应商来源和 `as_of` 字段。
+- [x] 增加东方财富 JSON 适配器，参考 `stock` 项目的 push2/push2his 接口和字段归一化，但不引入其 MySQL、Cookie 文件和 DataFrame 运行时依赖。
+- [x] 增加 AKShare 可选适配边界、主源/回退路由和结构化 `degraded/unavailable` 能力状态。
+- [x] 增加行情能力、快照和 K 线查询 API：`/api/v1/market/capabilities`、`/api/v1/market/snapshots`、`/api/v1/market/bars`。
+- [x] 增加供应商回退、网络异常、OHLC 校验、未来数据拒绝和 API 参数校验测试。
+- [x] 增加版本化参考证券目录和 `/api/v1/market/instruments`，首批覆盖三地宽基指数与代表 ETF。
+- [x] 增加多市场交易时段日历 API，明确标记节假日源未配置时的 `degraded` 状态。
+- [x] 增加可回放的市场状态服务和 `/api/v1/market/states`，输出趋势、波动、覆盖率和数据状态，不伪装成预测。
+- [x] 增加版本化可解释展望基线和 `/api/v1/market/outlooks`，支持 1/3/5/20 个交易日、上涨/震荡/下跌概率、收益分位数、贡献拆解及行情不足降级。
+- [x] 新增“市场展望”前端研究工作台，支持 A/H/US 切换、预测周期切换、概率与收益区间、贡献拆解和未校准状态提示。
+- [x] 增加行情新鲜度质量门：日线超过 3 个自然日、5 分钟线超过 30 分钟未更新时标记 `stale_data`，展望自动降级为无方向结论。
+- [x] 增加行情质量摘要服务和 `/api/v1/market/quality`，统一返回覆盖率、缺失/陈旧数量、最大延迟和结构化告警，为采集 worker 与监控接入预留契约。
+- [x] 按 AKShare 官方接口接入可选 CN 回退：指数/ETF 日线与 5 分钟历史统一转换为 `MarketBar`；运行环境需额外安装 `akshare` 才启用。
+- [x] 增加供应商运行健康投影和 `/api/v1/market/providers/health`，区分 configured、operational unknown/unavailable/healthy；AKShare加入 `market` 可选依赖并更新锁文件。
+- [x] 增加可重放 `MarketIngestService` 采集契约：统一校验时间范围/时区/`as_of`，输出采集运行元数据、质量告警和标准化行情批次，后续可接入 ClickHouse/MinIO 存储。
+- [x] 增加 `MarketBatchStore` 存储端口、本机原子归档适配器和 ClickHouse 插入适配器/DDL；新增行情归档、ClickHouse、MinIO 配置项，尚待实际 Worker 和服务连接演练。
+- [x] 新增 `market-data` Worker：支持单次采集、持续循环、可配置标的/周期/回看窗口，复用采集契约与本机归档，并支持 SIGTERM 停止。
+- [x] 接入 `eastmoney-api-bridge` Provider：读取其标准化 `/api/v1/market/kline/{secid}` 与 `/api/v1/market/trends/{secid}`，不解析 push2 原始响应；通过 `MARKET_DATA_PROVIDER=bridge` 显式启用并保留新鲜度告警。
+- [x] 桥接运行策略升级为“浏览器桥接首选、东方财富直连回退”；行情不足时前端显示“暂无方向性结论”，不再把三等分基线误显示为 33% 预测概率。
+- [x] 修复本地桥接请求受 `HTTP(S)_PROXY` 影响导致 502 的问题；FinSight 对 loopback bridge 使用 `trust_env=False`，并修复桥接 Playwright 无默认 context 时无法启动采集的问题。
+- [x] 将桥接启动、目标标的采集、33%问题根因、验证结果和恢复步骤整理至 [EastMoney Bridge 接入与恢复](./design/81-eastmoney-bridge-operation-and-recovery.md)。
+- [x] 在市场展望页面增加“如何计算这些概率？”说明面板，并在市场数据设计文档中记录基线公式、权重、波动率尺度和数据不足规则。
+- [x] 市场展望契约升级至 `schema_version=2.0` / `outlook-baseline-v2`：移除数据不足时的三等分伪概率，增加 `forecast_status`、阻断原因、样本门槛、覆盖率和最近观察时间。
+- [x] 修复震荡类别无法胜出的基线公式；按 1/3/5/20 日分别要求 60/90/120/250 个交易日，并将覆盖率和日线新鲜度切换为工作日近似，周末不再误判过期。
+- [x] 市场展望卡片展示实际/所需样本、覆盖率、最近行情和结构化阻断原因；后端市场专项测试与前端生产构建通过。
+- [x] 修复 PostgreSQL/SQLAlchemy 路径首次保存因果图个人布局时 `new_id()` 缺少前缀导致的 500，并增加创建后更新布局的持久化回归测试。
+- [-] 建立证券主数据、供应商代码映射、多市场交易日历和行业分类导入；迁移 `20260822_0029` 已持久化证券目录、版本化行业分类、标的行业成员关系和影响目标映射，启动时从数据库构建 Catalog，并已接入 `exchange_calendars` 的 XSHG/XHKG/XNYS 正式交易时段。权威分类供应商导入、历史版本换代和企业级全量标的仍待完成。
+- [-] 接入 ClickHouse/对象存储行情湖仓、market-data worker、5 分钟增量采集和收盘核对；Worker 已支持 `local/clickhouse/dual` 存储模式、ClickHouse DDL 自动初始化和本地优先镜像降级，MinIO、增量缺口扫描与收盘核对仍待完成。
+- [-] 接入事件影响、预期差、已定价程度和资金/量价因子；已完成 `forecast-factor-v1` 事件因子快照、时间点安全重算、来源哈希与独立查询 API。标的/行业/市场映射已升级为 proposed → approved/rejected → retired 审核状态机，只有已批准且在知识时间/业务有效期内的映射进入预测；名称命中只生成候选。预期差、已定价和资金因子仍待完成。
+- [x] 市场展望缺失因子不再按 0 分冒充中性：不可用因子退出计算、其余权重归一化，并输出配置权重、实际权重、状态、置信度、来源与因子覆盖率。
+- [x] 新增银行 ETF 与房地产 ETF 行业代理标的，行业影响目标可按标准代码或规范名称映射；事件贡献可从市场展望跳转至目标影响详情。
+- [x] 修复市场展望前端固定 45 日窗口无法满足最低样本门的问题，1/3/5/20 日周期分别请求 120/180/240/500 个自然日并放宽至 500 条。
+- [x] 修复桥接 `ok` 但仅返回 28 条缓存时不触发回退的问题；主备路由改为按标的完整度择优，bridge 模式依次回退东方财富直连与 AKShare，且批量 K 线 `limit` 改为按单标的生效。
+- [!] 2026-08-22 运行验收：沪深300桥接缓存仍只有 28 条；完整度回退已触发，但东方财富直连被上游断开、AKShare 被本机代理链路阻断，桥接浏览器补采亦超时。平台正确返回 `probabilities=null` 与逐级告警；外部网络或桥接补采恢复后无需改代码即可自动择优。
+- [-] 使用历史行情进行 walk-forward 校准、概率可靠性评估和模型版本发布；已完成 `forecast-evaluation-v1` 评估内核（Brier、Log Loss、命中率、覆盖率、ECE、可靠性分箱、purge/embargo 切分和温度校准最小样本门）。
+- [x] 新增迁移 `20260822_0027`，持久化不可变预测运行、到期真实结果和校准版本；预测按输入哈希幂等，到期结果按预测唯一。
+- [x] 新增正式预测签发、运行列表、结果结算、评估汇总、校准创建/列表 API；数据不足预测保留在覆盖率分母，无样本时覆盖率为 null。
+- [x] 新增 `forecast-outcomes` Worker，按交易周期持续回填真实收益标签；前端增加“预测评估”页面，展示评估指标、可靠性分箱、样本排除原因和模型校准版本。
+- [x] 新增校准版本状态转换与发布质量门：最少 200 个样本、覆盖率/Brier/ECE 阈值、训练期闭合检查；新发布版本自动退休同切片旧版本并写审计日志。
+- [x] 新增迁移 `20260822_0028` 固化预测采用的校准版本；市场展望和正式预测仅应用 published 温度校准器，输出 `ready/calibrated` 与校准来源，草稿不进入线上。
+- [x] 新增迁移 `20260822_0029` 和主数据治理 API：持久化行情标的、行业分类/成员关系，支持影响目标映射创建、精确候选生成、审核转换和审计；移除按规范名称直接进入预测的隐式行业匹配。
+- [x] 前端新增“市场主数据”工作台，集中展示标的/分类统计、行业分类明细和影响目标映射，支持候选生成及 reviewer/admin 批准、拒绝、退役操作。
+- [x] 新增 approved 影响投影回填服务、管理员 API 与一次性 `impact-backfill` Worker：扫描截至 `as_of` 可见的 approved 分析，幂等补齐贡献和目标快照，并输出 active/expired/future 诊断。贡献知识时间固定为分析批准时间，回填不向历史截面泄漏未来信息。
+- [x] 历史批量预测回放数据集基础：本地行情归档升级为带规范内容哈希的 `market-archive-v2`，严格回放读取器按 `ingested_at/available_at/as_of` 过滤修订；管理员可通过 `POST /api/v1/market/forecast-replays` 按交易日批量签发并自动结算，任务按预测输入哈希幂等、限制最大槽位并写审计日志。
+- [x] 历史回放校准防泄漏：预测时只能读取在 `as_of` 前已创建、已发布且训练截止早于预测时点的校准版本；未来才发布或训练窗口越界的版本不可见。
+- [x] “预测评估”页面新增管理员回放控制台，显示计划槽位、新建/复用、已结算/待结算、数据不足、归档源和完整性告警；回放完成后自动刷新评估与冠军/挑战者结果。
+- [x] 新增冠军/挑战者公平比较：按同一标的/预测时点/周期的已结算样本交集比较规则版本，基于 Brier、Log Loss、ECE、命中率和最小样本门输出建议，不自动切换线上模型；预测评估页面已展示决策及逐模型指标。
+- [x] 新增迁移 `20260823_0030`、导入运行记录和行业分类完整快照导入：校验失败不落业务主数据，校验通过后暂存 draft/proposed，人工发布时按 `effective_from` 无缝切换旧/新成员关系；支持来源哈希幂等、审计和管理端 JSON 上传。
+- [ ] 下一步为实际许可数据源实现 Connector，将供应商增量合成为完整分类快照；将回放任务升级为持久化异步 Job（进度、取消、重试、分片和 SLA），并建设带人工签发的模型版本晋级工作流。
+
+### 17.8 因果图专业化编辑闭环（2026-08-17）
+
+- [x] React Flow + ELK Layered 替换 ECharts 图层，支持语义节点、方向/置信度边、MiniMap 与交互聚焦。
+- [x] 图表升级为研究员工作台：核心路径/置信度过滤、图例、关系详情、全屏及用户布局快照；旧版链路自动补齐影响对象节点。
+- [x] 传导关系增加双层注解：图面摘要标签与可追溯的逻辑、条件、风险和证据详情。
+- [x] 增加 V2.1 图接口、旧版链路只读适配、草稿派生、乐观锁编辑及个人布局快照。
+- [x] 迁移 `20260817_0023` 增加编辑修订号、派生来源和布局表；全量后端与前端测试通过。
+
+### 17.9 多事件目标组合影响（2026-08-17）
+
+- [x] 增加标准目标注册、事件影响关系、单事件贡献和目标组合快照模型。
+- [x] 增加 `ImpactAggregationService`：只使用 approved 分析，采用有界正负聚合、事件重要度/置信度/路径置信度、依赖权重和时间衰减。
+- [x] 增加组合影响 Outbox 事件、Worker、目标查询/重算 API 和目标影响前端工作台。
+- [x] 增加方向反转、未批准排除、时间衰减和迁移兼容测试；前端生产构建通过。
+- [ ] 下一步接入标准行业分类导入、事件关系审核和多事件汇聚 DAG/时间轴。
+
+### 17.10 未来行业影响窗口（2026-08-17）
+
+- [x] 新增 `ForwardImpactWindow`、`ForwardCatalyst`、未来贡献和时间点快照模型，迁移 `20260817_0025` 已应用。
+- [x] 支持 scheduled / conditional / hypothetical 三类催化剂，基准与压力情景隔离。
+- [x] 实现 `as_of` 校验、窗口范围、自动时间粒度、条件概率和 conditional/expected 双结果。
+- [x] 新增前瞻窗口 API、催化剂审核接口、Outbox 和 `forward-impact` Worker。
+- [x] 前端增加行业前瞻页面，支持自定义未来日期范围和时间点状态。
+- [ ] 下一步接入官方日历、指标触发器和不确定性带/DAG 专业可视化。
+
+### 17.11 目标影响决策工作台（2026-08-18）
+
+- [x] 新增只读 `dashboard` 聚合接口，返回事件标题、分析版本、贡献占比、时间权重、依赖权重、路径置信度和来源入口。
+- [x] 新增目标影响时间线接口，支持自动/日/周/月粒度，并在回放时过滤平台知识截止时间之后产生的贡献。
+- [x] 目标详情页升级为“总览与归因 / 聚合传导图 / 计算与版本”三视图；事件贡献支持点击查看通俗解释和计算拆解。
+- [x] 聚合传导图接入现有 React Flow 工作台，目标视图默认只读，保留筛选、注解和证据详情能力。
+- [ ] 下一步补齐维度级快照、不可变计算因子表、情景聚合和通用图布局存储。
+
+### 17.12 全局未来事件研究日历（2026-08-18）
+
+- [x] 完成全局研究日历的产品语义：事件目录、日期选择、当日事件与当日有效影响分区。
+- [x] 确定事件修订、时区、时间精度、概率和事件实现的领域规则。
+- [ ] 第一阶段实现兼容现有 ForwardCatalyst 的未来事件目录和单日研究 API。
+- [ ] 第一阶段实现研究日历前端及从目标影响页带筛选进入。
+- [x] 新增 FutureEvent / FutureEventRevision / FutureEventTargetImpact 规范化模型与迁移 `20260818_0026`；旧 ForwardCatalyst 保留兼容路径。
+- [x] 新增未来事件创建、详情、修订状态转换 API；日历服务优先读取规范化事件，空数据时回退旧投影。
+- [ ] 接入官方源适配器并补齐事件改期、取消、实现的完整审核界面。

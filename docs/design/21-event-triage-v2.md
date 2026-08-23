@@ -45,7 +45,7 @@ DD-20 的分类设计把"事件类型"同时用作**门**（不在六类词表 �
 }
 ```
 
-- `relevance`：唯一门控字段。`relevant` 进入事件管道；`irrelevant` 归档；`unsure` 休眠待审。
+- `relevance`：唯一门控字段。`relevant` 进入事件管道；`irrelevant` 落 `cold`（ADR-022）；`unsure` 休眠待审。
 - `event_type`：标签。允许输出白名单外的 snake_case 标签（候选类型）；不得发明非 snake_case 值。
 - `importance`：Router 对事件重要度的建议值，仅在候选类型（无规则基线）时作为
   `ImportanceCalculator` 的类型基线分量；MVP 类型仍以规则基线为准（可解释性优先）。
@@ -58,7 +58,7 @@ DD-20 的分类设计把"事件类型"同时用作**门**（不在六类词表 �
 | --- | --- | --- | --- |
 | MVP 类型 | relevant | = hint | 正常进入研究 |
 | general_market_news | unsure | general_market_news | dormant（保持 v1 行为） |
-| out_of_scope | irrelevant | out_of_scope | archived（保持 v1 行为） |
+| out_of_scope | irrelevant | out_of_scope | cold（ADR-022；确定性路径不放行未知类型） |
 
 确定性路径不放行未知类型——"宁可漏判、不可错放"只在无模型时成立；接入真实 LLM 后
 由 v2 契约承担泛化职责。
@@ -69,11 +69,15 @@ LLM 给出的非 MVP、非保留字（general_market_news/out_of_scope/unsupport
 
 1. **候选**：事件落库，`event_type=候选标签`，`classifier_version=event-router-v2-candidate`，
    `missing_required` 含 `candidate_type_confirmation`（强制 `needs_review` 状态，等待人工确认类型）；
-   可触发工作流与影响分析，但**不进每日简报**（简报候选集仍限一等类型）。
+   写入 `events.event_type_registry`（`status=candidate`，`event_count` 累加）；
+   可触发工作流与影响分析，但**不进每日简报**（简报候选集仍限一等类型与已升格类型）。
 2. **积累**：同类标签事件数达到阈值（默认 5，`FINSIGHT_CANDIDATE_TYPE_PROMOTION_THRESHOLD`）
-   后，管理后台提示升格（本轮仅落库与统计，升格 UI 后续迭代）。
-3. **升格**：补充 EventSchema、key_fields 抽取、标注集、重要性基线，成为一等类型，
-   冷启动（LLM）切换为规模化（确定性规则）。
+   后，`GET /api/v1/event-types` 标记 `promotion_ready=true`，管理后台「事件类型」页提示升格。
+3. **升格（accepted）**：`POST /api/v1/event-types/{type_label}/accept`。运行时去掉强制
+   `candidate_type_confirmation`，后续同类事件按其余缺失字段决定是否审核，并可进入每日简报。
+   补充 EventSchema、key_fields 抽取、标注集与重要性基线仍需发版，不在本操作自动生成。
+4. **拒绝（rejected）**：`POST /api/v1/event-types/{type_label}/reject`。后续同类事件落 `cold`
+   （可检索、可重估），与 ADR-022 一致。
 
 候选事件的 Claim 生成走无 Schema 回退路径（`document_discloses_event` 谓词），
 不因缺少 claim_templates 崩溃。
@@ -103,8 +107,10 @@ ingest → 去重/切分 → DocumentIntelligence → EventClassifier（规则 h
   → merge_classification()
      ├─ relevant + MVP 类型      → triaged/needs_review（v1 行为）
      ├─ relevant + 候选类型      → needs_review（candidate_type_confirmation）
+     ├─ relevant + accepted 类型 → 去掉强制确认，按其余缺失字段分流
+     ├─ relevant + rejected 类型 → cold
      ├─ unsure                  → dormant（general_market_news）
-     └─ irrelevant              → archived（out_of_scope）
+     └─ irrelevant              → cold（out_of_scope，ADR-022）
   → EventMatcher → Claim 生成（候选走 legacy 回退）→ FactCard
   → 高重要度 → 自动工作流 → 发布后自动影响分析
 ```
@@ -136,7 +142,7 @@ ingest → 去重/切分 → DocumentIntelligence → EventClassifier（规则 h
 
 ## 7. 范围外（后续迭代）
 
-- 候选类型升格的管理后台 UI 与操作流程；
+- 升格时自动补齐 EventSchema / key_fields / 标注集（当前只改运行时门控）；
 - 审核风险分层路由（高置信低风险自动放行）；
 - 重要度动态化（来源密度/传播速度/市场反馈参与计算）；
 - 事件关系图谱与跨事件影响聚合。

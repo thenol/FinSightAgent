@@ -1,6 +1,6 @@
 # 金融智能 Agent 平台待开发清单
 
-> 最后更新：2026-08-14（WP-08 Agent Runtime 已交付，WP-09 多租户安全与 WP-10 平台 SLO 待启动）。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
+> 最后更新：2026-08-23（行情时间点回放、预测评估、校准发布和市场主数据治理已形成可复用基础）。状态符号：`[x]` 已具备可复用基础，`[-]` 已部分实现，
 > `[ ]` 待开发。本文面向目标平台架构，不以 MVP 范围或当前数据规模降低架构标准。
 
 ## 1. 目的与执行原则
@@ -132,14 +132,18 @@
 
 ### 3.5 Financial Data Platform
 
-- [ ] **FIN-001：建设金融数据标准模型。**
+- [-] **FIN-001：建设金融数据标准模型。**
   - 定义 FinancialStatement、FinancialMetricObservation、MarketBar、
     CorporateAction、ConsensusEstimate、MacroObservation 和 TradingCalendar。
+  - 已完成 MarketBar/TradingCalendar 契约，以及持久化 MarketInstrument、版本化 IndustryTaxonomy、IndustryClassification、InstrumentIndustryMembership 与经审核的 ImpactTargetMapping。
+  - 剩余：财务报表、公司行动、一致预期、宏观观测全模型，以及权威行业分类/成分的版本化导入和变更审批工作台。
   - 完成条件：原始值、标准化值、币种、单位、期间、口径、供应商和修订均可追溯。
 
-- [ ] **FIN-002：建设湖仓与分析存储。**
+- [-] **FIN-002：建设湖仓与分析存储。**
   - 对象存储加 Parquet/Iceberg 保存历史与重算数据；ClickHouse 承担大规模行情、
     指标和横截面分析；PostgreSQL 保存目录、事务元数据和主数据。
+  - 已完成：本地不可变 `market-archive-v2`、内容哈希校验、ClickHouse 行情写入端口、dual 镜像降级和时间点安全读取器。
+  - 剩余：对象存储 Parquet/Iceberg、目录清单、分区压缩、归档保留/恢复和大规模重算编排。
   - 完成条件：冷热分层、分区、压缩、生命周期、重算和灾备策略通过容量评审。
 
 - [ ] **FIN-003：接入权威财务、行情和宏观数据源。**
@@ -271,6 +275,8 @@
 
 - [-] **EVAL-002：扩展 Agent 与金融分析评测。**
   - 在现有 Assessor 基础上增加事实一致性、方向、反证、情景、计算、校准和稳定性。
+  - 已完成：行情预测的 Brier/Log Loss/ECE/命中率、可靠性分箱、公平冠军/挑战者比较，以及仅使用可验证历史归档的批量预测与结果结算。
+  - 剩余：回放任务持久化、分片并行、失败恢复、数据集版本清单、人工晋级签发和显著性检验。
   - 完成条件：模型和 Prompt 变更有对照实验、显著性判断、回退门槛和自动发布阻断。
 
 - [ ] **OPS-004：建设生产韧性和灾备。**
