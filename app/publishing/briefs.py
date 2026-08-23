@@ -72,9 +72,12 @@ class BriefService:
             event = events.get(report.event_id)
             if event is None:
                 continue
-            # 候选类型事件（Router 开放分类、待人工确认）不进每日简报（DD-21 §2.4）
+            # 候选类型事件（Router 开放分类、待人工确认）不进每日简报（DD-21 §2.4）。
+            # 已升格为 accepted 的开放标签可以进入简报。
             if is_candidate_event_type(event.event_type):
-                continue
+                registry = self.repository.get_event_type_registry(event.event_type)
+                if registry is None or registry.status != "accepted":
+                    continue
             # cold/archived 事件不进简报（DD-22 §2.2）
             if event.status in {"cold", "archived"}:
                 continue

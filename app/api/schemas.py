@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,9 +49,7 @@ class SourceUpdateRequest(BaseModel):
     allowed_domains: Optional[list[str]] = Field(default=None, min_length=1)
     rate_limit_per_minute: Optional[int] = Field(default=None, ge=1, le=600)
     crawl_interval_seconds: Optional[int] = Field(default=None, ge=60, le=86400)
-    license: Optional[str] = Field(
-        default=None, pattern="^(inherit|full|excerpt|entry_only)$"
-    )
+    license: Optional[str] = Field(default=None, pattern="^(inherit|full|excerpt|entry_only)$")
     status: Optional[str] = Field(default=None, pattern="^(active|disabled|degraded)$")
     adapter_type: Optional[str] = Field(default=None, pattern="^[a-z0-9_]+$")
     extra_config: Optional[dict[str, Any]] = None
@@ -447,6 +445,17 @@ class EventResponse(BaseModel):
     missing_required: list[str] = Field(default_factory=list)
 
 
+class EventTypeRegistryResponse(BaseModel):
+    type_label: str
+    status: str
+    event_count: int
+    promotion_ready: bool = False
+    decided_by: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class ClaimResponse(BaseModel):
     id: str
     subject_text: str
@@ -521,6 +530,138 @@ class ImpactAnalysisResponse(BaseModel):
     degraded: bool
     supersedes_id: Optional[str] = None
     created_at: Optional[datetime] = None
+    analysis_payload: dict[str, Any] = Field(default_factory=dict)
+    quality_report: dict[str, Any] = Field(default_factory=dict)
+    edit_revision: int = 0
+    derived_from_id: Optional[str] = None
+
+
+class ImpactGraphEditRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
+    graph: dict[str, Any]
+    scenarios: list[dict[str, Any]] = Field(default_factory=list)
+    impact_assessments: list[dict[str, Any]] = Field(default_factory=list)
+    change_reason: str = Field(min_length=1, max_length=2000)
+
+
+class ImpactGraphLayoutRequest(BaseModel):
+    node_positions: dict[str, dict[str, float]] = Field(default_factory=dict)
+    collapsed_groups: list[str] = Field(default_factory=list)
+    viewport: dict[str, float] = Field(default_factory=dict)
+
+
+class ImpactAnalysisTransitionRequest(BaseModel):
+    status: str = Field(pattern="^(needs_review|approved|rejected|superseded)$")
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ImpactTargetResponse(BaseModel):
+    id: str
+    target_type: str
+    target_code: str
+    canonical_name: str
+    taxonomy_version: str
+
+
+class ImpactSnapshotResponse(BaseModel):
+    id: str
+    target_id: str
+    as_of: datetime
+    horizon: str
+    scenario_set_id: str
+    positive_gross: float
+    negative_gross: float
+    net_score: float
+    direction: str
+    magnitude: str
+    confidence: float
+    dominant_event_id: Optional[str] = None
+    previous_direction: Optional[str] = None
+    change_type: Optional[str] = None
+    explanation: str
+    contributions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EventImpactRelationRequest(BaseModel):
+    source_event_id: str = Field(min_length=1)
+    target_event_id: str = Field(min_length=1)
+    relation_type: str = Field(
+        pattern="^(same_incident|updates|causes|amplifies|offsets|independent)$"
+    )
+    dependency_weight: float = Field(default=0.5, ge=0, le=1)
+    confidence: float = Field(default=0.7, ge=0, le=1)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ForwardImpactWindowCreateRequest(BaseModel):
+    target_id: str = Field(min_length=1)
+    as_of: datetime
+    window_start: datetime
+    window_end: datetime
+    event_types: list[str] = Field(default_factory=list)
+    catalyst_ids: list[str] = Field(default_factory=list)
+    included_kinds: list[str] = Field(default_factory=lambda: ["scheduled", "conditional"])
+    granularity: str = Field(default="auto", pattern="^(auto|day|week|month)$")
+    scenario_set_id: str = Field(default="baseline", min_length=1)
+
+
+class ForwardCatalystCreateRequest(BaseModel):
+    target_id: str = Field(min_length=1)
+    kind: str = Field(pattern="^(scheduled|conditional|hypothetical)$")
+    title: str = Field(min_length=1)
+    event_type: str = Field(min_length=1)
+    scheduled_from: Optional[datetime] = None
+    scheduled_to: Optional[datetime] = None
+    trigger_definition: dict[str, Any] = Field(default_factory=dict)
+    probability_low: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_base: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_high: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_basis: str = Field(default="unknown", min_length=1)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class FutureEventCreateRequest(BaseModel):
+    event_type: str = Field(min_length=1)
+    kind: str = Field(pattern="^(scheduled|conditional|hypothetical)$")
+    title: str = Field(min_length=1)
+    description: str = ""
+    scheduled_from: Optional[datetime] = None
+    scheduled_to: Optional[datetime] = None
+    source_timezone: str = "Asia/Shanghai"
+    time_precision: str = Field(default="unknown", pattern="^(exact|date|window|unknown)$")
+    importance: float = Field(default=0.5, ge=0, le=1)
+    probability_low: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_base: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_high: Optional[float] = Field(default=None, ge=0, le=1)
+    probability_basis: str = "unknown"
+    source_url: Optional[str] = None
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    target_impacts: list["FutureEventImpactCreate"] = Field(default_factory=list)
+
+
+class FutureEventTransitionRequest(BaseModel):
+    status: str = Field(pattern="^(approved|confirmed|cancelled|rejected|realized)$")
+    expected_revision: int = Field(ge=1)
+    change_reason: str = Field(default="", max_length=2000)
+    realized_event_id: Optional[str] = None
+
+
+class FutureEventImpactCreate(BaseModel):
+    target_id: str = Field(min_length=1)
+    scenario_id: str = "baseline"
+    direction: str = Field(pattern="^(positive|negative|mixed|uncertain)$")
+    magnitude: str = Field(pattern="^(strong|moderate|weak|uncertain)$")
+    conditional_strength: float = Field(ge=0, le=1)
+    occurrence_probability: Optional[float] = Field(default=None, ge=0, le=1)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    rationale: str = ""
+    onset_at: Optional[datetime] = None
+    expected_peak_at: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+FutureEventCreateRequest.model_rebuild()
 
 
 class BriefEntryResponse(BaseModel):
@@ -563,7 +704,7 @@ class RetrievalRetrieveRequest(BaseModel):
     query: str = Field(min_length=1)
     retrieval_mode: str = Field(
         default="planned",
-        pattern="^(vector|lexical|hybrid|graph|sql|timeseries|planned)$",
+        pattern="^(vector|lexical|hybrid|graph|relation|sql|timeseries|planned)$",
     )
     top_k: int = Field(default=10, ge=1, le=100)
     as_of: Optional[datetime] = None
@@ -602,6 +743,133 @@ class RetrievalTraceResponse(BaseModel):
     backend_coverage: dict[str, int] = Field(default_factory=dict)
     embedding_model_version: str = ""
     generated_at: Optional[datetime] = None
+    status: str = "succeeded"
+    degradation_reason: Optional[str] = None
+
+
+class MarketForecastIssueRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrument_ids: list[str] = Field(min_length=1, max_length=100)
+    start: datetime
+    end: datetime
+    horizon: int = Field(default=1)
+    interval: str = Field(default="1d", pattern="^(5m|1d)$")
+    as_of: Optional[datetime] = None
+    limit: int = Field(default=500, ge=3, le=5000)
+
+
+class MarketForecastSettlementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    forecast_ids: Optional[list[str]] = Field(default=None, max_length=5000)
+    evaluation_as_of: Optional[datetime] = None
+    flat_band: float = Field(default=0.003, ge=0, le=0.2)
+
+
+class HistoricalForecastReplayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrument_ids: list[str] = Field(min_length=1, max_length=100)
+    forecast_from: date
+    forecast_to: date
+    horizon: int
+    lookback_days: int = Field(default=500, ge=30, le=3000)
+    publication_lag_minutes: int = Field(default=30, ge=0, le=1440)
+    max_slots: int = Field(default=5000, ge=1, le=100000)
+    settle_outcomes: bool = True
+    evaluation_as_of: Optional[datetime] = None
+
+
+class MarketCalibrationCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_key: str = Field(default="market-outlook", min_length=1, max_length=80)
+    version: str = Field(min_length=1, max_length=40)
+    market: str = Field(pattern="^(cn|hk|us|all)$")
+    horizon: int
+    instrument_id: Optional[str] = None
+    train_start: datetime
+    train_end: datetime
+
+
+class MarketCalibrationTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(pattern="^(published|retired)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ImpactTargetMappingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str = Field(min_length=1, max_length=128)
+    mapping_type: str = Field(pattern="^(instrument|industry|market)$")
+    mapping_code: str = Field(min_length=1, max_length=128)
+    weight: float = Field(default=1.0, gt=0, le=1)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    reason: str = Field(min_length=3, max_length=500)
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+
+
+class ImpactTargetMappingSuggestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: str = Field(min_length=1, max_length=128)
+
+
+class ImpactTargetMappingTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(pattern="^(approved|rejected|retired)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ImpactProjectionBackfillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    as_of: Optional[datetime] = None
+
+
+class IndustryClassificationImportItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=200)
+    level: int = Field(ge=1, le=10)
+    parent_code: Optional[str] = Field(default=None, max_length=128)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
+
+
+class InstrumentIndustryMembershipImportItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrument_id: str = Field(min_length=1, max_length=128)
+    industry_code: str = Field(min_length=1, max_length=128)
+    weight: float = Field(default=1.0, gt=0, le=1)
+    is_primary: bool = True
+
+
+class MarketMasterDataImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    standard: str = Field(min_length=1, max_length=64)
+    version: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=100)
+    effective_from: datetime
+    classifications: list[IndustryClassificationImportItem] = Field(min_length=1, max_length=10000)
+    memberships: list[InstrumentIndustryMembershipImportItem] = Field(
+        default_factory=list, max_length=100000
+    )
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MarketMasterDataImportPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class DataEnvelope(BaseModel):

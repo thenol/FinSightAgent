@@ -17,6 +17,15 @@ from app.domain import User
 from app.ingestion.artifacts import LocalArtifactStore
 from app.ingestion.rss import RssFeedClient
 from app.ingestion.sync import RssSyncService
+from app.market.adapters import (
+    AkShareMarketDataProvider,
+    EastMoneyBridgeMarketDataProvider,
+    EastMoneyMarketDataProvider,
+    FallbackMarketDataProvider,
+)
+from app.market.calendar import build_trading_calendar
+from app.market.master_data import seed_market_master_data
+from app.market.provider import UnavailableMarketDataProvider
 from app.platform.ids import new_id
 from app.platform.observability import Observability, TraceContext
 from app.platform.repository import InMemoryRepository, SqlAlchemyRepository
@@ -86,6 +95,35 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Unsupported repository: {settings.repository}")
     app.state.repository = repository
     app.state.settings = settings
+    app.state.market_instruments = seed_market_master_data(repository)
+    app.state.market_calendar = build_trading_calendar()
+    eastmoney_provider = EastMoneyMarketDataProvider(
+        app.state.market_instruments.as_mapping(),
+        timeout_seconds=settings.market_data_timeout_seconds,
+    )
+    akshare_provider = AkShareMarketDataProvider()
+    bridge_provider = EastMoneyBridgeMarketDataProvider(
+        app.state.market_instruments.as_mapping(),
+        base_url=settings.market_data_bridge_url,
+        timeout_seconds=settings.market_data_timeout_seconds,
+    )
+    if settings.market_data_provider == "eastmoney":
+        app.state.market_data_provider = eastmoney_provider
+    elif settings.market_data_provider == "bridge":
+        # Prefer the local browser bridge (session-aware and replayable), but
+        # route incomplete history through direct EastMoney and then AKShare.
+        app.state.market_data_provider = FallbackMarketDataProvider(
+            bridge_provider,
+            FallbackMarketDataProvider(eastmoney_provider, akshare_provider),
+        )
+    elif settings.market_data_provider == "akshare":
+        app.state.market_data_provider = akshare_provider
+    elif settings.market_data_provider == "none":
+        app.state.market_data_provider = UnavailableMarketDataProvider()
+    else:
+        app.state.market_data_provider = FallbackMarketDataProvider(
+            eastmoney_provider, akshare_provider
+        )
     app.state.token_manager = TokenManager(settings.jwt_secret)
     bootstrap_username = settings.bootstrap_admin_username
     bootstrap_password = settings.bootstrap_admin_password

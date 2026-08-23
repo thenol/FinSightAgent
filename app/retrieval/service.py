@@ -12,6 +12,7 @@ from app.domain import (
     RetrievalTrace,
     RetrievedItem,
 )
+from app.market.provider import MarketDataProvider, UnavailableMarketDataProvider
 from app.platform.repository import Repository
 from app.retrieval.fusion import FusionService
 from app.retrieval.lexical import tokenize_keywords
@@ -27,11 +28,13 @@ class RetrievalService:
         embedding_service: Optional[EmbeddingService] = None,
         fusion_service: Optional[FusionService] = None,
         planner: Optional[QueryPlanner] = None,
+        market_data_provider: MarketDataProvider | None = None,
     ) -> None:
         self.repository = repository
         self.embedding_service = embedding_service or EmbeddingService(repository)
         self.fusion_service = fusion_service or FusionService()
         self.planner = planner or QueryPlanner(repository)
+        self.market_data_provider = market_data_provider or UnavailableMarketDataProvider()
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalTrace:
         """执行检索并返回带审计轨迹的结果。"""
@@ -39,7 +42,7 @@ class RetrievalService:
             return self._retrieve_lexical(request)
         if request.retrieval_mode == "hybrid":
             return self._retrieve_hybrid(request)
-        if request.retrieval_mode == "graph":
+        if request.retrieval_mode in {"graph", "relation"}:
             return self._retrieve_graph(request)
         if request.retrieval_mode == "sql":
             return self._retrieve_structured(request)
@@ -204,18 +207,23 @@ class RetrievalService:
         filters: dict[str, Any] = {
             "as_of": request.as_of.isoformat() if request.as_of else None,
             "entity_ids": entity_ids,
+            "relation_path": "entity->event->document->chunk",
+            "relation_types": ["event_entities", "event_documents", "document_chunks"],
+            "max_hops": 3,
             "time_range": [
                 start.isoformat() if start else None,
                 end.isoformat() if end else None,
             ],
         }
 
-        events = self._events_for_graph(entity_ids, start, end, request.as_of)
+        events = self._events_for_graph(entity_ids, start, end, request.as_of, request.top_k)
         items: list[RetrievedItem] = []
         seen_chunks: set[str] = set()
         for event, hop in events:
             score = max(0.5, 1.0 - (hop - 1) * 0.2)
-            for chunk in self._chunks_for_event(event, request.chunk_types, request.source_tiers):
+            for chunk in self._chunks_for_event(
+                event, request.chunk_types, request.source_tiers, request.as_of
+            ):
                 if chunk.id in seen_chunks:
                     continue
                 seen_chunks.add(chunk.id)
@@ -238,24 +246,29 @@ class RetrievalService:
         plan = self.planner.plan(request.query, top_k=request.top_k, as_of=request.as_of)
         intent = plan.intents[0] if plan.intents else None
         event_types = intent.event_types if intent else []
+        entity_ids = intent.entity_ids if intent else []
         start, end = intent.time_range if intent else (None, None)
 
         filters: dict[str, Any] = {
             "as_of": request.as_of.isoformat() if request.as_of else None,
             "event_types": event_types,
+            "entity_ids": entity_ids,
             "time_range": [
                 start.isoformat() if start else None,
                 end.isoformat() if end else None,
             ],
         }
 
-        events = self.repository.list_events(as_of=request.as_of, limit=10_000)
+        events = self.repository.list_events(
+            as_of=request.as_of,
+            limit=request.top_k,
+            event_types=event_types or None,
+            entity_ids=entity_ids or None,
+            occurred_from=start,
+            occurred_to=end,
+        )
         items: list[RetrievedItem] = []
         for event in events:
-            if event_types and event.event_type not in event_types:
-                continue
-            if not self._in_time_range(event.occurred_at, start, end):
-                continue
             items.append(self._build_item_from_event(event, 1.0, now, backend="sql"))
             if len(items) >= request.top_k:
                 break
@@ -270,42 +283,42 @@ class RetrievalService:
         )
 
     def _retrieve_timeseries(self, request: RetrievalRequest) -> RetrievalTrace:
-        """Time-series 检索：按时间窗倒序列出事件及相关文档块。"""
+        """Time-series 检索：只读取正式行情供应商，不伪装事件时间线。"""
         now = datetime.now(timezone.utc)
         plan = self.planner.plan(request.query, top_k=request.top_k, as_of=request.as_of)
         intent = plan.intents[0] if plan.intents else None
+        entity_ids = intent.entity_ids if intent else []
         start, end = intent.time_range if intent else (None, None)
 
         filters: dict[str, Any] = {
             "as_of": request.as_of.isoformat() if request.as_of else None,
+            "entity_ids": entity_ids,
+            "provider": self.market_data_provider.capability.provider,
+            "capability": self.market_data_provider.capability.status,
             "time_range": [
                 start.isoformat() if start else None,
                 end.isoformat() if end else None,
             ],
         }
 
-        events = self.repository.list_events(as_of=request.as_of, limit=10_000)
-        events = [e for e in events if self._in_time_range(e.occurred_at, start, end)]
-        events.sort(key=lambda e: e.occurred_at, reverse=True)
-
+        result = self.market_data_provider.query(
+            security_ids=entity_ids,
+            start=start,
+            end=end,
+            as_of=request.as_of,
+            limit=request.top_k,
+        )
         items: list[RetrievedItem] = []
-        seen_chunks: set[str] = set()
-        for event in events:
-            for chunk in self._chunks_for_event(event, request.chunk_types, request.source_tiers):
-                if chunk.id in seen_chunks:
-                    continue
-                seen_chunks.add(chunk.id)
-                items.append(self._build_item(chunk, 1.0, "", now, backend="timeseries"))
-            if len(items) >= request.top_k:
-                break
 
         return RetrievalTrace(
             request=request,
             embedding_model_version="",
             filters=filters,
-            candidate_count=len(events),
-            items=items[: request.top_k],
+            candidate_count=len(result.observations),
+            items=items,
             generated_at=now,
+            status=result.status,
+            degradation_reason=result.capability.reason,
         )
 
     def _retrieve_planned(self, request: RetrievalRequest) -> RetrievalTrace:
@@ -375,16 +388,19 @@ class RetrievalService:
         start: Optional[datetime],
         end: Optional[datetime],
         as_of: Optional[datetime],
+        limit: int,
     ) -> list[tuple[Any, int]]:
         """返回 (event, hop) 列表。hop=1 表示实体直接关联事件。"""
-        entity_set = set(entity_ids)
-        events = self.repository.list_events(as_of=as_of, limit=10_000)
+        events = self.repository.list_events(
+            as_of=as_of,
+            limit=limit,
+            entity_ids=entity_ids or None,
+            occurred_from=start,
+            occurred_to=end,
+        )
         matches: list[tuple[Any, int]] = []
         for event in events:
-            if not self._in_time_range(event.occurred_at, start, end):
-                continue
-            if entity_set and any(eid in entity_set for eid in event.entity_ids):
-                matches.append((event, 1))
+            matches.append((event, 1))
         # 按 hop 与重要度排序
         matches.sort(key=lambda x: (x[1], -x[0].importance))
         return matches
@@ -394,6 +410,7 @@ class RetrievalService:
         event: Any,
         chunk_types: Optional[list[str]],
         source_tiers: Optional[list[str]],
+        as_of: Optional[datetime] = None,
     ) -> list[DocumentChunk]:
         chunks: list[DocumentChunk] = []
         for document_id in event.document_ids:
@@ -402,7 +419,7 @@ class RetrievalService:
                 continue
             if source_tiers and document.source_tier not in source_tiers:
                 continue
-            revision = self.repository.get_latest_revision(document_id)
+            revision = self.repository.get_latest_revision(document_id, as_of=as_of)
             if revision is None:
                 continue
             blocks = self.repository.get_document_blocks_for_revision(revision.id)

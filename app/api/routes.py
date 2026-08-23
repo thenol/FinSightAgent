@@ -1,6 +1,7 @@
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -9,6 +10,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.agents.registry import AgentRegistry
+from app.analysis.aggregation import ImpactAggregationService
+from app.analysis.backfill import ImpactProjectionBackfillService
+from app.analysis.forward import ForwardImpactService
 from app.analysis.service import ImpactAnalysisService
 from app.api.auth import PASSWORD_HASH, require_roles
 from app.api.errors import openapi_error_responses
@@ -23,10 +27,26 @@ from app.api.schemas import (
     DataEnvelope,
     DocumentUpdateRequest,
     EventDetailResponse,
+    EventImpactRelationRequest,
     EventResponse,
+    EventTypeRegistryResponse,
     EvidenceResponse,
     FactCardResponse,
+    ForwardCatalystCreateRequest,
+    ForwardImpactWindowCreateRequest,
+    FutureEventCreateRequest,
+    FutureEventTransitionRequest,
+    HistoricalForecastReplayRequest,
     ImpactAnalysisResponse,
+    ImpactAnalysisTransitionRequest,
+    ImpactGraphEditRequest,
+    ImpactGraphLayoutRequest,
+    ImpactProjectionBackfillRequest,
+    ImpactSnapshotResponse,
+    ImpactTargetMappingCreateRequest,
+    ImpactTargetMappingSuggestRequest,
+    ImpactTargetMappingTransitionRequest,
+    ImpactTargetResponse,
     IngestDocumentRequest,
     IngestRunResponse,
     LlmAgentBindingBulkRequest,
@@ -36,6 +56,12 @@ from app.api.schemas import (
     LlmProviderUpdateRequest,
     LoginRequest,
     LoginResponse,
+    MarketCalibrationCreateRequest,
+    MarketCalibrationTransitionRequest,
+    MarketForecastIssueRequest,
+    MarketForecastSettlementRequest,
+    MarketMasterDataImportPublishRequest,
+    MarketMasterDataImportRequest,
     MergeReviewDecisionRequest,
     MergeReviewTaskResponse,
     NodeAttemptResponse,
@@ -58,9 +84,43 @@ from app.api.schemas import (
     WorkflowResponse,
     WorkflowResumeRequest,
 )
-from app.domain import AuditLog, RetrievalRequest, Source, User
+from app.domain import (
+    AuditLog,
+    EventImpactRelation,
+    ForwardCatalyst,
+    ForwardImpactWindow,
+    FutureEvent,
+    FutureEventRevision,
+    FutureEventTargetImpact,
+    ImpactTargetMapping,
+    MarketCalibrationVersion,
+    RetrievalRequest,
+    Source,
+    User,
+)
+from app.events.type_registry import (
+    EventTypeAlreadyDecidedError,
+    EventTypeNotFoundError,
+    EventTypeRegistryService,
+)
 from app.ingestion.html_text import scrub_extracted_text
 from app.ingestion.seed_sources import seed_sources
+from app.market.evaluation import (
+    ForecastEvaluationSample,
+    compare_forecast_models,
+    evaluate_forecasts,
+    fit_temperature_scaler,
+)
+from app.market.factors import EventImpactFactorService
+from app.market.forecasting import ForecastLifecycleService, published_calibration_for
+from app.market.health import project_provider_health
+from app.market.master_data import ImpactTargetMappingService, MarketMasterDataImportService
+from app.market.outlook import SUPPORTED_HORIZONS, MarketOutlookService
+from app.market.provider import MarketDataProvider
+from app.market.quality import MarketQualityService
+from app.market.replay import LocalArchiveMarketDataProvider
+from app.market.replay_forecasts import HistoricalForecastReplayService
+from app.market.state import MarketStateService
 from app.model_gateway.config import (
     LlmConfigError,
     bind_all_agents,
@@ -89,6 +149,1044 @@ from app.workflows.dynamic import DynamicWorkflowService
 from app.workflows.service import WorkflowService
 
 router = APIRouter()
+
+
+def _market_data_provider(request: Request) -> MarketDataProvider:
+    provider = getattr(request.app.state, "market_data_provider", None)
+    if provider is None:
+        raise HTTPException(status_code=503, detail="MARKET_DATA_PROVIDER_UNAVAILABLE")
+    return provider
+
+
+def _persisted_evaluation_samples(
+    repository,
+    *,
+    instrument_id: str | None,
+    horizon: int | None,
+    start: datetime | None,
+    end: datetime | None,
+    limit: int = 5000,
+) -> list[ForecastEvaluationSample]:
+    runs = repository.list_market_forecast_runs(
+        instrument_id=instrument_id,
+        horizon=horizon,
+        start=start,
+        end=end,
+        limit=limit,
+    )
+    outcomes = {
+        item.forecast_id: item
+        for item in repository.list_market_forecast_outcomes([run.id for run in runs])
+    }
+    samples = []
+    for run in runs:
+        outcome = outcomes.get(run.id)
+        eligible = run.probabilities is not None and outcome is not None
+        samples.append(
+            ForecastEvaluationSample(
+                forecast_id=run.id,
+                instrument_id=run.instrument_id,
+                as_of=run.as_of,
+                horizon=run.horizon,
+                probabilities=run.probabilities,
+                realized_return=outcome.realized_return if outcome else None,
+                outcome=outcome.outcome if outcome else None,
+                outcome_observed_at=outcome.outcome_observed_at if outcome else None,
+                eligible=eligible,
+                exclusion_reason=(
+                    None
+                    if eligible
+                    else (
+                        "forecast_insufficient_data"
+                        if run.probabilities is None
+                        else "outcome_not_observed"
+                    )
+                ),
+            )
+        )
+    return samples
+
+
+def _persisted_evaluation_samples_by_rule(
+    repository,
+    *,
+    market: str | None,
+    horizon: int | None,
+    start: datetime | None,
+    end: datetime | None,
+) -> dict[str, list[ForecastEvaluationSample]]:
+    runs = repository.list_market_forecast_runs(horizon=horizon, start=start, end=end, limit=5000)
+    if market:
+        runs = [run for run in runs if run.instrument_id.startswith(f"{market}:")]
+    outcomes = {
+        item.forecast_id: item
+        for item in repository.list_market_forecast_outcomes([run.id for run in runs])
+    }
+    values: dict[str, list[ForecastEvaluationSample]] = {}
+    for run in runs:
+        outcome = outcomes.get(run.id)
+        eligible = run.probabilities is not None and outcome is not None
+        values.setdefault(run.rule_version, []).append(
+            ForecastEvaluationSample(
+                forecast_id=run.id,
+                instrument_id=run.instrument_id,
+                as_of=run.as_of,
+                horizon=run.horizon,
+                probabilities=run.probabilities,
+                realized_return=outcome.realized_return if outcome else None,
+                outcome=outcome.outcome if outcome else None,
+                outcome_observed_at=outcome.outcome_observed_at if outcome else None,
+                eligible=eligible,
+                exclusion_reason=(
+                    None
+                    if eligible
+                    else "forecast_insufficient_data"
+                    if run.probabilities is None
+                    else "outcome_not_observed"
+                ),
+            )
+        )
+    return values
+
+
+@router.get("/api/v1/market/capabilities", response_model=DataEnvelope)
+def market_capabilities(
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    capability = _market_data_provider(request).capability
+    return DataEnvelope(
+        data=jsonable_encoder(capability),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/providers/health", response_model=DataEnvelope)
+def market_provider_health(
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    return DataEnvelope(
+        data=jsonable_encoder(project_provider_health(_market_data_provider(request))),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/instruments", response_model=DataEnvelope)
+def market_instruments(
+    request: Request,
+    market: Optional[str] = Query(default=None, pattern="^(cn|hk|us)$"),  # noqa: B008
+    instrument_type: Optional[str] = Query(default=None, pattern="^(index|sector|etf|stock)$"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    catalog = getattr(request.app.state, "market_instruments", None)
+    if catalog is None:
+        raise HTTPException(status_code=503, detail="MARKET_INSTRUMENT_CATALOG_UNAVAILABLE")
+    return DataEnvelope(
+        data=jsonable_encoder(catalog.list(market=market, instrument_type=instrument_type)),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/industry-taxonomies", response_model=DataEnvelope)
+def market_industry_taxonomies(
+    request: Request,
+    status_filter: Optional[str] = Query(default=None, alias="status"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_industry_taxonomies(status_filter)
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/industry-classifications", response_model=DataEnvelope)
+def market_industry_classifications(
+    request: Request,
+    taxonomy_id: Optional[str] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_industry_classifications(taxonomy_id)
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/master-data/imports", response_model=DataEnvelope)
+def list_market_master_data_imports(
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_market_master_data_import_runs()
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post("/api/v1/market/master-data/imports", response_model=DataEnvelope)
+def stage_market_master_data_import(
+    payload: MarketMasterDataImportRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    run = MarketMasterDataImportService(request.app.state.repository).stage(
+        standard=payload.standard,
+        version=payload.version,
+        name=payload.name,
+        source=payload.source,
+        effective_from=payload.effective_from,
+        classifications=[item.model_dump() for item in payload.classifications],
+        memberships=[item.model_dump() for item in payload.memberships],
+        source_metadata=payload.source_metadata,
+        created_by=user.id,
+    )
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="market_master_data.import_staged",
+            object_type="market_master_data_import",
+            object_id=run.id,
+            request_id=request.state.request_id,
+            details={"status": run.status, "errors": run.errors},
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(run),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post(
+    "/api/v1/market/master-data/imports/{run_id}/publish",
+    response_model=DataEnvelope,
+)
+def publish_market_master_data_import(
+    run_id: str,
+    payload: MarketMasterDataImportPublishRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        run = MarketMasterDataImportService(request.app.state.repository).publish(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="MARKET_MASTER_IMPORT_NOT_FOUND") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="market_master_data.import_published",
+            object_type="market_master_data_import",
+            object_id=run.id,
+            request_id=request.state.request_id,
+            details={"reason": payload.reason, "source_hash": run.source_hash},
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(run),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/impact-target-mappings", response_model=DataEnvelope)
+def list_impact_target_mappings(
+    request: Request,
+    target_id: Optional[str] = Query(default=None),  # noqa: B008
+    status_filter: Optional[str] = Query(default=None, alias="status"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_impact_target_mappings(target_id, status_filter)
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post("/api/v1/market/impact-target-mappings", response_model=DataEnvelope)
+def create_impact_target_mapping(
+    payload: ImpactTargetMappingCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    if repository.get_impact_target(payload.target_id) is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    if payload.valid_from and payload.valid_to and payload.valid_to < payload.valid_from:
+        raise HTTPException(status_code=422, detail="IMPACT_TARGET_MAPPING_RANGE_INVALID")
+    if payload.mapping_type == "instrument":
+        valid_code = repository.get_market_instrument(payload.mapping_code) is not None
+    elif payload.mapping_type == "industry":
+        valid_code = any(
+            item.code == payload.mapping_code for item in repository.list_industry_classifications()
+        )
+    else:
+        valid_code = payload.mapping_code in {"cn", "hk", "us"}
+    if not valid_code:
+        raise HTTPException(status_code=422, detail="IMPACT_TARGET_MAPPING_CODE_INVALID")
+    duplicates = repository.list_impact_target_mappings(payload.target_id)
+    if any(
+        item.mapping_type == payload.mapping_type and item.mapping_code == payload.mapping_code
+        for item in duplicates
+    ):
+        raise HTTPException(status_code=409, detail="IMPACT_TARGET_MAPPING_CONFLICT")
+    value = ImpactTargetMapping(
+        id=new_id("itm"),
+        target_id=payload.target_id,
+        mapping_type=payload.mapping_type,
+        mapping_code=payload.mapping_code,
+        weight=payload.weight,
+        confidence=payload.confidence,
+        status="proposed",
+        reason=payload.reason,
+        source="manual",
+        valid_from=payload.valid_from,
+        valid_to=payload.valid_to,
+        created_by=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    repository.save_impact_target_mapping(value)
+    repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="impact_target_mapping.proposed",
+            object_type="impact_target_mapping",
+            object_id=value.id,
+            request_id=request.state.request_id,
+            details={"target_id": value.target_id, "reason": payload.reason},
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(value),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post("/api/v1/market/impact-target-mappings/suggest", response_model=DataEnvelope)
+def suggest_impact_target_mappings(
+    payload: ImpactTargetMappingSuggestRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        values = ImpactTargetMappingService(request.app.state.repository).suggest(
+            target_id=payload.target_id, created_by=user.id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post(
+    "/api/v1/market/impact-target-mappings/{mapping_id}/transition",
+    response_model=DataEnvelope,
+)
+def transition_impact_target_mapping(
+    mapping_id: str,
+    payload: ImpactTargetMappingTransitionRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = ImpactTargetMappingService(request.app.state.repository).transition(
+            mapping_id, status=payload.status, reviewed_by=user.id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_MAPPING_NOT_FOUND") from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409, detail="IMPACT_TARGET_MAPPING_TRANSITION_INVALID"
+        ) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action=f"impact_target_mapping.{payload.status}",
+            object_type="impact_target_mapping",
+            object_id=value.id,
+            request_id=request.state.request_id,
+            details={"reason": payload.reason},
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(value),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/calendar", response_model=DataEnvelope)
+def market_calendar(
+    request: Request,
+    market: str = Query(..., pattern="^(cn|hk|us)$"),  # noqa: B008
+    start: date = Query(),  # noqa: B008
+    end: date = Query(),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if end < start:
+        raise HTTPException(status_code=422, detail="MARKET_CALENDAR_RANGE_INVALID")
+    calendar = getattr(request.app.state, "market_calendar", None)
+    if calendar is None:
+        raise HTTPException(status_code=503, detail="MARKET_CALENDAR_UNAVAILABLE")
+    result = calendar.query(
+        market=market,
+        start=start,
+        end=end,
+        as_of=as_of or datetime.now(timezone.utc),
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(result),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/bars", response_model=DataEnvelope)
+def market_bars(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    start: datetime = Query(),  # noqa: B008
+    end: datetime = Query(),  # noqa: B008
+    interval: str = Query(default="1d", pattern="^(5m|1d)$"),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    limit: int = Query(default=5000, ge=1, le=100_000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if end < start:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_RANGE_INVALID")
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    if effective_as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    try:
+        result = _market_data_provider(request).get_bars(
+            instrument_ids=instrument_ids,
+            start=start,
+            end=end,
+            interval=interval,
+            as_of=effective_as_of,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_QUERY_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(result),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/snapshots", response_model=DataEnvelope)
+def market_snapshots(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    if effective_as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    try:
+        result = _market_data_provider(request).get_snapshots(
+            instrument_ids=instrument_ids,
+            as_of=effective_as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_QUERY_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(result),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/states", response_model=DataEnvelope)
+def market_states(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    start: datetime = Query(),  # noqa: B008
+    end: datetime = Query(),  # noqa: B008
+    interval: str = Query(default="1d", pattern="^(5m|1d)$"),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    limit: int = Query(default=250, ge=3, le=5000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if end < start:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_RANGE_INVALID")
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    try:
+        states = MarketStateService(
+            _market_data_provider(request), getattr(request.app.state, "market_calendar", None)
+        ).calculate(
+            instrument_ids=instrument_ids,
+            start=start,
+            end=end,
+            interval=interval,
+            as_of=effective_as_of,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_STATE_QUERY_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(states),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/factors", response_model=DataEnvelope)
+def market_factors(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    horizon: int = Query(default=1, description="Forecast horizon in trading days"),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if horizon not in SUPPORTED_HORIZONS:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_HORIZON_UNSUPPORTED")
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    if effective_as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    catalog = request.app.state.market_instruments
+    instruments = [catalog.get(instrument_id) for instrument_id in instrument_ids]
+    missing = [
+        instrument_id
+        for instrument_id, instrument in zip(instrument_ids, instruments, strict=True)
+        if instrument is None
+    ]
+    if missing:
+        raise HTTPException(status_code=404, detail="MARKET_INSTRUMENT_NOT_FOUND")
+    service = EventImpactFactorService(request.app.state.repository)
+    factors = [
+        service.snapshot(instrument, as_of=effective_as_of, horizon=horizon)
+        for instrument in instruments
+        if instrument is not None
+    ]
+    return DataEnvelope(
+        data=jsonable_encoder(factors),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "rule_version": "forecast-factor-v1",
+            "as_of": effective_as_of.isoformat(),
+        },
+    )
+
+
+@router.get("/api/v1/market/outlooks", response_model=DataEnvelope)
+def market_outlooks(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    start: datetime = Query(),  # noqa: B008
+    end: datetime = Query(),  # noqa: B008
+    horizon: int = Query(default=1, description="Forecast horizon in trading days"),  # noqa: B008
+    interval: str = Query(default="1d", pattern="^(5m|1d)$"),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    limit: int = Query(default=250, ge=3, le=5000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if horizon not in SUPPORTED_HORIZONS:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_HORIZON_UNSUPPORTED")
+    if end < start:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_RANGE_INVALID")
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    if effective_as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    try:
+        states = MarketStateService(
+            _market_data_provider(request), getattr(request.app.state, "market_calendar", None)
+        ).calculate(
+            instrument_ids=instrument_ids,
+            start=start,
+            end=end,
+            interval=interval,
+            as_of=effective_as_of,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_QUERY_INVALID") from exc
+    factor_service = EventImpactFactorService(request.app.state.repository)
+    catalog = request.app.state.market_instruments
+    outlooks = []
+    for state in states:
+        instrument = catalog.get(state.instrument_id)
+        event_factor = (
+            factor_service.snapshot(instrument, as_of=effective_as_of, horizon=horizon)
+            if instrument is not None
+            else None
+        )
+        outlooks.append(
+            MarketOutlookService().preview(
+                state,
+                horizon=horizon,
+                event_factor=event_factor,
+                calibration=published_calibration_for(
+                    request.app.state.repository,
+                    state.instrument_id,
+                    horizon,
+                    as_of=effective_as_of,
+                ),
+            )
+        )
+    return DataEnvelope(
+        data=jsonable_encoder(outlooks),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "2.1",
+            "rule_version": "outlook-baseline-v2",
+            "calibration_status": "uncalibrated",
+            "factor_rule_version": "forecast-factor-v1",
+        },
+    )
+
+
+@router.post("/api/v1/market/forecast-runs", response_model=DataEnvelope)
+def issue_market_forecast_runs(
+    payload: MarketForecastIssueRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    if payload.horizon not in SUPPORTED_HORIZONS:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_HORIZON_UNSUPPORTED")
+    if payload.end < payload.start:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_RANGE_INVALID")
+    effective_as_of = payload.as_of or datetime.now(timezone.utc)
+    if any(value.tzinfo is None for value in (payload.start, payload.end, effective_as_of)):
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    catalog = request.app.state.market_instruments
+    if any(catalog.get(instrument_id) is None for instrument_id in payload.instrument_ids):
+        raise HTTPException(status_code=404, detail="MARKET_INSTRUMENT_NOT_FOUND")
+    try:
+        receipt = ForecastLifecycleService(
+            request.app.state.repository,
+            _market_data_provider(request),
+            catalog,
+            getattr(request.app.state, "market_calendar", None),
+        ).issue(
+            instrument_ids=payload.instrument_ids,
+            start=payload.start,
+            end=payload.end,
+            horizon=payload.horizon,
+            interval=payload.interval,
+            as_of=effective_as_of,
+            limit=payload.limit,
+            created_by=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_FORECAST_ISSUE_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(receipt.runs),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "created_count": receipt.created_count,
+            "reused_count": receipt.reused_count,
+        },
+    )
+
+
+@router.post("/api/v1/market/forecast-replays", response_model=DataEnvelope)
+def replay_historical_market_forecasts(
+    payload: HistoricalForecastReplayRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    if payload.horizon not in SUPPORTED_HORIZONS:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_HORIZON_UNSUPPORTED")
+    if payload.forecast_to < payload.forecast_from:
+        raise HTTPException(status_code=422, detail="MARKET_FORECAST_REPLAY_RANGE_INVALID")
+    try:
+        receipt = HistoricalForecastReplayService(
+            request.app.state.repository,
+            LocalArchiveMarketDataProvider(
+                request.app.state.settings.market_archive_root,
+                require_verified=True,
+            ),
+            request.app.state.market_instruments,
+            request.app.state.market_calendar,
+        ).run(
+            instrument_ids=payload.instrument_ids,
+            forecast_from=payload.forecast_from,
+            forecast_to=payload.forecast_to,
+            horizon=payload.horizon,
+            lookback_days=payload.lookback_days,
+            publication_lag_minutes=payload.publication_lag_minutes,
+            max_slots=payload.max_slots,
+            created_by=user.id,
+            settle_outcomes=payload.settle_outcomes,
+            evaluation_as_of=payload.evaluation_as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_FORECAST_REPLAY_INVALID") from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="market_forecast.historical_replay",
+            object_type="market_forecast_run",
+            object_id=None,
+            request_id=request.state.request_id,
+            details={
+                "forecast_from": payload.forecast_from.isoformat(),
+                "forecast_to": payload.forecast_to.isoformat(),
+                "instrument_ids": payload.instrument_ids,
+                "horizon": payload.horizon,
+                "source_provider": receipt.source_provider,
+                "created_count": receipt.created_count,
+                "reused_count": receipt.reused_count,
+                "insufficient_count": receipt.insufficient_count,
+                "settled_count": receipt.settled_count,
+                "pending_outcome_count": receipt.pending_outcome_count,
+                "status": receipt.status,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(receipt),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "rule_version": receipt.rule_version,
+        },
+    )
+
+
+@router.get("/api/v1/market/forecast-runs", response_model=DataEnvelope)
+def list_market_forecast_runs(
+    request: Request,
+    instrument_id: Optional[str] = Query(default=None),  # noqa: B008
+    horizon: Optional[int] = Query(default=None),  # noqa: B008
+    start: Optional[datetime] = Query(default=None),  # noqa: B008
+    end: Optional[datetime] = Query(default=None),  # noqa: B008
+    limit: int = Query(default=500, ge=1, le=5000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    runs = request.app.state.repository.list_market_forecast_runs(
+        instrument_id, horizon, start, end, limit
+    )
+    outcomes = {
+        item.forecast_id: item
+        for item in request.app.state.repository.list_market_forecast_outcomes(
+            [run.id for run in runs]
+        )
+    }
+    return DataEnvelope(
+        data=[
+            {**jsonable_encoder(run), "outcome": jsonable_encoder(outcomes.get(run.id))}
+            for run in runs
+        ],
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "count": len(runs),
+        },
+    )
+
+
+@router.post("/api/v1/market/forecast-outcomes/settle", response_model=DataEnvelope)
+def settle_market_forecast_outcomes(
+    payload: MarketForecastSettlementRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    effective_as_of = payload.evaluation_as_of or datetime.now(timezone.utc)
+    try:
+        receipt = ForecastLifecycleService(
+            request.app.state.repository,
+            _market_data_provider(request),
+            request.app.state.market_instruments,
+            getattr(request.app.state, "market_calendar", None),
+        ).settle(
+            evaluation_as_of=effective_as_of,
+            forecast_ids=payload.forecast_ids,
+            flat_band=payload.flat_band,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_FORECAST_SETTLEMENT_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(receipt),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/evaluations", response_model=DataEnvelope)
+def get_market_forecast_evaluation(
+    request: Request,
+    instrument_id: Optional[str] = Query(default=None),  # noqa: B008
+    market: Optional[str] = Query(default=None, pattern="^(cn|hk|us)$"),  # noqa: B008
+    horizon: Optional[int] = Query(default=None),  # noqa: B008
+    start: Optional[datetime] = Query(default=None),  # noqa: B008
+    end: Optional[datetime] = Query(default=None),  # noqa: B008
+    bin_count: int = Query(default=10, ge=2, le=20),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    samples = _persisted_evaluation_samples(
+        request.app.state.repository,
+        instrument_id=instrument_id,
+        horizon=horizon,
+        start=start,
+        end=end,
+    )
+    if market is not None:
+        samples = [item for item in samples if item.instrument_id.startswith(f"{market}:")]
+    report = evaluate_forecasts(samples, bin_count=bin_count)
+    return DataEnvelope(
+        data={
+            "report": jsonable_encoder(report),
+            "exclusions": {
+                reason: sum(item.exclusion_reason == reason for item in samples)
+                for reason in sorted(
+                    {item.exclusion_reason for item in samples if item.exclusion_reason}
+                )
+            },
+        },
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "rule_version": "forecast-evaluation-v1",
+        },
+    )
+
+
+@router.get("/api/v1/market/model-comparisons", response_model=DataEnvelope)
+def get_market_model_comparison(
+    request: Request,
+    market: Optional[str] = Query(default=None, pattern="^(cn|hk|us)$"),  # noqa: B008
+    horizon: Optional[int] = Query(default=None),  # noqa: B008
+    start: Optional[datetime] = Query(default=None),  # noqa: B008
+    end: Optional[datetime] = Query(default=None),  # noqa: B008
+    incumbent_model_key: Optional[str] = Query(default=None),  # noqa: B008
+    minimum_comparable_samples: int = Query(default=100, ge=20, le=10000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    samples_by_rule = _persisted_evaluation_samples_by_rule(
+        request.app.state.repository,
+        market=market,
+        horizon=horizon,
+        start=start,
+        end=end,
+    )
+    comparison = compare_forecast_models(
+        samples_by_rule,
+        incumbent_model_key=incumbent_model_key,
+        minimum_comparable_samples=minimum_comparable_samples,
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(comparison),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "rule_version": "forecast-champion-challenger-v1",
+        },
+    )
+
+
+@router.post("/api/v1/market/calibrations", response_model=DataEnvelope)
+def create_market_calibration(
+    payload: MarketCalibrationCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    if payload.horizon not in SUPPORTED_HORIZONS:
+        raise HTTPException(status_code=422, detail="MARKET_OUTLOOK_HORIZON_UNSUPPORTED")
+    if payload.train_end <= payload.train_start:
+        raise HTTPException(status_code=422, detail="MARKET_CALIBRATION_RANGE_INVALID")
+    duplicates = request.app.state.repository.list_market_calibration_versions(
+        payload.model_key, payload.market, payload.horizon
+    )
+    if any(item.version == payload.version for item in duplicates):
+        raise HTTPException(status_code=409, detail="MARKET_CALIBRATION_VERSION_CONFLICT")
+    samples = _persisted_evaluation_samples(
+        request.app.state.repository,
+        instrument_id=payload.instrument_id,
+        horizon=payload.horizon,
+        start=payload.train_start,
+        end=payload.train_end,
+    )
+    if payload.market != "all":
+        samples = [item for item in samples if item.instrument_id.startswith(f"{payload.market}:")]
+    fitted = fit_temperature_scaler(samples)
+    if fitted.status != "fitted":
+        raise HTTPException(status_code=422, detail="MARKET_CALIBRATION_SAMPLE_INSUFFICIENT")
+    report = evaluate_forecasts(samples)
+    calibration = MarketCalibrationVersion(
+        id=new_id("mcv"),
+        model_key=payload.model_key,
+        version=payload.version,
+        horizon=payload.horizon,
+        market=payload.market,
+        status="draft",
+        method="temperature_scaling",
+        parameters={"temperature": fitted.temperature},
+        metrics=jsonable_encoder(report),
+        train_start=payload.train_start,
+        train_end=payload.train_end,
+        sample_count=fitted.fit_sample_count,
+        created_by=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    request.app.state.repository.save_market_calibration_version(calibration)
+    return DataEnvelope(
+        data=jsonable_encoder(calibration),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/calibrations", response_model=DataEnvelope)
+def list_market_calibrations(
+    request: Request,
+    model_key: Optional[str] = Query(default=None),  # noqa: B008
+    market: Optional[str] = Query(default=None),  # noqa: B008
+    horizon: Optional[int] = Query(default=None),  # noqa: B008
+    status_filter: Optional[str] = Query(default=None, alias="status"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_market_calibration_versions(
+        model_key, market, horizon, status_filter
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(values),
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "count": len(values),
+        },
+    )
+
+
+@router.post(
+    "/api/v1/market/calibrations/{calibration_id}/transition",
+    response_model=DataEnvelope,
+)
+def transition_market_calibration(
+    calibration_id: str,
+    payload: MarketCalibrationTransitionRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    calibration = repository.get_market_calibration_version(calibration_id)
+    if calibration is None:
+        raise HTTPException(status_code=404, detail="MARKET_CALIBRATION_NOT_FOUND")
+    allowed = {"draft": {"published"}, "published": {"retired"}, "retired": set()}
+    if payload.status not in allowed.get(calibration.status, set()):
+        raise HTTPException(status_code=409, detail="MARKET_CALIBRATION_TRANSITION_INVALID")
+    now = datetime.now(timezone.utc)
+    if payload.status == "published":
+        metrics = calibration.metrics
+        gates = {
+            "sample_count": calibration.sample_count >= 200,
+            "coverage": float(metrics.get("coverage") or 0.0) >= 0.75,
+            "brier_score": (
+                float(metrics["brier_score"]) if metrics.get("brier_score") is not None else 99.0
+            )
+            <= 0.75,
+            "expected_calibration_error": (
+                (
+                    float(metrics["expected_calibration_error"])
+                    if metrics.get("expected_calibration_error") is not None
+                    else 99.0
+                )
+                <= 0.10
+            ),
+            "train_period_closed": calibration.train_end <= now,
+        }
+        failed = [key for key, passed in gates.items() if not passed]
+        if failed:
+            raise HTTPException(
+                status_code=409,
+                detail=f"MARKET_CALIBRATION_QUALITY_GATE_FAILED:{','.join(failed)}",
+            )
+        published = repository.list_market_calibration_versions(
+            calibration.model_key,
+            calibration.market,
+            calibration.horizon,
+            "published",
+        )
+        for previous in published:
+            repository.update_market_calibration_version(replace(previous, status="retired"))
+    updated = replace(
+        calibration,
+        status=payload.status,
+        published_at=now if payload.status == "published" else calibration.published_at,
+    )
+    repository.update_market_calibration_version(updated)
+    repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action=f"market_calibration.{payload.status}",
+            object_type="market_calibration_version",
+            object_id=updated.id,
+            request_id=request.state.request_id,
+            details={"reason": payload.reason, "version": updated.version},
+            created_at=now,
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(updated),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/quality", response_model=DataEnvelope)
+def market_quality(
+    request: Request,
+    instrument_ids: list[str] = Query(min_length=1, max_length=100),  # noqa: B008
+    start: datetime = Query(),  # noqa: B008
+    end: datetime = Query(),  # noqa: B008
+    interval: str = Query(default="1d", pattern="^(5m|1d)$"),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    limit: int = Query(default=250, ge=3, le=5000),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if end < start:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_RANGE_INVALID")
+    effective_as_of = as_of or datetime.now(timezone.utc)
+    if effective_as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="MARKET_DATA_AS_OF_TIMEZONE_REQUIRED")
+    try:
+        result = MarketQualityService(
+            _market_data_provider(request), getattr(request.app.state, "market_calendar", None)
+        ).assess(
+            instrument_ids=instrument_ids,
+            start=start,
+            end=end,
+            interval=interval,
+            as_of=effective_as_of,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="MARKET_QUALITY_QUERY_INVALID") from exc
+    return DataEnvelope(
+        data=jsonable_encoder(result),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
 BUSINESS_ROLES = ("researcher", "reviewer", "publisher", "admin")
 MAX_PAGE_SIZE = 200
 
@@ -241,9 +1339,7 @@ def list_audit_logs(
 @router.get("/api/v1/reviews", response_model=DataEnvelope)
 def list_reviews(
     request: Request,
-    status_filter: Annotated[
-        Optional[str], Query(pattern="^(pending|decided)$")
-    ] = None,
+    status_filter: Annotated[Optional[str], Query(pattern="^(pending|decided)$")] = None,
     cursor: Optional[str] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
     _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
@@ -327,9 +1423,7 @@ def run_workflow(
         WorkflowResponse.model_validate(updated, from_attributes=True),
         request.state.request_id,
     )
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, updated.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
 
 @router.get("/api/v1/workflows/{workflow_id}", response_model=DataEnvelope)
@@ -547,7 +1641,9 @@ def list_research_plans(
     request: Request,
     status_filter: Annotated[
         Optional[str],
-        Query(pattern="^(pending|planning|ready|running|waiting_review|succeeded|failed|cancelled)$"),
+        Query(
+            pattern="^(pending|planning|ready|running|waiting_review|succeeded|failed|cancelled)$"
+        ),
     ] = None,
     cursor: Optional[str] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
@@ -558,9 +1654,7 @@ def list_research_plans(
     plans = request.app.state.repository.list_research_plans(
         status=status_filter, limit=limit + 1, cursor=cursor
     )
-    values = [
-        ResearchPlanListResponse.model_validate(p, from_attributes=True) for p in plans
-    ]
+    values = [ResearchPlanListResponse.model_validate(p, from_attributes=True) for p in plans]
     return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
 
 
@@ -640,9 +1734,7 @@ def _build_admin_metrics(repository: Any) -> dict[str, Any]:
 
     total_claims = repository.count_claims()
     claims_with_evidence = repository.count_claims_with_evidence()
-    citation_completeness = (
-        claims_with_evidence / total_claims if total_claims else None
-    )
+    citation_completeness = claims_with_evidence / total_claims if total_claims else None
 
     return {
         "workflows": {
@@ -744,9 +1836,7 @@ def resume_workflow(
     response = envelope(
         WorkflowResponse.model_validate(updated, from_attributes=True), request.state.request_id
     )
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, updated.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
 
 @router.get("/api/v1/reviews/{task_id}", response_model=DataEnvelope)
@@ -763,12 +1853,107 @@ def get_review(
     )
 
 
+def _event_type_registry_service(request: Request) -> EventTypeRegistryService:
+    settings = getattr(request.app.state, "settings", None)
+    threshold = getattr(settings, "candidate_type_promotion_threshold", 5)
+    return EventTypeRegistryService(request.app.state.repository, promotion_threshold=threshold)
+
+
+def _event_type_view(service: EventTypeRegistryService, entry) -> EventTypeRegistryResponse:
+    return EventTypeRegistryResponse(
+        type_label=entry.type_label,
+        status=entry.status,
+        event_count=entry.event_count,
+        promotion_ready=service.is_promotion_ready(entry),
+        decided_by=entry.decided_by,
+        decided_at=entry.decided_at,
+        created_at=entry.created_at,
+        updated_at=entry.updated_at,
+    )
+
+
+@router.get("/api/v1/event-types", response_model=DataEnvelope)
+def list_event_types(
+    request: Request,
+    status_filter: Annotated[
+        Optional[str], Query(pattern="^(candidate|accepted|rejected)$")
+    ] = None,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status_filter"})
+    service = _event_type_registry_service(request)
+    values = [_event_type_view(service, entry) for entry in service.list_entries(status_filter)]
+    return envelope(values, request.state.request_id)
+
+
+@router.post(
+    "/api/v1/event-types/{type_label}/accept",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def accept_event_type(
+    type_label: str,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    service = _event_type_registry_service(request)
+    try:
+        entry = service.accept(type_label, user.id)
+    except EventTypeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="EVENT_TYPE_NOT_FOUND") from exc
+    except EventTypeAlreadyDecidedError as exc:
+        raise HTTPException(status_code=409, detail="EVENT_TYPE_ALREADY_DECIDED") from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="event_type.promoted",
+            object_type="event_type",
+            object_id=type_label,
+            request_id=request.state.request_id,
+            details={"status": "accepted", "event_count": entry.event_count},
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_event_type_view(service, entry), request.state.request_id)
+
+
+@router.post(
+    "/api/v1/event-types/{type_label}/reject",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def reject_event_type(
+    type_label: str,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    service = _event_type_registry_service(request)
+    try:
+        entry = service.reject(type_label, user.id)
+    except EventTypeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="EVENT_TYPE_NOT_FOUND") from exc
+    except EventTypeAlreadyDecidedError as exc:
+        raise HTTPException(status_code=409, detail="EVENT_TYPE_ALREADY_DECIDED") from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="event_type.rejected",
+            object_type="event_type",
+            object_id=type_label,
+            request_id=request.state.request_id,
+            details={"status": "rejected", "event_count": entry.event_count},
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_event_type_view(service, entry), request.state.request_id)
+
+
 @router.get("/api/v1/merge-reviews", response_model=DataEnvelope)
 def list_merge_reviews(
     request: Request,
-    status_filter: Annotated[
-        Optional[str], Query(pattern="^(open|decided)$")
-    ] = None,
+    status_filter: Annotated[Optional[str], Query(pattern="^(open|decided)$")] = None,
     cursor: Optional[str] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
     _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
@@ -778,10 +1963,7 @@ def list_merge_reviews(
     tasks = request.app.state.repository.list_merge_review_tasks(
         status=status_filter, limit=limit + 1, cursor=cursor
     )
-    values = [
-        MergeReviewTaskResponse.model_validate(task, from_attributes=True)
-        for task in tasks
-    ]
+    values = [MergeReviewTaskResponse.model_validate(task, from_attributes=True) for task in tasks]
     return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
 
 
@@ -857,9 +2039,7 @@ def decide_merge_review(
         MergeReviewTaskResponse.model_validate(updated, from_attributes=True),
         request.state.request_id,
     )
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, updated.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
 
 @router.get("/api/v1/evidence/{evidence_id}", response_model=DataEnvelope)
@@ -875,11 +2055,7 @@ def get_evidence(
     document = repository.get_document(evidence.document_id)
     resolver = CitationResolver(repository)
     display_role = CitationResolver.citation_role_for_api(user.role)
-    source = (
-        repository.get_source(document.source_id)
-        if document is not None
-        else None
-    )
+    source = repository.get_source(document.source_id) if document is not None else None
     raw_content = document.content if document else None
     # 历史脏入库（脚本/导航残留）在展示前清洗，不改库
     cleaned_content = scrub_extracted_text(raw_content) if raw_content else None
@@ -1063,9 +2239,7 @@ def decide_review(
         )
     )
     response = envelope(response_payload, request.state.request_id)
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, task.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, task.id, response)
 
 
 @router.post(
@@ -1117,9 +2291,7 @@ def create_source(
             )
         )
     response = envelope(SourceResponse(**source.__dict__), request.state.request_id)
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, source.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, source.id, response)
 
 
 @router.post(
@@ -1160,9 +2332,7 @@ async def sync_source(
         )
     )
     response = envelope(result, request.state.request_id)
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, source.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, source.id, response)
 
 
 @router.post(
@@ -1212,9 +2382,7 @@ async def sync_all_sources(
         {"synced": len(results), "results": results},
         request.state.request_id,
     )
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, "sources", response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, "sources", response)
 
 
 @router.get("/api/v1/sources/{source_id}/runs", response_model=DataEnvelope)
@@ -1323,9 +2491,7 @@ def update_source(
         )
     )
     response = envelope(SourceResponse(**updated.__dict__), request.state.request_id)
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, updated.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
 
 @router.post(
@@ -1359,9 +2525,7 @@ def seed_default_sources(
         )
     )
     response = envelope({"inserted": inserted}, request.state.request_id)
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, "sources", response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, "sources", response)
 
 
 def _llm_http_error(exc: LlmConfigError) -> HTTPException:
@@ -1399,9 +2563,7 @@ def list_llm_providers(
     _validate_query(request, {"cursor", "limit"})
     _validate_cursor(cursor)
     secrets = SecretBox.from_settings()
-    providers = request.app.state.repository.list_llm_providers(
-        limit=limit + 1, cursor=cursor
-    )
+    providers = request.app.state.repository.list_llm_providers(limit=limit + 1, cursor=cursor)
     page, next_cursor = page_items(providers, limit, lambda value: value.created_at)
     response = envelope(
         [public_provider_view(item, secrets) for item in page],
@@ -1702,9 +2864,7 @@ def put_llm_bindings_bulk(
     )
 
 
-def envelope(
-    data: object, request_id: str, *, next_cursor: Optional[str] = None
-) -> DataEnvelope:
+def envelope(data: object, request_id: str, *, next_cursor: Optional[str] = None) -> DataEnvelope:
     meta: dict[str, Any] = {"request_id": request_id, "schema_version": "1.0"}
     if next_cursor is not None:
         meta["next_cursor"] = next_cursor
@@ -1985,8 +3145,7 @@ def list_reports(
         Optional[str],
         Query(
             pattern=(
-                "^(draft|needs_review|review_required|approved|published|"
-                "needs_revision|withdrawn)$"
+                "^(draft|needs_review|review_required|approved|published|needs_revision|withdrawn)$"
             )
         ),
     ] = None,
@@ -2116,9 +3275,7 @@ def _has_pending_impact_analysis(repository, event_id: str) -> bool:
     return any(msg.payload.get("event_id") == event_id for msg in pending)
 
 
-@router.get(
-    "/api/v1/events/{event_id}/impact-analysis/versions", response_model=DataEnvelope
-)
+@router.get("/api/v1/events/{event_id}/impact-analysis/versions", response_model=DataEnvelope)
 def list_event_impact_analysis_versions(
     event_id: str,
     request: Request,
@@ -2154,6 +3311,806 @@ def get_impact_analysis(
     return DataEnvelope(
         data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
         meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post(
+    "/api/v1/impact-analyses/{impact_analysis_id}/transition",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 403, 404, 409),
+)
+def transition_impact_analysis(
+    impact_analysis_id: str,
+    payload: ImpactAnalysisTransitionRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    analysis = repository.get_impact_analysis(impact_analysis_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="IMPACT_ANALYSIS_NOT_FOUND")
+    allowed = {
+        "draft": {"needs_review", "rejected"},
+        "needs_review": {"approved", "draft", "rejected"},
+        "approved": {"superseded"},
+        "rejected": set(),
+        "superseded": set(),
+    }
+    if payload.status not in allowed.get(analysis.status, set()):
+        raise HTTPException(status_code=409, detail="IMPACT_ANALYSIS_INVALID_TRANSITION")
+    if payload.status == "approved" and analysis.degraded:
+        raise HTTPException(status_code=409, detail="DEGRADED_IMPACT_ANALYSIS_NOT_APPROVABLE")
+    if payload.status == "approved":
+        versions = repository.list_impact_analyses_for_event(analysis.event_id)
+        approved_versions = [
+            item for item in versions if item.status == "approved" and item.id != analysis.id
+        ]
+        latest = max(approved_versions, key=lambda item: item.version, default=None)
+        if latest is not None:
+            repository.update_impact_analysis(replace(latest, status="superseded"))
+        supersedes_id = latest.id if latest is not None else analysis.supersedes_id
+        analysis = replace(analysis, supersedes_id=supersedes_id)
+    analysis = replace(analysis, status=payload.status)
+    repository.update_impact_analysis(analysis)
+    if payload.status == "approved":
+        repository.add_outbox(
+            "target_impact.recompute.requested.v1",
+            analysis.id,
+            {"event_id": analysis.event_id, "analysis_id": analysis.id},
+        )
+    saver = getattr(repository, "save_audit_log", None)
+    if callable(saver):
+        saver(
+            AuditLog(
+                id=new_id("aud"),
+                actor_id=user.id,
+                action="impact_analysis.transition",
+                object_type="impact_analysis",
+                object_id=analysis.id,
+                request_id=request.state.request_id,
+                details={"status": payload.status, "comment": payload.comment},
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+    return DataEnvelope(
+        data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/impact-analyses/{impact_analysis_id}/graph", response_model=DataEnvelope)
+def get_impact_analysis_graph(
+    impact_analysis_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    try:
+        graph = ImpactAnalysisService(request.app.state.repository).graph(impact_analysis_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="IMPACT_ANALYSIS_NOT_FOUND") from exc
+    return DataEnvelope(
+        data=graph, meta={"request_id": request.state.request_id, "schema_version": "2.1"}
+    )
+
+
+@router.post("/api/v1/impact-analyses/{impact_analysis_id}/drafts", response_model=DataEnvelope)
+def derive_impact_analysis_draft(
+    impact_analysis_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        draft = ImpactAnalysisService(request.app.state.repository).derive_draft(
+            impact_analysis_id, user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="IMPACT_ANALYSIS_NOT_FOUND") from exc
+    return DataEnvelope(
+        data=ImpactAnalysisResponse.model_validate(draft, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "2.1"},
+    )
+
+
+@router.patch(
+    "/api/v1/impact-analyses/{impact_analysis_id}/graph",
+    response_model=DataEnvelope,
+    responses=openapi_error_responses(400, 401, 404, 409, 422),
+)
+def edit_impact_analysis_graph(
+    impact_analysis_id: str,
+    payload: ImpactGraphEditRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        analysis = ImpactAnalysisService(request.app.state.repository).edit_graph(
+            impact_analysis_id,
+            expected_revision=payload.expected_revision,
+            graph=payload.graph,
+            scenarios=payload.scenarios,
+            impact_assessments=payload.impact_assessments,
+            actor=user.id,
+            change_reason=payload.change_reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=409 if "CONFLICT" in detail or "REQUIRED" in detail else 400, detail=detail
+        ) from exc
+    return DataEnvelope(
+        data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "2.1"},
+    )
+
+
+@router.get("/api/v1/impact-analyses/{impact_analysis_id}/layout", response_model=DataEnvelope)
+def get_impact_graph_layout(
+    impact_analysis_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    layout = request.app.state.repository.get_impact_graph_layout(impact_analysis_id, user.id)
+    return DataEnvelope(
+        data=layout
+        or {
+            "analysis_id": impact_analysis_id,
+            "user_id": user.id,
+            "node_positions": {},
+            "collapsed_groups": [],
+            "viewport": {},
+        },
+        meta={"request_id": request.state.request_id, "schema_version": "2.1"},
+    )
+
+
+@router.put("/api/v1/impact-analyses/{impact_analysis_id}/layout", response_model=DataEnvelope)
+def put_impact_graph_layout(
+    impact_analysis_id: str,
+    payload: ImpactGraphLayoutRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    from app.domain import ImpactGraphLayout
+
+    layout = ImpactGraphLayout(
+        analysis_id=impact_analysis_id,
+        user_id=user.id,
+        node_positions=payload.node_positions,
+        collapsed_groups=payload.collapsed_groups,
+        viewport=payload.viewport,
+        updated_at=datetime.now(timezone.utc),
+    )
+    request.app.state.repository.save_impact_graph_layout(layout)
+    return DataEnvelope(
+        data=layout, meta={"request_id": request.state.request_id, "schema_version": "2.1"}
+    )
+
+
+@router.delete("/api/v1/impact-analyses/{impact_analysis_id}/layout", response_model=DataEnvelope)
+def delete_impact_graph_layout(
+    impact_analysis_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    request.app.state.repository.delete_impact_graph_layout(impact_analysis_id, user.id)
+    return DataEnvelope(
+        data={"deleted": True},
+        meta={"request_id": request.state.request_id, "schema_version": "2.1"},
+    )
+
+
+@router.get("/api/v1/impact-targets", response_model=DataEnvelope)
+def list_impact_targets(
+    request: Request,
+    target_type: Optional[str] = Query(default=None),
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    targets = request.app.state.repository.list_impact_targets(target_type)
+    return DataEnvelope(
+        data=[ImpactTargetResponse.model_validate(item, from_attributes=True) for item in targets],
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "3.0",
+            "count": len(targets),
+        },
+    )
+
+
+@router.get("/api/v1/impact-targets/{target_id}/dashboard", response_model=DataEnvelope)
+def get_impact_target_dashboard(
+    target_id: str,
+    request: Request,
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    horizon: Optional[str] = Query(default=None),  # noqa: B008
+    scenario_set_id: str = Query(default="baseline"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    dashboard = ImpactAggregationService(request.app.state.repository).dashboard(
+        target_id,
+        as_of=as_of,
+        horizon=horizon,
+        scenario_set_id=scenario_set_id,
+    )
+    if dashboard is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    return DataEnvelope(
+        data=dashboard,
+        meta={"request_id": request.state.request_id, "schema_version": "3.1"},
+    )
+
+
+@router.get("/api/v1/impact-targets/{target_id}/timeline", response_model=DataEnvelope)
+def get_impact_target_timeline(
+    target_id: str,
+    request: Request,
+    start: Optional[datetime] = Query(default=None),  # noqa: B008
+    end: Optional[datetime] = Query(default=None),  # noqa: B008
+    granularity: str = Query(default="auto", pattern="^(auto|day|week|month)$"),  # noqa: B008
+    horizon: Optional[str] = Query(default=None),  # noqa: B008
+    scenario_set_id: str = Query(default="baseline"),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    now = datetime.now(timezone.utc)
+    timeline = ImpactAggregationService(request.app.state.repository).timeline(
+        target_id,
+        start=start or now - timedelta(days=180),
+        end=end or now,
+        granularity=granularity,
+        horizon=horizon,
+        scenario_set_id=scenario_set_id,
+    )
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    return DataEnvelope(
+        data=timeline,
+        meta={"request_id": request.state.request_id, "schema_version": "3.1"},
+    )
+
+
+@router.get("/api/v1/impact-targets/{target_id}/snapshot", response_model=DataEnvelope)
+def get_impact_target_snapshot(
+    target_id: str,
+    request: Request,
+    horizon: Optional[str] = Query(default=None),
+    scenario_set_id: str = Query(default="baseline"),
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    repository = request.app.state.repository
+    if repository.get_impact_target(target_id) is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    snapshot = repository.get_latest_target_impact_snapshot(target_id, horizon, scenario_set_id)
+    if snapshot is None:
+        snapshot = ImpactAggregationService(repository).recompute_target(
+            target_id, horizon=horizon, scenario_set_id=scenario_set_id
+        )
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="IMPACT_SNAPSHOT_NOT_FOUND")
+    links = repository.list_target_impact_snapshot_contributions(snapshot.id)
+    data = ImpactSnapshotResponse.model_validate(
+        {**snapshot.__dict__, "contributions": [item.__dict__ for item in links]}
+    )
+    return DataEnvelope(
+        data=data, meta={"request_id": request.state.request_id, "schema_version": "3.0"}
+    )
+
+
+@router.get("/api/v1/impact-targets/{target_id}/graph", response_model=DataEnvelope)
+def get_impact_target_graph(
+    target_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    graph = ImpactAggregationService(request.app.state.repository).graph(target_id)
+    if not graph["nodes"]:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    return DataEnvelope(
+        data={"schema_version": "3.0", "legacy": False, "causal_graph": graph},
+        meta={"request_id": request.state.request_id, "schema_version": "3.0"},
+    )
+
+
+@router.get("/api/v1/impact-targets/{target_id}", response_model=DataEnvelope)
+def get_impact_target(
+    target_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    target = request.app.state.repository.get_impact_target(target_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    return DataEnvelope(
+        data=ImpactTargetResponse.model_validate(target, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "3.0"},
+    )
+
+
+@router.post("/api/v1/impact-targets/{target_id}/recompute", response_model=DataEnvelope)
+def recompute_impact_target(
+    target_id: str,
+    request: Request,
+    horizon: Optional[str] = Query(default=None),
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    snapshot = ImpactAggregationService(request.app.state.repository).recompute_target(
+        target_id, horizon=horizon
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    return DataEnvelope(
+        data=snapshot, meta={"request_id": request.state.request_id, "schema_version": "3.0"}
+    )
+
+
+@router.post("/api/v1/impact-projections/backfill", response_model=DataEnvelope)
+def backfill_impact_projections(
+    payload: ImpactProjectionBackfillRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    if payload.as_of is not None and payload.as_of.tzinfo is None:
+        raise HTTPException(status_code=422, detail="IMPACT_BACKFILL_AS_OF_TIMEZONE_REQUIRED")
+    report = ImpactProjectionBackfillService(request.app.state.repository).run(as_of=payload.as_of)
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="impact_projection.backfill",
+            object_type="impact_projection",
+            object_id=None,
+            request_id=request.state.request_id,
+            details=jsonable_encoder(report),
+        )
+    )
+    return DataEnvelope(
+        data=jsonable_encoder(report),
+        meta={"request_id": request.state.request_id, "schema_version": "3.0"},
+    )
+
+
+@router.post("/api/v1/event-impact-relations", response_model=DataEnvelope)
+def create_event_impact_relation(
+    payload: EventImpactRelationRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    if (
+        repository.get_event(payload.source_event_id) is None
+        or repository.get_event(payload.target_event_id) is None
+    ):
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND")
+    relation = EventImpactRelation(
+        id=new_id("eir"),
+        source_event_id=payload.source_event_id,
+        target_event_id=payload.target_event_id,
+        relation_type=payload.relation_type,
+        dependency_weight=payload.dependency_weight,
+        confidence=payload.confidence,
+        evidence_refs=payload.evidence_refs,
+        status="approved" if user.role == "admin" else "needs_review",
+        created_at=datetime.now(timezone.utc),
+    )
+    repository.save_event_impact_relation(relation)
+    return DataEnvelope(
+        data=relation, meta={"request_id": request.state.request_id, "schema_version": "3.0"}
+    )
+
+
+@router.get("/api/v1/future-events", response_model=DataEnvelope)
+def list_future_events(
+    request: Request,
+    start: Optional[datetime] = Query(default=None),  # noqa: B008
+    end: Optional[datetime] = Query(default=None),  # noqa: B008
+    target_id: Optional[str] = Query(default=None),  # noqa: B008
+    event_type: Optional[str] = Query(default=None),  # noqa: B008
+    kind: Optional[str] = Query(default=None),  # noqa: B008
+    include_candidates: bool = Query(default=False),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    now = datetime.now(timezone.utc)
+    start_value = start or now
+    end_value = end or now + timedelta(days=90)
+    if end_value < start_value:
+        raise HTTPException(status_code=422, detail="FUTURE_EVENT_RANGE_INVALID")
+    service = ForwardImpactService(request.app.state.repository)
+    events = service.list_calendar_events(
+        start=start_value,
+        end=end_value,
+        target_id=target_id,
+        event_type=event_type,
+        kinds={kind} if kind else None,
+        include_candidates=include_candidates,
+        as_of=as_of,
+    )
+    return DataEnvelope(
+        data=events,
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "4.1",
+            "count": len(events),
+        },
+    )
+
+
+@router.post("/api/v1/future-events", response_model=DataEnvelope)
+def create_future_event(
+    payload: FutureEventCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    now = datetime.now(timezone.utc)
+    event_id = new_id("fev")
+    revision_id = new_id("fer")
+    event = FutureEvent(
+        id=event_id,
+        event_type=payload.event_type,
+        kind=payload.kind,
+        current_revision_id=revision_id,
+        created_by=user.id,
+        created_at=now,
+    )
+    revision = FutureEventRevision(
+        id=revision_id,
+        future_event_id=event_id,
+        revision_no=1,
+        title=payload.title,
+        description=payload.description,
+        scheduled_from=payload.scheduled_from,
+        scheduled_to=payload.scheduled_to,
+        source_timezone=payload.source_timezone,
+        time_precision=payload.time_precision,
+        status="approved" if user.role == "admin" else "candidate",
+        importance=payload.importance,
+        probability_low=payload.probability_low,
+        probability_base=payload.probability_base,
+        probability_high=payload.probability_high,
+        probability_basis=payload.probability_basis,
+        source_url=payload.source_url,
+        evidence_refs=payload.evidence_refs,
+        available_at=now,
+        created_by=user.id,
+        created_at=now,
+    )
+    repository = request.app.state.repository
+    repository.save_future_event(event)
+    repository.save_future_event_revision(revision)
+    for item in payload.target_impacts:
+        if repository.get_impact_target(item.target_id) is None:
+            raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+        expected = (
+            None
+            if item.occurrence_probability is None
+            else round(item.conditional_strength * item.occurrence_probability, 6)
+        )
+        repository.save_future_event_target_impact(
+            FutureEventTargetImpact(
+                id=new_id("fei"),
+                future_event_id=event_id,
+                revision_id=revision_id,
+                target_id=item.target_id,
+                scenario_id=item.scenario_id,
+                direction=item.direction,
+                magnitude=item.magnitude,
+                conditional_strength=item.conditional_strength,
+                occurrence_probability=item.occurrence_probability,
+                expected_strength=expected,
+                confidence=item.confidence,
+                rationale=item.rationale,
+                onset_at=item.onset_at or payload.scheduled_from,
+                expected_peak_at=item.expected_peak_at,
+                valid_to=item.valid_to or payload.scheduled_to,
+                evidence_refs=item.evidence_refs,
+                status=revision.status,
+                created_at=now,
+            )
+        )
+    return DataEnvelope(
+        data={"event": event, "revision": revision},
+        meta={"request_id": request.state.request_id, "schema_version": "5.0"},
+    )
+
+
+@router.get("/api/v1/future-events/{future_event_id}", response_model=DataEnvelope)
+def get_future_event(
+    future_event_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    repository = request.app.state.repository
+    event = repository.get_future_event(future_event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="FUTURE_EVENT_NOT_FOUND")
+    revision = (
+        repository.get_future_event_revision(event.current_revision_id)
+        if event.current_revision_id
+        else None
+    )
+    return DataEnvelope(
+        data={
+            "event": event,
+            "current_revision": revision,
+            "revisions": repository.list_future_event_revisions(event.id),
+            "target_impacts": repository.list_future_event_target_impacts(event_id=event.id),
+        },
+        meta={"request_id": request.state.request_id, "schema_version": "5.0"},
+    )
+
+
+@router.post("/api/v1/future-events/{future_event_id}/transition", response_model=DataEnvelope)
+def transition_future_event(
+    future_event_id: str,
+    payload: FutureEventTransitionRequest,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    event = repository.get_future_event(future_event_id)
+    if event is None or event.current_revision_id is None:
+        raise HTTPException(status_code=404, detail="FUTURE_EVENT_NOT_FOUND")
+    revision = repository.get_future_event_revision(event.current_revision_id)
+    if revision is None or revision.revision_no != payload.expected_revision:
+        raise HTTPException(status_code=409, detail="FUTURE_EVENT_REVISION_CONFLICT")
+    if payload.status == "realized" and not payload.realized_event_id:
+        raise HTTPException(status_code=422, detail="REALIZED_EVENT_REQUIRED")
+    now = datetime.now(timezone.utc)
+    updated = FutureEventRevision(
+        **{
+            **revision.__dict__,
+            "id": new_id("fer"),
+            "revision_no": revision.revision_no + 1,
+            "status": payload.status,
+            "change_reason": payload.change_reason,
+            "supersedes_revision_id": revision.id,
+            "created_by": user.id,
+            "created_at": now,
+            "available_at": now,
+        }
+    )
+    repository.save_future_event_revision(updated)
+    repository.save_future_event(
+        FutureEvent(
+            **{
+                **event.__dict__,
+                "current_revision_id": updated.id,
+                "realized_event_id": payload.realized_event_id or event.realized_event_id,
+            }
+        )
+    )
+    return DataEnvelope(
+        data={"event": repository.get_future_event(event.id), "revision": updated},
+        meta={"request_id": request.state.request_id, "schema_version": "5.0"},
+    )
+
+
+@router.get("/api/v1/future-calendar/summary", response_model=DataEnvelope)
+def future_calendar_summary(
+    request: Request,
+    start: datetime,
+    end: datetime,
+    timezone_name: str = Query(default="Asia/Shanghai", alias="timezone"),  # noqa: B008
+    target_id: Optional[str] = Query(default=None),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    if end < start:
+        raise HTTPException(status_code=422, detail="FUTURE_EVENT_RANGE_INVALID")
+    try:
+        data = ForwardImpactService(request.app.state.repository).calendar_summary(
+            start=start, end=end, timezone_name=timezone_name, target_id=target_id, as_of=as_of
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="FUTURE_CALENDAR_TIMEZONE_INVALID") from exc
+    return DataEnvelope(
+        data=data, meta={"request_id": request.state.request_id, "schema_version": "4.1"}
+    )
+
+
+@router.get("/api/v1/future-calendar/day", response_model=DataEnvelope)
+def future_calendar_day(
+    request: Request,
+    selected_date: date = Query(alias="date"),  # noqa: B008
+    timezone_name: str = Query(default="Asia/Shanghai", alias="timezone"),  # noqa: B008
+    target_id: Optional[str] = Query(default=None),  # noqa: B008
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    try:
+        data = ForwardImpactService(request.app.state.repository).day_view(
+            selected_date=selected_date,
+            timezone_name=timezone_name,
+            target_id=target_id,
+            as_of=as_of,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="FUTURE_CALENDAR_TIMEZONE_INVALID") from exc
+    return DataEnvelope(
+        data=data, meta={"request_id": request.state.request_id, "schema_version": "4.1"}
+    )
+
+
+@router.post("/api/v1/forward-impact-windows", response_model=DataEnvelope)
+def create_forward_impact_window(
+    payload: ForwardImpactWindowCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    if repository.get_impact_target(payload.target_id) is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    window = ForwardImpactWindow(
+        id=new_id("fiw"),
+        target_id=payload.target_id,
+        as_of=payload.as_of,
+        window_start=payload.window_start,
+        window_end=payload.window_end,
+        event_types=payload.event_types,
+        catalyst_ids=payload.catalyst_ids,
+        included_kinds=payload.included_kinds,
+        granularity=payload.granularity,
+        scenario_set_id=payload.scenario_set_id,
+        created_by=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    try:
+        ForwardImpactService(repository).create_window(window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    repository.add_outbox(
+        "forward_impact.compute.requested.v1", window.id, {"window_id": window.id}
+    )
+    return DataEnvelope(
+        data=window, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.post("/api/v1/forward-catalysts", response_model=DataEnvelope)
+def create_forward_catalyst(
+    payload: ForwardCatalystCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    if request.app.state.repository.get_impact_target(payload.target_id) is None:
+        raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")
+    catalyst = ForwardCatalyst(
+        id=new_id("fct"),
+        target_id=payload.target_id,
+        kind=payload.kind,
+        title=payload.title,
+        event_type=payload.event_type,
+        scheduled_from=payload.scheduled_from,
+        scheduled_to=payload.scheduled_to,
+        trigger_definition=payload.trigger_definition,
+        probability_low=payload.probability_low,
+        probability_base=payload.probability_base,
+        probability_high=payload.probability_high,
+        probability_basis=payload.probability_basis,
+        evidence_refs=payload.evidence_refs,
+        status="approved" if user.role == "admin" else "candidate",
+        created_by=user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    request.app.state.repository.save_forward_catalyst(catalyst)
+    return DataEnvelope(
+        data=catalyst, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.get("/api/v1/forward-impact-windows/{window_id}/catalysts", response_model=DataEnvelope)
+def list_forward_window_catalysts(
+    window_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    repository = request.app.state.repository
+    window = repository.get_forward_impact_window(window_id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="FORWARD_IMPACT_WINDOW_NOT_FOUND")
+    catalysts = repository.list_forward_catalysts(window.target_id)
+    if window.catalyst_ids:
+        catalysts = [item for item in catalysts if item.id in window.catalyst_ids]
+    return DataEnvelope(
+        data=catalysts, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.post("/api/v1/forward-catalysts/{catalyst_id}/approve", response_model=DataEnvelope)
+def approve_forward_catalyst(
+    catalyst_id: str,
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    catalyst = repository.get_forward_catalyst(catalyst_id)
+    if catalyst is None:
+        raise HTTPException(status_code=404, detail="FORWARD_CATALYST_NOT_FOUND")
+    approved = ForwardCatalyst(**{**catalyst.__dict__, "status": "approved"})
+    repository.save_forward_catalyst(approved)
+    return DataEnvelope(
+        data=approved, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.get("/api/v1/forward-impact-windows/{window_id}/timeline", response_model=DataEnvelope)
+def get_forward_impact_timeline(
+    window_id: str,
+    request: Request,
+    scenario_id: str = Query(default="baseline"),
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    repository = request.app.state.repository
+    if repository.get_forward_impact_window(window_id) is None:
+        raise HTTPException(status_code=404, detail="FORWARD_IMPACT_WINDOW_NOT_FOUND")
+    points = repository.list_forward_points(window_id, scenario_id)
+    if not points:
+        points = ForwardImpactService(repository).recompute(window_id)
+        points = [item for item in points if item.scenario_id == scenario_id]
+    return DataEnvelope(
+        data=points, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.get("/api/v1/forward-impact-windows/{window_id}/graph", response_model=DataEnvelope)
+def get_forward_impact_graph(
+    window_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    try:
+        graph = ForwardImpactService(request.app.state.repository).graph(window_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return DataEnvelope(
+        data={"schema_version": "4.0", "causal_graph": graph},
+        meta={"request_id": request.state.request_id, "schema_version": "4.0"},
+    )
+
+
+@router.post("/api/v1/forward-impact-windows/{window_id}/recompute", response_model=DataEnvelope)
+def recompute_forward_impact(
+    window_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    try:
+        points = ForwardImpactService(request.app.state.repository).recompute(window_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return DataEnvelope(
+        data=points, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
+    )
+
+
+@router.get("/api/v1/forward-impact-windows/{window_id}", response_model=DataEnvelope)
+def get_forward_impact_window(
+    window_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    window = request.app.state.repository.get_forward_impact_window(window_id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="FORWARD_IMPACT_WINDOW_NOT_FOUND")
+    return DataEnvelope(
+        data=window, meta={"request_id": request.state.request_id, "schema_version": "4.0"}
     )
 
 
@@ -2251,9 +4208,7 @@ def transition_report(
     response = envelope(
         FactCardResponse.model_validate(updated, from_attributes=True), request.state.request_id
     )
-    return _idempotency_finish(
-        request, storage_key, request_hash, operation, updated.id, response
-    )
+    return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
 
 @router.get("/api/v1/briefs/daily", response_model=DataEnvelope)
