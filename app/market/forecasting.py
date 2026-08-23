@@ -195,6 +195,16 @@ class ForecastLifecycleService:
                 if len(future) < run.horizon:
                     continue
                 outcome_bar = future[run.horizon - 1]
+                base_adjustment = state.get("latest_adjustment")
+                if base_adjustment is not None and base_adjustment != outcome_bar.adjustment:
+                    # A qfq base price divided by an unadjusted outcome price is
+                    # not a return.  Leave the forecast pending rather than
+                    # settling it against an incompatible price basis.
+                    warnings.append(
+                        f"{run.id}:adjustment_mismatch:"
+                        f"{base_adjustment}->{outcome_bar.adjustment}"
+                    )
+                    continue
                 realized_return = outcome_bar.close / float(base_price) - 1
                 outcome = MarketForecastOutcome(
                     id=new_id("mfo"),

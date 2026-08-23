@@ -122,6 +122,33 @@ def test_fallback_selects_more_complete_daily_history_per_instrument() -> None:
     assert "cn:000001:fallback_selected" in result.warnings
 
 
+def test_fallback_drops_series_with_mixed_adjustment_conventions() -> None:
+    mixed = [
+        MarketBar(
+            **{
+                **_bar().__dict__,
+                "observed_at": datetime(2026, 8, day, 7, tzinfo=timezone.utc),
+                "adjustment": "qfq" if day % 2 else "none",
+            }
+        )
+        for day in range(1, 11)
+    ]
+    result = FallbackMarketDataProvider(
+        InMemoryMarketDataProvider(mixed), UnavailableMarketDataProvider()
+    ).get_bars(
+        instrument_ids=["cn:000001"],
+        start=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 18, tzinfo=timezone.utc),
+        interval="1d",
+        as_of=AS_OF,
+        limit=100,
+    )
+
+    assert result.bars == []
+    assert result.status == "degraded"
+    assert "cn:000001:mixed_adjustment:none/qfq" in result.warnings
+
+
 def test_eastmoney_network_failure_degrades_without_raising() -> None:
     def failing_transport(url: str, params: dict[str, object]) -> dict[str, object]:
         raise TimeoutError("upstream timeout")

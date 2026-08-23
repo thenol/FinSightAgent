@@ -434,6 +434,35 @@ def _parse_iso_timestamp(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _reject_mixed_adjustments(result: MarketDataResult) -> MarketDataResult:
+    """Drop any instrument whose bars mix adjustment conventions.
+
+    Dividing a qfq close by an unadjusted close is not a return.  A mixed series
+    is a provider defect, so surface it as a structured warning and withhold the
+    data instead of letting downstream models compute meaningless numbers.
+    """
+
+    grouped = _bars_by_instrument(result.bars)
+    mixed = {
+        instrument_id: sorted({bar.adjustment for bar in bars})
+        for instrument_id, bars in grouped.items()
+        if len({bar.adjustment for bar in bars}) > 1
+    }
+    if not mixed:
+        return result
+    kept = [bar for bar in result.bars if bar.instrument_id not in mixed]
+    warnings = list(result.warnings) + [
+        f"{instrument_id}:mixed_adjustment:{'/'.join(adjustments)}"
+        for instrument_id, adjustments in sorted(mixed.items())
+    ]
+    return replace(
+        result,
+        status="ok" if kept else "degraded",
+        bars=kept,
+        warnings=list(dict.fromkeys(warnings)),
+    )
+
+
 def _limit_bars_per_instrument(bars: list[MarketBar], limit: int) -> list[MarketBar]:
     grouped = _bars_by_instrument(bars)
     selected = [bar for values in grouped.values() for bar in values[-limit:]]
@@ -532,7 +561,7 @@ class FallbackMarketDataProvider:
             if len(primary_by_id.get(instrument_id, ())) < expected
         ]
         if not incomplete:
-            return primary_result
+            return _reject_mixed_adjustments(primary_result)
 
         fallback_kwargs = {**kwargs, "instrument_ids": incomplete}
         try:
@@ -556,19 +585,26 @@ class FallbackMarketDataProvider:
                 warnings.append(
                     f"{instrument_id}:primary_incomplete:{len(primary_bars)}/{expected}"
                 )
-            if len(fallback_bars) > len(primary_bars):
-                selected.extend(fallback_bars)
+            # Routing picks one provider per instrument so a return series never
+            # spans two adjustment conventions.
+            chosen = fallback_bars if len(fallback_bars) > len(primary_bars) else primary_bars
+            if chosen is fallback_bars and fallback_bars:
                 warnings.append(f"{instrument_id}:fallback_selected")
-            else:
-                selected.extend(primary_bars)
+            selected.extend(chosen)
         warnings.extend(fallback_result.warnings)
         selected = _limit_bars_per_instrument(selected, limit)
-        available_ids = {bar.instrument_id for bar in selected}
-        return MarketDataResult(
+        merged = _reject_mixed_adjustments(
+            MarketDataResult(
+                status="ok",
+                bars=selected,
+                capability=self.capability,
+                warnings=list(dict.fromkeys(warnings)),
+            )
+        )
+        available_ids = {bar.instrument_id for bar in merged.bars}
+        return replace(
+            merged,
             status="ok" if set(instrument_ids) <= available_ids else "degraded",
-            bars=selected,
-            capability=self.capability,
-            warnings=list(dict.fromkeys(warnings)),
         )
 
     def get_snapshots(self, **kwargs: Any) -> MarketDataResult:

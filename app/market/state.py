@@ -27,6 +27,11 @@ class MarketStateSnapshot:
     freshness_lag_seconds: float | None = None
     data_warnings: tuple[str, ...] = ()
     latest_close: float | None = None
+    # Price basis provenance for ``latest_close``.  Forecast settlement compares
+    # a future bar against this price, so a return is only meaningful when both
+    # legs share the same adjustment convention.
+    latest_adjustment: str | None = None
+    latest_source: str | None = None
 
 
 class MarketStateService:
@@ -143,6 +148,8 @@ def _build_snapshot(
         freshness_lag_seconds=freshness_lag,
         data_warnings=data_warnings,
         latest_close=bars[-1].close if bars else None,
+        latest_adjustment=bars[-1].adjustment if bars else None,
+        latest_source=bars[-1].source if bars else None,
     )
 
 

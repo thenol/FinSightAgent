@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from app.domain import MarketCalibrationVersion
@@ -107,6 +108,48 @@ def test_insufficient_forecast_is_persisted_but_excluded_from_settlement() -> No
     assert receipt.runs[0].probabilities is None
     assert settlement.excluded_count == 1
     assert settlement.settled_count == 0
+
+
+def test_settlement_refuses_to_mix_adjustment_conventions() -> None:
+    """A qfq base price and an unadjusted outcome price do not form a return.
+
+    Issuance and settlement are separate queries that can be served by different
+    providers (bridge returns unadjusted bars, EastMoney daily returns qfq), so
+    the price basis must be compared explicitly.
+    """
+
+    repository = InMemoryRepository()
+    issue_bars = [replace(bar, adjustment="qfq") for bar in _bars()]
+    service = ForecastLifecycleService(
+        repository,
+        InMemoryMarketDataProvider(issue_bars),
+        MarketInstrumentCatalog((INSTRUMENT,)),
+    )
+    receipt = service.issue(
+        instrument_ids=[INSTRUMENT.id],
+        start=AS_OF - timedelta(days=79),
+        end=AS_OF,
+        horizon=1,
+        interval="1d",
+        as_of=AS_OF,
+        limit=500,
+        created_by="usr_test",
+    )
+    assert receipt.runs[0].input_snapshot["market_state"]["latest_adjustment"] == "qfq"
+
+    unadjusted = ForecastLifecycleService(
+        repository,
+        InMemoryMarketDataProvider([replace(bar, adjustment="none") for bar in _bars()]),
+        MarketInstrumentCatalog((INSTRUMENT,)),
+    )
+    settlement = unadjusted.settle(
+        evaluation_as_of=AS_OF + timedelta(days=1),
+        forecast_ids=[receipt.runs[0].id],
+    )
+
+    assert settlement.settled_count == 0
+    assert any("adjustment_mismatch:qfq->none" in item for item in settlement.warnings)
+    assert repository.get_market_forecast_outcome(receipt.runs[0].id) is None
 
 
 def test_historical_forecast_cannot_see_future_published_calibration() -> None:
