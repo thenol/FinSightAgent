@@ -23,6 +23,7 @@ from app.api.schemas import (
     BriefEntryResponse,
     BriefResponse,
     BudgetLedgerEntryResponse,
+    CapabilityEvaluationResponse,
     ClaimResponse,
     ConflictResponse,
     DataEnvelope,
@@ -30,6 +31,7 @@ from app.api.schemas import (
     EventDetailResponse,
     EventImpactRelationRequest,
     EventResponse,
+    EventTypeProposalResponse,
     EventTypeRegistryResponse,
     EvidenceResponse,
     FactCardResponse,
@@ -66,8 +68,11 @@ from app.api.schemas import (
     MergeReviewDecisionRequest,
     MergeReviewTaskResponse,
     NodeAttemptResponse,
+    OODClusterResponse,
+    OODObservationResponse,
     PipelineResponse,
     ReportTransitionRequest,
+    ReprocessingJobResponse,
     ResearchBlackboardResponse,
     ResearchCreateRequest,
     ResearchPlanListResponse,
@@ -76,6 +81,8 @@ from app.api.schemas import (
     RetrievalRetrieveRequest,
     RetrievalTraceResponse,
     ReviewDecisionRequest,
+    ReviewPolicyResponse,
+    ReviewPolicyUpdateRequest,
     ReviewTaskResponse,
     SourceCreateRequest,
     SourceHealthResponse,
@@ -96,6 +103,7 @@ from app.domain import (
     ImpactTargetMapping,
     MarketCalibrationVersion,
     RetrievalRequest,
+    ReviewPolicy,
     Source,
     User,
 )
@@ -134,6 +142,7 @@ from app.model_gateway.config import (
     upsert_binding,
 )
 from app.model_gateway.secrets import SecretBox
+from app.ood_learning import OODLearningService
 from app.platform.ids import new_id
 from app.platform.pagination import decode_cursor, page_items
 from app.platform.repository import (
@@ -1368,6 +1377,269 @@ def list_reviews(
     return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
 
 
+def _review_queue_state(task, attempts, now: datetime) -> str:
+    if task.status == "decided":
+        return "decided"
+    latest = attempts[0] if attempts else None
+    if latest and latest.status == "decided":
+        return "agent_decided"
+    if latest and latest.status in {"escalated", "disabled"}:
+        return "escalated_to_human"
+    age = (now - (task.created_at or now)).total_seconds()
+    return "sla_breached" if age > 3600 else "pending"
+
+
+def _review_queue_display(
+    repository, object_type: str, object_id: str, cache: dict
+) -> tuple[dict, dict]:
+    """Resolve a review object's business-facing label without exposing IDs as the title."""
+    key = (object_type, object_id)
+    if key in cache:
+        return cache[key]
+    display = {
+        "title": f"{object_type} 审核对象",
+        "type_label": {
+            "report": "研究报告",
+            "workflow": "工作流",
+            "claim_conflict": "事实冲突",
+            "merge_review": "事件合并审核",
+        }.get(object_type, object_type),
+        "subtitle": "对象详情暂不可用",
+        "summary": "请打开详情查看审核上下文。",
+        "href": f"/reviews/{object_id}",
+        "reference_id": object_id,
+    }
+    context: dict = {}
+    if object_type == "merge_review":
+        task = repository.get_merge_review_task(object_id)
+        document = repository.get_document(task.document_id) if task else None
+        events = [repository.get_event(event_id) for event_id in (task.candidates if task else [])]
+        events = [event for event in events if event]
+        if document:
+            display.update(
+                title=document.title or "待确认文档",
+                subtitle=f"{display['type_label']} · {len(events)} 个候选事件",
+                summary=(document.content or "").strip()[:240] or "文档等待事件归并判断。",
+                href=f"/merge-reviews/{object_id}",
+            )
+        if events:
+            event = events[0]
+            context.update(
+                event_id=event.id,
+                event_title=event.title,
+                event_type=event.event_type,
+                occurred_at=event.occurred_at,
+                importance=event.importance,
+                candidate_count=len(events),
+            )
+    else:
+        obj = (
+            repository.get_fact_card(object_id)
+            if object_type == "report"
+            else repository.get_workflow_run(object_id)
+            if object_type == "workflow"
+            else repository.get_conflict(object_id)
+        )
+        event_id = getattr(obj, "event_id", None) if obj else None
+        event = repository.get_event(event_id) if event_id else None
+        if object_type == "report" and obj:
+            display.update(
+                title=obj.title,
+                subtitle=f"{display['type_label']} · {obj.report_type}",
+                summary=obj.summary or "报告待审核。",
+                href=f"/reports/{object_id}",
+            )
+        elif object_type == "workflow" and obj:
+            display.update(
+                title=event.title if event else "工作流运行",
+                subtitle=f"{display['type_label']} · {obj.current_node or '待执行'}",
+                summary=obj.error_code or f"当前状态：{obj.status}",
+            )
+        elif object_type == "claim_conflict" and obj:
+            display.update(
+                title=obj.summary or "事实冲突待处理",
+                subtitle=f"{display['type_label']} · {obj.conflict_type} · {obj.severity}",
+                summary=f"涉及 {len(obj.claim_ids)} 条 Claim。",
+                href=f"/conflicts/{object_id}",
+            )
+        if event:
+            context.update(
+                event_id=event.id,
+                event_title=event.title,
+                event_type=event.event_type,
+                occurred_at=event.occurred_at,
+                importance=event.importance,
+            )
+    cache[key] = (display, context)
+    return display, context
+
+
+def _review_queue_item(repository, task, now: datetime, cache: Optional[dict] = None) -> dict:
+    cache = cache if cache is not None else {}
+    object_type = getattr(task, "object_type", "merge_review")
+    object_id = getattr(task, "object_id", getattr(task, "id", ""))
+    attempts = repository.list_auto_review_attempts(task.id, limit=20)
+    latest = attempts[0] if attempts else None
+    display, context = _review_queue_display(repository, object_type, object_id, cache)
+    reason_code = getattr(task, "reason_code", "EVENT_MERGE_CANDIDATE")
+    status = getattr(task, "status", "pending")
+    risk_level = (
+        "high"
+        if reason_code in {"CLAIM_CONFLICT", "QUALITY_GATE_FAILED", "LOW_CONFIDENCE"}
+        else "normal"
+    )
+    importance = float(context.get("importance") or 0)
+    sla_factor = 1.5 if (now - (task.created_at or now)).total_seconds() > 3600 else 1.0
+    priority_score = min(
+        100, round((importance * 60 + (30 if risk_level == "high" else 10)) * sla_factor)
+    )
+    return {
+        **task.__dict__,
+        "object_type": object_type,
+        "object_id": object_id,
+        "reason_code": reason_code,
+        "status": "pending" if object_type == "merge_review" and status == "open" else status,
+        "allowed_decisions": getattr(task, "allowed_decisions", ["merge", "new_event", "skip"]),
+        "reviewer_id": getattr(task, "reviewer_id", None),
+        "decided_at": getattr(task, "decided_at", None),
+        "display": display,
+        "context": context,
+        "risk_level": risk_level,
+        "priority_score": priority_score,
+        "priority_band": (
+            "critical" if priority_score >= 80 else "high" if priority_score >= 60 else "normal"
+        ),
+        "priority_reasons": (
+            (["高风险原因"] if risk_level == "high" else [])
+            + (["事件重要度高"] if importance >= 0.7 else [])
+            + (["已超过SLA"] if sla_factor > 1 else [])
+        ),
+        "review_state": (
+            _review_queue_state(task, attempts, now)
+            if object_type != "merge_review"
+            else ("decided" if status == "decided" else "pending")
+        ),
+        "last_auto_review_status": latest.status if latest else None,
+        "last_auto_review_at": latest.created_at if latest else None,
+        "last_auto_review_confidence": latest.confidence if latest else None,
+        "last_auto_review_reason": latest.reason if latest else None,
+        "auto_review_attempt_count": len(attempts),
+        "reviewer_type": (
+            "agent"
+            if getattr(task, "reviewer_id", None) == "agent:default_reviewer"
+            else ("human" if getattr(task, "reviewer_id", None) else "none")
+        ),
+        "age_seconds": max(0, int((now - (task.created_at or now)).total_seconds())),
+        "sla_seconds": 3600,
+    }
+
+
+@router.get("/api/v1/review-queue/overview", response_model=DataEnvelope)
+def review_queue_overview(
+    request: Request,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    now = datetime.now(timezone.utc)
+    repository = request.app.state.repository
+    tasks = repository.list_review_tasks(limit=500)
+    merge_tasks = repository.list_merge_review_tasks(limit=500)
+    cache: dict = {}
+    items = [_review_queue_item(repository, task, now, cache) for task in tasks]
+    items.extend(_review_queue_item(repository, task, now, cache) for task in merge_tasks)
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item["review_state"]] = counts.get(item["review_state"], 0) + 1
+    return envelope(
+        {
+            "counts": counts,
+            "total": len(items),
+            "oldest_pending_at": min(
+                (
+                    item["created_at"]
+                    for item in items
+                    if item["review_state"] in {"pending", "escalated_to_human"}
+                ),
+                default=None,
+            ),
+            "refreshed_at": now,
+        },
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/review-queue/items", response_model=DataEnvelope)
+def review_queue_items(
+    request: Request,
+    status_filter: Annotated[Optional[str], Query()] = None,
+    object_type: Annotated[Optional[str], Query()] = None,
+    risk_level: Annotated[Optional[str], Query(pattern="^(high|normal)$")] = None,
+    sort: Annotated[str, Query(pattern="^(priority_desc|created_desc|sla_asc)$")] = "priority_desc",
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    now = datetime.now(timezone.utc)
+    repository = request.app.state.repository
+    tasks = repository.list_review_tasks(limit=500)
+    merge_tasks = repository.list_merge_review_tasks(limit=500)
+    cache: dict = {}
+    items = [_review_queue_item(repository, task, now, cache) for task in tasks]
+    items.extend(_review_queue_item(repository, task, now, cache) for task in merge_tasks)
+    if status_filter:
+        items = [item for item in items if item["review_state"] == status_filter]
+    if object_type:
+        items = [item for item in items if item["object_type"] == object_type]
+    if risk_level:
+        items = [item for item in items if item["risk_level"] == risk_level]
+    if sort == "created_desc":
+        items.sort(
+            key=lambda item: item.get("created_at")
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+    elif sort == "sla_asc":
+        items.sort(key=lambda item: item.get("age_seconds", 0), reverse=True)
+    else:
+        items.sort(key=lambda item: item.get("priority_score", 0), reverse=True)
+    items = items[:limit]
+    return envelope(items, request.state.request_id)
+
+
+@router.get("/api/v1/review-queue/{task_id}/timeline", response_model=DataEnvelope)
+def review_queue_timeline(
+    task_id: str,
+    request: Request,
+    _user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    task = request.app.state.repository.get_review_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="REVIEW_NOT_FOUND")
+    attempts = request.app.state.repository.list_auto_review_attempts(task.id, limit=100)
+    timeline = [
+        {
+            "type": "created",
+            "at": task.created_at,
+            "details": {"reason_code": task.reason_code},
+        }
+    ]
+    timeline.extend(
+        {"type": "auto_review", "at": item.created_at, "details": item.__dict__}
+        for item in reversed(attempts)
+    )
+    if task.decided_at:
+        timeline.append(
+            {
+                "type": "decided",
+                "at": task.decided_at,
+                "details": {
+                    "decision": task.decision,
+                    "reviewer_id": task.reviewer_id,
+                    "comment": task.comment,
+                },
+            }
+        )
+    return envelope(timeline, request.state.request_id)
+
+
 @router.post(
     "/api/v1/events/{event_id}/workflows",
     response_model=DataEnvelope,
@@ -2558,6 +2830,71 @@ def _llm_http_error(exc: LlmConfigError) -> HTTPException:
     return HTTPException(status_code=status_code, detail=code)
 
 
+@router.get("/api/v1/admin/review-policy", response_model=DataEnvelope)
+def get_review_policy(
+    request: Request,
+    user: User = Depends(require_roles("reviewer", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    settings = request.app.state.settings
+    policy = request.app.state.repository.get_review_policy()
+    source = "environment" if policy.updated_at is None else "database"
+    return envelope(
+        ReviewPolicyResponse(
+            id=policy.id,
+            mode="human" if settings.auto_review_disabled else policy.mode,
+            min_confidence=policy.min_confidence,
+            source=source,
+            updated_by=policy.updated_by,
+            updated_at=policy.updated_at,
+            emergency_disabled=settings.auto_review_disabled,
+        ),
+        request.state.request_id,
+    )
+
+
+@router.patch("/api/v1/admin/review-policy", response_model=DataEnvelope)
+def update_review_policy(
+    payload: ReviewPolicyUpdateRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    if request.app.state.settings.auto_review_disabled and payload.mode == "agent":
+        raise HTTPException(status_code=409, detail="AUTO_REVIEW_EMERGENCY_DISABLED")
+    current = request.app.state.repository.get_review_policy()
+    updated = ReviewPolicy(
+        id=current.id,
+        mode=payload.mode,
+        min_confidence=current.min_confidence,
+        updated_by=user.id,
+        updated_at=datetime.now(timezone.utc),
+    )
+    request.app.state.repository.save_review_policy(updated)
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="review.policy.updated",
+            object_type="review_policy",
+            object_id=updated.id,
+            request_id=request.state.request_id,
+            details={"mode": updated.mode, "previous_mode": current.mode},
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(
+        ReviewPolicyResponse(
+            id=updated.id,
+            mode=updated.mode,
+            min_confidence=updated.min_confidence,
+            source="database",
+            updated_by=updated.updated_by,
+            updated_at=updated.updated_at,
+            emergency_disabled=request.app.state.settings.auto_review_disabled,
+        ),
+        request.state.request_id,
+    )
+
+
 @router.get("/api/v1/llm/presets", response_model=DataEnvelope)
 def get_llm_presets(
     request: Request,
@@ -3114,6 +3451,223 @@ def list_events(
         for value in request.app.state.repository.list_events(limit=limit + 1, cursor=cursor)
     ]
     return _page_envelope(values, limit, lambda value: value.occurred_at, request.state.request_id)
+
+
+@router.get("/api/v1/ood/observations", response_model=DataEnvelope)
+def list_ood_observations(
+    request: Request,
+    status: Optional[str] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status", "limit"})
+    values = [
+        OODObservationResponse.model_validate(item, from_attributes=True)
+        for item in request.app.state.repository.list_ood_observations(status=status, limit=limit)
+    ]
+    return envelope(values, request.state.request_id)
+
+
+@router.get("/api/v1/ood/observations/{observation_id}", response_model=DataEnvelope)
+def get_ood_observation(
+    observation_id: str,
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    value = request.app.state.repository.get_ood_observation(observation_id)
+    if value is None:
+        raise HTTPException(status_code=404, detail="OOD_OBSERVATION_NOT_FOUND")
+    return envelope(
+        OODObservationResponse.model_validate(value, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/ood/clusters", response_model=DataEnvelope)
+def list_ood_clusters(
+    request: Request,
+    status: Optional[str] = None,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status"})
+    values = [
+        OODClusterResponse.model_validate(item, from_attributes=True)
+        for item in request.app.state.repository.list_ood_clusters(status=status)
+    ]
+    return envelope(values, request.state.request_id)
+
+
+@router.post("/api/v1/ood/clusters/{cluster_id}/cluster", response_model=DataEnvelope)
+def run_ood_clustering(
+    cluster_id: str,
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    cluster = request.app.state.repository.get_ood_cluster(cluster_id)
+    if cluster is None:
+        raise HTTPException(status_code=404, detail="OOD_CLUSTER_NOT_FOUND")
+    proposal = OODLearningService(request.app.state.repository).propose_type(cluster)
+    return envelope(
+        EventTypeProposalResponse.model_validate(proposal, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/ood/proposals", response_model=DataEnvelope)
+def list_ood_proposals(
+    request: Request,
+    status: Optional[str] = None,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"status"})
+    values = [
+        EventTypeProposalResponse.model_validate(item, from_attributes=True)
+        for item in request.app.state.repository.list_event_type_proposals(status=status)
+    ]
+    return envelope(values, request.state.request_id)
+
+
+@router.post("/api/v1/ood/proposals/{proposal_id}/build-pack", response_model=DataEnvelope)
+def build_ood_pack(
+    proposal_id: str,
+    request: Request,
+    _user: User = Depends(require_roles("admin", "researcher")),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    repository = request.app.state.repository
+    proposal = repository.get_event_type_proposal(proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="OOD_PROPOSAL_NOT_FOUND")
+    pack = OODLearningService(repository).build_candidate_pack(proposal)
+    return envelope(
+        {"pack_id": pack.manifest.pack_id, "version": pack.manifest.version, "status": pack.status},
+        request.state.request_id,
+    )
+
+
+@router.post(
+    "/api/v1/capability-packs/{pack_id}/versions/{version}/evaluate",
+    response_model=DataEnvelope,
+)
+def evaluate_capability_pack(
+    pack_id: str,
+    version: str,
+    request: Request,
+    _user: User = Depends(require_roles("admin", "researcher")),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    service = OODLearningService(request.app.state.repository)
+    pack = service.registry.get(pack_id, version)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="CAPABILITY_PACK_NOT_FOUND")
+    result = service.evaluate_pack(pack)
+    return envelope(
+        CapabilityEvaluationResponse.model_validate(result, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/capability-evaluations", response_model=DataEnvelope)
+def list_capability_evaluations(
+    request: Request,
+    pack_id: Optional[str] = None,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"pack_id"})
+    values = [
+        CapabilityEvaluationResponse.model_validate(item, from_attributes=True)
+        for item in request.app.state.repository.list_capability_evaluations(pack_id=pack_id)
+    ]
+    return envelope(values, request.state.request_id)
+
+
+@router.get("/api/v1/capability-packs", response_model=DataEnvelope)
+def list_capability_packs(
+    request: Request,
+    pack_status: Optional[str] = None,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, {"pack_status"})
+    packs = OODLearningService(request.app.state.repository).registry.list(status=pack_status)
+    return envelope(
+        [
+            {
+                "pack_id": pack.manifest.pack_id,
+                "version": pack.manifest.version,
+                "status": pack.manifest.status,
+                "display_name": pack.manifest.display_name,
+                "event_types": pack.manifest.event_types,
+                "required_capabilities": pack.manifest.required_capabilities,
+            }
+            for pack in packs
+        ],
+        request.state.request_id,
+    )
+
+
+@router.post(
+    "/api/v1/capability-packs/{pack_id}/versions/{version}/transition",
+    response_model=DataEnvelope,
+)
+def transition_capability_pack(
+    pack_id: str,
+    version: str,
+    request: Request,
+    payload: dict[str, Any],
+    _user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    status_value = str(payload.get("status") or "")
+    try:
+        pack = OODLearningService(request.app.state.repository).registry.transition(
+            pack_id, version, status_value
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return envelope(
+        {
+            "pack_id": pack.manifest.pack_id,
+            "version": pack.manifest.version,
+            "status": pack.manifest.status,
+        },
+        request.state.request_id,
+    )
+
+
+@router.post("/api/v1/reprocessing/jobs", response_model=DataEnvelope)
+def create_reprocessing_job(
+    request: Request,
+    payload: dict[str, Any],
+    _user: User = Depends(require_roles("admin", "researcher")),  # noqa: B008
+) -> DataEnvelope:
+    target_pack_id = str(payload.get("target_pack_id") or "")
+    event_ids = payload.get("event_ids") or []
+    if not target_pack_id or not isinstance(event_ids, list):
+        raise HTTPException(status_code=422, detail="INVALID_REPROCESSING_REQUEST")
+    job = OODLearningService(request.app.state.repository).create_reprocessing_job(
+        target_pack_id=target_pack_id,
+        event_ids=[str(item) for item in event_ids],
+        source_pack_id=payload.get("source_pack_id"),
+    )
+    return envelope(
+        ReprocessingJobResponse.model_validate(job, from_attributes=True),
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/reprocessing/jobs", response_model=DataEnvelope)
+def list_reprocessing_jobs(
+    request: Request,
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    _validate_query(request, set())
+    values = [
+        ReprocessingJobResponse.model_validate(item, from_attributes=True)
+        for item in request.app.state.repository.list_reprocessing_jobs()
+    ]
+    return envelope(values, request.state.request_id)
 
 
 @router.get("/api/v1/events/{event_id}", response_model=DataEnvelope)

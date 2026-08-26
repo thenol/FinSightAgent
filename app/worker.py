@@ -37,6 +37,7 @@ from app.platform.db_models import WorkflowRunModel
 from app.platform.messaging import OutboxPublisher, RedisStreamBroker
 from app.platform.repository import InMemoryRepository, SqlAlchemyRepository
 from app.platform.settings import Settings
+from app.review.service import AutoReviewService
 from app.workflows.service import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,35 @@ async def run_workflow() -> None:
             pass
 
 
+def _auto_review_once(repository, limit: int = 20) -> int:
+    service = AutoReviewService(repository)
+    processed = 0
+    for task in repository.list_review_tasks(status="pending", limit=limit):
+        service.attempt_task(task)
+        processed += 1
+    for task in repository.list_merge_review_tasks(status="open", limit=limit):
+        service.attempt_merge_review(task)
+        processed += 1
+    return processed
+
+
+async def run_auto_review() -> None:
+    settings = Settings.from_environment()
+    if settings.repository != "postgresql":
+        raise RuntimeError("Auto review worker requires FINSIGHT_REPOSITORY=postgresql")
+    repository = SqlAlchemyRepository(settings.database_url)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for event in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(event, stop.set)
+    while not stop.is_set():
+        processed = await asyncio.to_thread(_auto_review_once, repository, 20)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=0.1 if processed else 2.0)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def run_impact_analysis() -> None:
     settings = Settings.from_environment()
     if settings.repository != "postgresql":
@@ -192,6 +222,25 @@ async def run_reevaluate() -> None:
         await asyncio.to_thread(service.run_once)
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def run_ood_observation() -> None:
+    """Validate queued OOD observations and keep the learning queue observable."""
+    settings = Settings.from_environment()
+    if settings.repository != "postgresql":
+        raise RuntimeError("OOD observation worker requires FINSIGHT_REPOSITORY=postgresql")
+    repository = SqlAlchemyRepository(settings.database_url)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for event in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(event, stop.set)
+    while not stop.is_set():
+        observations = repository.list_ood_observations(status="ready_for_clustering", limit=50)
+        logger.info("ood observation queue size=%s", len(observations))
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=5.0)
         except asyncio.TimeoutError:
             pass
 
@@ -399,6 +448,7 @@ def main() -> None:
         choices=[
             "outbox",
             "workflow",
+            "auto-review",
             "source",
             "impact-analysis",
             "impact-aggregation",
@@ -407,6 +457,7 @@ def main() -> None:
             "reevaluate",
             "market-data",
             "forecast-outcomes",
+            "ood-observation",
         ],
     )
     arguments = parser.parse_args()
@@ -414,6 +465,8 @@ def main() -> None:
         asyncio.run(run_outbox())
     if arguments.worker == "workflow":
         asyncio.run(run_workflow())
+    if arguments.worker == "auto-review":
+        asyncio.run(run_auto_review())
     if arguments.worker == "source":
         asyncio.run(run_source())
     if arguments.worker == "impact-analysis":
@@ -430,6 +483,8 @@ def main() -> None:
         asyncio.run(run_market_data())
     if arguments.worker == "forecast-outcomes":
         asyncio.run(run_forecast_outcomes())
+    if arguments.worker == "ood-observation":
+        asyncio.run(run_ood_observation())
 
 
 if __name__ == "__main__":

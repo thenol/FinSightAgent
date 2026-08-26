@@ -150,6 +150,33 @@ DEFAULT_REVIEWER_ID = "agent:default_reviewer"
 
 
 @dataclass(frozen=True)
+class ReviewPolicy:
+    """Runtime review automation policy."""
+
+    id: str = "review_policy:default"
+    mode: str = "agent"
+    min_confidence: float = 0.85
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class AutoReviewAttempt:
+    """Immutable audit record for one automatic review attempt."""
+
+    id: str
+    task_id: str
+    object_type: str
+    object_id: str
+    status: str
+    decision: Optional[str]
+    confidence: float
+    reason: str
+    model_run_id: Optional[str]
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class LlmProviderConfig:
     """Admin-managed LLM endpoint used by ModelGateway (keys stored encrypted)."""
 
@@ -377,6 +404,8 @@ class Event:
     classifier_version: str = ""
     missing_required: list[str] = field(default_factory=list)
     time_resolution: dict[str, Any] = field(default_factory=dict)
+    capability_pack_id: Optional[str] = None
+    capability_pack_version: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -477,6 +506,107 @@ class EventTypeRegistryEntry:
     event_count: int = 0
     decided_by: Optional[str] = None
     decided_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class OODObservation:
+    """Immutable record of an event that is relevant but outside known schemas."""
+
+    id: str
+    event_id: str
+    document_id: str
+    status: str = "observed"
+    ood_score: float = 0.0
+    financial_relevance: float = 0.0
+    closest_known_types: list[dict[str, Any]] = field(default_factory=list)
+    extracted_features: dict[str, Any] = field(default_factory=dict)
+    evidence_ids: list[str] = field(default_factory=list)
+    classifier_version: str = ""
+    router_version: str = ""
+    embedding_model_version: Optional[str] = None
+    generic_pack_id: Optional[str] = None
+    generic_pack_version: Optional[str] = None
+    cluster_id: Optional[str] = None
+    observed_at: Optional[datetime] = None
+    as_of: Optional[datetime] = None
+    version: int = 1
+
+
+@dataclass(frozen=True)
+class OODCluster:
+    """Versioned candidate cluster for related OOD observations."""
+
+    id: str
+    label: str
+    status: str = "forming"
+    member_count: int = 0
+    independent_source_count: int = 0
+    cohesion_score: float = 0.0
+    separation_score: float = 0.0
+    stability_score: float = 0.0
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    cluster_version: int = 1
+
+
+@dataclass(frozen=True)
+class OODFeatureSnapshot:
+    id: str
+    observation_id: str
+    feature_schema_version: str
+    features: dict[str, Any] = field(default_factory=dict)
+    generated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class EventTypeProposal:
+    id: str
+    cluster_id: str
+    proposed_label: str
+    display_name: str
+    definition: str
+    status: str = "draft"
+    parent_type: Optional[str] = None
+    inclusion_rules: list[str] = field(default_factory=list)
+    exclusion_rules: list[str] = field(default_factory=list)
+    required_fields: list[str] = field(default_factory=list)
+    optional_fields: list[str] = field(default_factory=list)
+    mechanisms: list[dict[str, Any]] = field(default_factory=list)
+    representative_event_ids: list[str] = field(default_factory=list)
+    counterexample_event_ids: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    agent_run_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class CapabilityEvaluation:
+    id: str
+    pack_id: str
+    pack_version: str
+    baseline_pack_id: Optional[str] = None
+    baseline_pack_version: Optional[str] = None
+    status: str = "pending"
+    metrics: dict[str, Any] = field(default_factory=dict)
+    comparison: dict[str, Any] = field(default_factory=dict)
+    recommendation: str = ""
+    created_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ReprocessingJob:
+    id: str
+    source_pack_id: Optional[str]
+    target_pack_id: str
+    event_ids: list[str] = field(default_factory=list)
+    status: str = "pending"
+    total_count: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    summary: dict[str, Any] = field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

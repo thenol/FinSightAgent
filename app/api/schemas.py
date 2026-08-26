@@ -228,6 +228,22 @@ class LlmAgentBindingBulkRequest(BaseModel):
     model_override: Optional[str] = Field(default=None, max_length=120)
 
 
+class ReviewPolicyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(pattern="^(agent|human)$")
+
+
+class ReviewPolicyResponse(BaseModel):
+    id: str
+    mode: str
+    min_confidence: float
+    source: str
+    updated_by: Optional[str]
+    updated_at: Optional[datetime]
+    emergency_disabled: bool
+
+
 class AuditLogResponse(BaseModel):
     id: str
     actor_id: Optional[str]
@@ -443,6 +459,8 @@ class EventResponse(BaseModel):
     confidence: float = 0.0
     key_fields: dict[str, Any] = Field(default_factory=dict)
     missing_required: list[str] = Field(default_factory=list)
+    capability_pack_id: Optional[str] = None
+    capability_pack_version: Optional[str] = None
 
 
 class EventTypeRegistryResponse(BaseModel):
@@ -452,6 +470,89 @@ class EventTypeRegistryResponse(BaseModel):
     promotion_ready: bool = False
     decided_by: Optional[str] = None
     decided_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class OODObservationResponse(BaseModel):
+    id: str
+    event_id: str
+    document_id: str
+    status: str
+    ood_score: float
+    financial_relevance: float
+    closest_known_types: list[dict[str, Any]] = Field(default_factory=list)
+    extracted_features: dict[str, Any] = Field(default_factory=dict)
+    evidence_ids: list[str] = Field(default_factory=list)
+    classifier_version: str
+    router_version: str
+    embedding_model_version: Optional[str] = None
+    generic_pack_id: Optional[str] = None
+    generic_pack_version: Optional[str] = None
+    cluster_id: Optional[str] = None
+    observed_at: Optional[datetime] = None
+    as_of: Optional[datetime] = None
+    version: int = 1
+
+
+class OODClusterResponse(BaseModel):
+    id: str
+    label: str
+    status: str
+    member_count: int
+    independent_source_count: int
+    cohesion_score: float
+    separation_score: float
+    stability_score: float
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    cluster_version: int
+
+
+class EventTypeProposalResponse(BaseModel):
+    id: str
+    cluster_id: str
+    proposed_label: str
+    display_name: str
+    definition: str
+    status: str
+    parent_type: Optional[str] = None
+    inclusion_rules: list[str] = Field(default_factory=list)
+    exclusion_rules: list[str] = Field(default_factory=list)
+    required_fields: list[str] = Field(default_factory=list)
+    optional_fields: list[str] = Field(default_factory=list)
+    mechanisms: list[dict[str, Any]] = Field(default_factory=list)
+    representative_event_ids: list[str] = Field(default_factory=list)
+    counterexample_event_ids: list[str] = Field(default_factory=list)
+    confidence: float
+    agent_run_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+
+
+class CapabilityEvaluationResponse(BaseModel):
+    id: str
+    pack_id: str
+    pack_version: str
+    baseline_pack_id: Optional[str] = None
+    baseline_pack_version: Optional[str] = None
+    status: str
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    comparison: dict[str, Any] = Field(default_factory=dict)
+    recommendation: str
+    created_at: Optional[datetime] = None
+
+
+class ReprocessingJobResponse(BaseModel):
+    id: str
+    source_pack_id: Optional[str] = None
+    target_pack_id: str
+    event_ids: list[str] = Field(default_factory=list)
+    status: str
+    total_count: int
+    success_count: int
+    failed_count: int
+    summary: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

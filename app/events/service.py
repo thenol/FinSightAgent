@@ -4,10 +4,12 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.capabilities import default_capability_registry
 from app.domain import Document, Event, MergeReviewTask, WatchTrigger
 from app.events.classifier import ClassificationResult, EventClassifier
 from app.events.entities import EntityResolver
 from app.events.importance import ImportanceCalculator
+from app.events.reference_data import default_reference_data_provider
 from app.events.schemas import (
     GENERAL_MARKET_NEWS,
     OUT_OF_SCOPE,
@@ -26,7 +28,12 @@ _TIME_RESOLUTION_CACHE_LIMIT = 4096
 class EventService:
     def __init__(self, repository: Repository) -> None:
         self.repository = repository
-        self.resolver = EntityResolver(repository)
+        self.capability_registry = default_capability_registry()
+        self.resolver = EntityResolver(
+            repository,
+            default_reference_data_provider(),
+            allow_code_fallback=True,
+        )
         self.classifier = EventClassifier()
         self.importance_calculator = ImportanceCalculator()
         self.time_parser = DeterministicEventTimeParser()
@@ -90,6 +97,7 @@ class EventService:
             result.event_type,
             result.key_fields,
         )
+        pack = self.capability_registry.resolve_for_event(result.event_type)
         document_text = f"{document.title}\n{document.content}"
         resolutions = self.resolver.resolve(document_text, document.id)
         market_codes = [resolution.market_code for resolution in resolutions]
@@ -139,6 +147,8 @@ class EventService:
             classifier_version=result.schema_version,
             missing_required=result.missing_required,
             time_resolution=_resolution_payload(time_resolution),
+            capability_pack_id=(pack.manifest.pack_id if pack else None),
+            capability_pack_version=(pack.manifest.version if pack else None),
         )
         self._remember_time_resolution(event.id, time_resolution)
         self.repository.save_event(event)

@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.capabilities import compile_capability_plan, default_capability_registry
 from app.domain import ResearchPlan, ResearchTask
 from app.model_gateway.failures import record_model_failure
 from app.model_gateway.service import ModelRequest
@@ -203,10 +204,12 @@ class ResearchPlanner:
         registry=None,
         model_gateway=None,
         templates: Optional[dict[str, list[dict[str, Any]]]] = None,
+        capability_registry=None,
     ) -> None:
         self.registry = registry
         self.model_gateway = model_gateway
         self.templates = templates or DEFAULT_TEMPLATES
+        self.capability_registry = capability_registry or default_capability_registry()
 
     _MACRO_KEYWORDS = ("加息", "降息", "lpr", "准备金", "fed", "fomc", "央行", "货币政策")
     _COMPANY_KEYWORDS = ("业绩", "净利润", "营收", "合同", "中标", "并购", "收购", "股东减持")
@@ -242,6 +245,7 @@ class ResearchPlanner:
         question: str,
         as_of: Optional[datetime] = None,
         event_id: Optional[str] = None,
+        event_type: Optional[str] = None,
         budget_profile: str = "mvp_standard",
         use_llm: bool = False,
     ) -> ResearchPlan:
@@ -286,6 +290,17 @@ class ResearchPlanner:
         metadata: dict[str, Any] = {"question_type": question_type}
         if event_id:
             metadata["event_id"] = event_id
+            # Capability metadata is persisted with the plan; task execution remains
+            # backward-compatible while packs are promoted incrementally.
+            pack = self.capability_registry.resolve_for_event(event_type or question_type)
+            if pack:
+                capability_plan = compile_capability_plan(pack)
+                metadata["capability_pack"] = {
+                    "id": pack.manifest.pack_id,
+                    "version": pack.manifest.version,
+                    "phase": capability_plan.phase,
+                    "tasks": [task.name for task in capability_plan.tasks],
+                }
 
         return ResearchPlan(
             id=plan_id,

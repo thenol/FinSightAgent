@@ -63,4 +63,5 @@ class DefaultReviewerAgent:
             confidence=parsed.confidence,
             reason=parsed.reason,
             escalate=parsed.escalate,
+            model_run_id=response.run_id,
         )

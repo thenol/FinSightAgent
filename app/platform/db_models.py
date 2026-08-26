@@ -135,6 +135,36 @@ class ReviewTaskModel(Base):
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class ReviewPolicyModel(Base):
+    __tablename__ = "review_policy"
+    __table_args__ = {"schema": "platform"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), default="agent")
+    min_confidence: Mapped[float] = mapped_column(Float, default=0.85)
+    updated_by: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AutoReviewAttemptModel(Base):
+    __tablename__ = "auto_review_attempts"
+    __table_args__ = (
+        Index("ix_auto_review_attempts_task_created", "task_id", "created_at"),
+        {"schema": "platform"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String, index=True)
+    object_type: Mapped[str] = mapped_column(String(40))
+    object_id: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String(24))
+    decision: Mapped[Optional[str]] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    model_run_id: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class ModelRunModel(Base):
     __tablename__ = "model_runs"
     __table_args__ = (Index("ix_model_runs_request_hash", "request_hash"), {"schema": "platform"})
@@ -440,6 +470,8 @@ class EventModel(Base):
     classifier_version: Mapped[str] = mapped_column(String(50), default="")
     missing_required: Mapped[list[str]] = mapped_column(JSON, default=list)
     time_resolution: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    capability_pack_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    capability_pack_version: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     version: Mapped[int] = mapped_column(default=1)
 
 
@@ -541,6 +573,115 @@ class EventTypeRegistryModel(Base):
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class OODObservationModel(Base):
+    __tablename__ = "ood_observations"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    document_id: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="observed", index=True)
+    ood_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    financial_relevance: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    closest_known_types: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    extracted_features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    classifier_version: Mapped[str] = mapped_column(String(80), default="")
+    router_version: Mapped[str] = mapped_column(String(40), default="")
+    embedding_model_version: Mapped[Optional[str]] = mapped_column(String(100))
+    generic_pack_id: Mapped[Optional[str]] = mapped_column(String(120))
+    generic_pack_version: Mapped[Optional[str]] = mapped_column(String(24))
+    cluster_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class OODClusterModel(Base):
+    __tablename__ = "ood_clusters"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    label: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(32), default="forming", index=True)
+    member_count: Mapped[int] = mapped_column(Integer, default=0)
+    independent_source_count: Mapped[int] = mapped_column(Integer, default=0)
+    cohesion_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    separation_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    stability_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    first_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    cluster_version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class OODFeatureSnapshotModel(Base):
+    __tablename__ = "ood_feature_snapshots"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    observation_id: Mapped[str] = mapped_column(String, index=True)
+    feature_schema_version: Mapped[str] = mapped_column(String(40))
+    features: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EventTypeProposalModel(Base):
+    __tablename__ = "event_type_proposals"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    cluster_id: Mapped[str] = mapped_column(String, index=True)
+    proposed_label: Mapped[str] = mapped_column(String(64), index=True)
+    display_name: Mapped[str] = mapped_column(String(160))
+    definition: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    parent_type: Mapped[Optional[str]] = mapped_column(String(64))
+    inclusion_rules: Mapped[list[str]] = mapped_column(JSON, default=list)
+    exclusion_rules: Mapped[list[str]] = mapped_column(JSON, default=list)
+    required_fields: Mapped[list[str]] = mapped_column(JSON, default=list)
+    optional_fields: Mapped[list[str]] = mapped_column(JSON, default=list)
+    mechanisms: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    representative_event_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    counterexample_event_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    agent_run_id: Mapped[Optional[str]] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class CapabilityEvaluationModel(Base):
+    __tablename__ = "capability_evaluations"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    pack_id: Mapped[str] = mapped_column(String(120), index=True)
+    pack_version: Mapped[str] = mapped_column(String(24))
+    baseline_pack_id: Mapped[Optional[str]] = mapped_column(String(120))
+    baseline_pack_version: Mapped[Optional[str]] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    comparison: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    recommendation: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ReprocessingJobModel(Base):
+    __tablename__ = "reprocessing_jobs"
+    __table_args__ = {"schema": "events"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_pack_id: Mapped[Optional[str]] = mapped_column(String(120))
+    target_pack_id: Mapped[str] = mapped_column(String(120))
+    event_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class MatchDecisionModel(Base):

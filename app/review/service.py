@@ -5,6 +5,7 @@ from typing import Optional
 from app.domain import (
     DEFAULT_REVIEWER_ID,
     AuditLog,
+    AutoReviewAttempt,
     Claim,
     ConflictRecord,
     FactCard,
@@ -31,51 +32,139 @@ class AutoReviewService:
         self.settings = settings or Settings.from_environment()
         self.agent = agent or DefaultReviewerAgent(ModelGateway(repository))
 
+    def mode(self) -> str:
+        if self.settings.auto_review_disabled:
+            return "human"
+        policy_getter = getattr(self.repository, "get_review_policy", None)
+        policy = policy_getter() if callable(policy_getter) else None
+        return getattr(policy, "mode", None) or self.settings.review_mode
+
+    def attempt_task(self, task: ReviewTask) -> Optional[AutoReviewDecision]:
+        """Process a queued task through the configured Agent policy."""
+        if self._has_attempt(task.id):
+            return None
+        if self.mode() != "agent":
+            self._record_attempt(task, "disabled", None, "审核方式为人工")
+            return None
+        decision: Optional[AutoReviewDecision]
+        if task.object_type == "report":
+            card = self.repository.get_fact_card(task.object_id)
+            if card:
+                return self.attempt_report_review(task, card)
+            decision = None
+        elif task.object_type == "claim_conflict":
+            conflict = self.repository.get_conflict(task.object_id)
+            if conflict:
+                return self.attempt_conflict_review(task, conflict)
+            decision = None
+        elif task.object_type == "workflow":
+            return self.attempt_workflow_review(task)
+        else:
+            decision = None
+        if decision is None:
+            self._record_attempt(task, "escalated", None, "Agent 未能在质量门内作出决定")
+        return decision
+
     def attempt_report_review(
         self, task: ReviewTask, card: FactCard
     ) -> Optional[AutoReviewDecision]:
         """尝试自动审核 report 类型任务。"""
-        if "report" not in self.settings.auto_review_enabled_types:
+        if self.mode() != "agent" or "report" not in self.settings.auto_review_enabled_types:
             return None
         decision = self._decide_report(task, card)
         if decision is None or decision.escalate:
+            if decision is not None:
+                self._record_attempt(task, "escalated", decision, decision.reason)
             return None
-        if decision.confidence < self.settings.auto_review_min_confidence:
+        if decision.confidence < self._min_confidence():
+            self._record_attempt(task, "escalated", decision, "置信度低于自动审核门槛")
             return None
         self._apply_report_decision(task, card, decision)
+        self._record_attempt(task, "decided", decision, decision.reason)
         return decision
 
     def attempt_conflict_review(
         self, task: ReviewTask, conflict: ConflictRecord
     ) -> Optional[AutoReviewDecision]:
         """尝试自动审核 claim_conflict 类型任务。"""
-        if "claim_conflict" not in self.settings.auto_review_enabled_types:
+        if (
+            self.mode() != "agent"
+            or "claim_conflict" not in self.settings.auto_review_enabled_types
+        ):
             return None
         decision = self._decide_conflict(task, conflict)
         if decision is None or decision.escalate:
+            if decision is not None:
+                self._record_attempt(task, "escalated", decision, decision.reason)
             return None
-        if decision.confidence < self.settings.auto_review_min_confidence:
+        if decision.confidence < self._min_confidence():
+            self._record_attempt(task, "escalated", decision, "置信度低于自动审核门槛")
             return None
         self._apply_conflict_decision(task, conflict, decision)
+        self._record_attempt(task, "decided", decision, decision.reason)
         return decision
 
-    def attempt_workflow_review(self, task: ReviewTask) -> None:
+    def attempt_workflow_review(self, task: ReviewTask) -> Optional[AutoReviewDecision]:
         """workflow 类型暂不适合自动决定，统一转人工。"""
+        self._record_attempt(task, "escalated", None, "工作流审核保留人工质量门")
         return None
 
     def attempt_merge_review(
         self, task: MergeReviewTask
     ) -> Optional[AutoReviewDecision]:
         """尝试自动审核 merge_review 任务。"""
-        if "merge_review" not in self.settings.auto_review_enabled_types:
+        if self._has_attempt(task.id):
+            return None
+        if self.mode() != "agent" or "merge_review" not in self.settings.auto_review_enabled_types:
             return None
         decision = self._decide_merge(task)
         if decision is None or decision.escalate:
+            if decision is not None:
+                self._record_attempt(task, "escalated", decision, decision.reason)
             return None
-        if decision.confidence < self.settings.auto_review_min_confidence:
+        if decision.confidence < self._min_confidence():
+            self._record_attempt(task, "escalated", decision, "置信度低于自动审核门槛")
             return None
         self._apply_merge_decision(task, decision)
+        self._record_attempt(task, "decided", decision, decision.reason)
         return decision
+
+    def _min_confidence(self) -> float:
+        policy_getter = getattr(self.repository, "get_review_policy", None)
+        policy = policy_getter() if callable(policy_getter) else None
+        return float(
+            getattr(policy, "min_confidence", None)
+            or self.settings.auto_review_min_confidence
+        )
+
+    def _record_attempt(
+        self,
+        task: ReviewTask | MergeReviewTask,
+        status: str,
+        decision: Optional[AutoReviewDecision],
+        reason: str,
+    ) -> None:
+        saver = getattr(self.repository, "save_auto_review_attempt", None)
+        if not callable(saver):
+            return
+        saver(
+            AutoReviewAttempt(
+                id=new_id("ara"),
+                task_id=task.id,
+                object_type=getattr(task, "object_type", "merge_review"),
+                object_id=getattr(task, "object_id", getattr(task, "document_id", task.id)),
+                status=status,
+                decision=decision.decision if decision else None,
+                confidence=decision.confidence if decision else 0.0,
+                reason=reason,
+                model_run_id=decision.model_run_id if decision else None,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+    def _has_attempt(self, task_id: str) -> bool:
+        getter = getattr(self.repository, "list_auto_review_attempts", None)
+        return bool(getter(task_id, 1)) if callable(getter) else False
 
     # --- 决策规则 ---
 

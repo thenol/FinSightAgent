@@ -94,6 +94,34 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
 
+  auto-review-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker", "auto-review"]
+    env_file:
+      - ../.env
+    environment:
+      FINSIGHT_ENV: production
+      FINSIGHT_REPOSITORY: postgresql
+      FINSIGHT_DATABASE_URL: ${FINSIGHT_COMPOSE_DATABASE_URL:?Set FINSIGHT_COMPOSE_DATABASE_URL}
+      FINSIGHT_REDIS_URL: redis://redis:6379/0
+      FINSIGHT_JWT_SECRET: ${FINSIGHT_JWT_SECRET}
+    depends_on:
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import glob, os; assert any(b'app.worker' in open(path, 'rb').read() for path in glob.glob('/proc/[0-9]*/cmdline') if path != f'/proc/{os.getpid()}/cmdline')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   source-worker:
     build:
       context: ..

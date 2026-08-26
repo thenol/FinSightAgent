@@ -12,6 +12,7 @@ from app.evidence.service import EvidenceService
 from app.ingestion.artifacts import ArtifactStore, InMemoryArtifactStore
 from app.ingestion.service import IngestionService
 from app.model_gateway.service import ModelGateway
+from app.ood import OODDetectionService
 from app.platform.ids import new_id
 from app.platform.repository import PipelineResultReference, RepositoryProvider
 from app.platform.settings import Settings
@@ -114,6 +115,7 @@ class EventResearchPipeline:
                         )
 
             is_new_event = False
+            router_decision = None
             # Router/ModelGateway 必须挂在当前事务 repository 上，避免 SQLite 嵌套锁
             gateway = self._model_gateway_override or ModelGateway(repository)
             router = self._event_router_override or EventRouter(gateway)
@@ -178,6 +180,11 @@ class EventResearchPipeline:
                             },
                             created_at=datetime.now(timezone.utc),
                         )
+                    )
+                detection = OODDetectionService(repository).detect(document, router_decision)
+                if is_new_event:
+                    OODDetectionService(repository).observe(
+                        document, event, router_decision, detection
                     )
             # 业务 Claim 按 Schema 批量生成；FactCard 目前仍以首个主 Claim 为入口，
             # 其余 Claim 已持久化并可供工作流/核验读取。

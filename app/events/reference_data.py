@@ -106,6 +106,7 @@ class DeterministicReferenceDataProvider:
             ),
         )
 
+
     @staticmethod
     def _current_matches(
         text: str,
@@ -226,3 +227,20 @@ def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def default_reference_data_provider() -> DeterministicReferenceDataProvider:
+    """Return the versioned seed catalog used before a mastered adapter is configured."""
+    return DeterministicReferenceDataProvider(
+        records=(
+            ReferenceSecurity(
+                entity_id="entity:alibaba",
+                security_id="security:hk:9988",
+                market_code="9988.HK",
+                canonical_name="Alibaba",
+                full_name="阿里巴巴集团控股有限公司",
+                short_names=("阿里巴巴", "阿里", "Alibaba"),
+            ),
+        ),
+        version="reference-data-seed-v1",
+    )

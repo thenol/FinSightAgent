@@ -61,11 +61,16 @@ class Settings:
     # 自动触发开关；false 时仍创建事件/卡片，但不自动排队研究工作流。
     workflow_auto_trigger_enabled: bool = True
     # 哪些审核任务类型启用自动审核（report / claim_conflict / merge_review / workflow）。
-    auto_review_enabled_types: frozenset[str] = frozenset({"report", "claim_conflict"})
+    auto_review_enabled_types: frozenset[str] = frozenset(
+        {"report", "claim_conflict", "merge_review", "workflow", "impact_analysis"}
+    )
     # 自动审核最低置信度；规则层返回 1.0，LLM 层必须 >= 该值才生效。
     auto_review_min_confidence: float = 0.85
     # 规则无法判断时是否允许调用 LLM 兜底。
     auto_review_llm_fallback: bool = True
+    # Runtime review policy defaults to Agent; database policy may override it.
+    review_mode: str = "agent"
+    auto_review_disabled: bool = False
     # 已发布事实卡片是否自动生成影响分析。
     auto_impact_analysis_enabled: bool = True
     # 自动生成影响分析的最小事件重要度。
@@ -134,6 +139,8 @@ class Settings:
             raise ValueError("FINSIGHT_DOCUMENT_PURGE_BATCH_SIZE_INVALID")
         if not 0.0 <= self.workflow_auto_importance_threshold <= 1.0:
             raise ValueError("FINSIGHT_WORKFLOW_AUTO_IMPORTANCE_THRESHOLD_INVALID")
+        if self.review_mode not in {"agent", "human"}:
+            raise ValueError("FINSIGHT_REVIEW_MODE_INVALID")
         if not 0.0 <= self.auto_impact_analysis_importance_threshold <= 1.0:
             raise ValueError("FINSIGHT_AUTO_IMPACT_ANALYSIS_IMPORTANCE_THRESHOLD_INVALID")
         if (
@@ -205,7 +212,8 @@ class Settings:
             auto_review_enabled_types=frozenset(
                 t.strip()
                 for t in os.getenv(
-                    "FINSIGHT_AUTO_REVIEW_ENABLED_TYPES", "report,claim_conflict"
+                    "FINSIGHT_AUTO_REVIEW_ENABLED_TYPES",
+                    "report,claim_conflict,merge_review,workflow,impact_analysis",
                 ).split(",")
                 if t.strip()
             ),
@@ -215,6 +223,9 @@ class Settings:
             auto_review_llm_fallback=os.getenv(
                 "FINSIGHT_AUTO_REVIEW_LLM_FALLBACK", "true"
             ).lower()
+            in {"1", "true", "yes"},
+            review_mode=os.getenv("FINSIGHT_REVIEW_MODE", "agent").strip().lower(),
+            auto_review_disabled=os.getenv("FINSIGHT_AUTO_REVIEW_DISABLED", "false").lower()
             in {"1", "true", "yes"},
             auto_impact_analysis_enabled=os.getenv(
                 "FINSIGHT_AUTO_IMPACT_ANALYSIS_ENABLED", "true"

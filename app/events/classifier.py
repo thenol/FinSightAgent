@@ -123,6 +123,8 @@ class EventClassifier:
             return self._extract_major_contract(text)
         if schema.event_type == "merger_acquisition":
             return self._extract_merger_acquisition(text)
+        if schema.event_type == "equity_financing":
+            return self._extract_equity_financing(text)
         if schema.event_type == "shareholder_reduction":
             return self._extract_shareholder_reduction(text)
         if schema.event_type == "regulatory_penalty":
@@ -298,6 +300,52 @@ class EventClassifier:
         if shares:
             fields["shares"] = self._decimal(shares.group(1))
             fields["unit"] = shares.group(2)
+        return fields
+
+    def _extract_equity_financing(self, text: str) -> dict[str, Any]:
+        """Extract the financing facts needed to select the equity-financing pack."""
+        fields: dict[str, Any] = {}
+        issuer_patterns = (
+            ("阿里巴巴", ("阿里巴巴", "阿里", "Alibaba")),
+            ("腾讯控股", ("腾讯", "Tencent")),
+            ("美团", ("美团", "Meituan")),
+        )
+        for issuer, aliases in issuer_patterns:
+            if any(alias.lower() in text.lower() for alias in aliases):
+                fields["issuer"] = issuer
+                break
+        if "配售" in text or "配股" in text:
+            fields["financing_method"] = "share_placement"
+        elif "定向发行" in text or "定增" in text:
+            fields["financing_method"] = "private_placement"
+        elif "公开发行" in text or "公开发售" in text:
+            fields["financing_method"] = "public_offering"
+        else:
+            fields["financing_method"] = "equity_financing"
+
+        if any(word in text for word in ("完成配售", "配售完成", "已发行")):
+            fields["announcement_stage"] = "completed"
+        elif any(word in text for word in ("获超额认购", "超额认购", "认购")):
+            fields["announcement_stage"] = "subscribed"
+        else:
+            fields["announcement_stage"] = "announced"
+
+        proceeds = re.search(r"(?:用于|投入|资金用途为|所得款项将)[：:]?([^，。；]{2,80})", text)
+        if proceeds:
+            fields["use_of_proceeds"] = proceeds.group(1).strip()
+        elif "AI" in text.upper() or "人工智能" in text:
+            fields["use_of_proceeds"] = "AI建设"
+
+        amount = _AMOUNT.search(text)
+        if amount:
+            fields["gross_proceeds"] = self._decimal(amount.group(1))
+            fields["currency"] = (
+                "HKD" if "港元" in text or "港币" in text else
+                "USD" if "美元" in text else "CNY"
+            )
+            fields["unit"] = amount.group(2)
+        if "超额认购" in text:
+            fields["subscription_status"] = "oversubscribed"
         return fields
 
     def _extract_regulatory_penalty(self, text: str) -> dict[str, Any]:

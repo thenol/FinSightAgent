@@ -12,6 +12,7 @@ class AutoReviewDecision(BaseModel):
     reason: str = Field(default="")
     escalate: bool = Field(default=True)
     context: dict = Field(default_factory=dict)
+    model_run_id: str | None = None
 
 
 class DefaultReviewerOutput(BaseModel):

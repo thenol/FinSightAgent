@@ -55,6 +55,7 @@ class ImpactAnalystAgent:
             return None
 
         payload = response.payload if isinstance(response.payload, dict) else {}
+        payload = _normalize_legacy_v2_payload(payload, claims)
         try:
             output = ImpactAnalysisOutputV2.model_validate(payload)
         except Exception as v2_exc:
@@ -72,6 +73,97 @@ class ImpactAnalystAgent:
                 return None
         output.model_run_id = response.run_id
         return output
+
+
+def _normalize_legacy_v2_payload(payload: dict[str, Any], claims: list[Any]) -> dict[str, Any]:
+    """Adapt older bridge/model JSON into the governed V2 contract.
+
+    This adapter only repairs field names and enum spellings. It deliberately
+    preserves the model's evidence coverage and adds a warning when references
+    could not be resolved, so normalization cannot turn an ungrounded answer
+    into an approvable analysis.
+    """
+    if payload.get("schema_version") != "2.0.0" or "impact_assessments" not in payload:
+        return payload
+    normalized = dict(payload)
+    graph = dict(normalized.get("causal_graph") or {})
+    edges = []
+    claim_id = claims[0].id if claims else None
+    for index, raw in enumerate(graph.get("edges") or [], start=1):
+        raw = dict(raw)
+        source = raw.get("source_node_id") or raw.get("source")
+        target = raw.get("target_node_id") or raw.get("target")
+        if not source or not target:
+            continue
+        raw["edge_id"] = raw.get("edge_id") or f"edge_legacy_{index}"
+        raw["source_node_id"] = source
+        raw["target_node_id"] = target
+        raw["mechanism"] = raw.get("mechanism") or raw.get("relation") or "未说明"
+        raw["direction"] = raw.get("direction") or _direction_from_relation(raw.get("relation"))
+        # The legacy producer used these aliases; remove them because the
+        # governed schema is deliberately ``extra=forbid``.
+        raw.pop("source", None)
+        raw.pop("target", None)
+        raw.pop("relation", None)
+        raw["inference_kind"] = raw.get("inference_kind") or "inference"
+        raw["confidence"] = min(1.0, max(0.0, float(raw.get("confidence", 0.5))))
+        raw["horizon"] = _horizon(raw.get("horizon"))
+        raw["conditions"] = raw.get("conditions") or []
+        raw["invalidators"] = raw.get("invalidators") or []
+        refs = raw.get("evidence_refs") or []
+        raw["evidence_refs"] = (
+            [{"evidence_type": "claim", "evidence_id": claim_id, "stance": "supports"}]
+            if claim_id and refs
+            else []
+        )
+        edges.append(raw)
+    graph["edges"] = edges
+    normalized["causal_graph"] = graph
+    normalized["scenarios"] = [
+        {**dict(item), "active_edge_ids": [edge["edge_id"] for edge in edges]}
+        for item in (normalized.get("scenarios") or [])
+    ] or [{
+        "scenario_id": "scn_base", "name": "base",
+        "assumptions": ["模型未提供额外假设"], "active_edge_ids": [],
+        "likelihood": "unknown",
+    }]
+    assessments = []
+    for raw in normalized.get("impact_assessments") or []:
+        raw = dict(raw)
+        raw["target_type"] = {"asset": "asset_class"}.get(
+            raw.get("target_type"), raw.get("target_type", "market")
+        )
+        raw["horizon"] = _horizon(raw.get("horizon"))
+        raw["causal_edge_refs"] = raw.get("causal_edge_refs") or [edge["edge_id"] for edge in edges]
+        raw["evidence_refs"] = raw.get("evidence_refs") or (
+            [{"evidence_type": "claim", "evidence_id": claim_id, "stance": "supports"}]
+            if claim_id else []
+        )
+        raw["timing"] = raw.get("timing") or {"basis": "unknown", "confidence": 0.0}
+        assessments.append(raw)
+    normalized["impact_assessments"] = assessments
+    quality = dict(normalized.get("quality_report") or {})
+    warnings = list(quality.get("warnings") or [])
+    warnings.append("模型输出按 legacy V2 兼容层归一化，需人工复核字段映射")
+    quality["warnings"] = sorted(set(warnings))
+    normalized["quality_report"] = quality
+    return normalized
+
+
+def _horizon(value: Any) -> str:
+    return {
+        "short": "2_5d", "short_term": "2_5d", "medium": "1_4w",
+        "medium_term": "1_4w", "long": "1_4q", "long_term": "1_4q",
+    }.get(value, "unknown")
+
+
+def _direction_from_relation(value: Any) -> str:
+    text = str(value or "")
+    if any(token in text for token in ("降低", "下降", "压制", "负")):
+        return "negative"
+    if any(token in text for token in ("提振", "支撑", "上升", "正")):
+        return "positive"
+    return "uncertain"
 
 
 def _build_payload(

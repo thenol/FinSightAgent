@@ -53,9 +53,12 @@ class EntityResolver:
         self,
         repository: Repository,
         reference_data: ReferenceDataProvider | None = None,
+        *,
+        allow_code_fallback: bool = False,
     ) -> None:
         self.repository = repository
         self.reference_data = reference_data
+        self.allow_code_fallback = allow_code_fallback
 
     def resolve(
         self,
@@ -64,11 +67,17 @@ class EntityResolver:
         as_of: datetime | None = None,
     ) -> list[EntityResolution]:
         if self.reference_data is not None:
-            return self._resolve_reference_data(
+            resolved = self._resolve_reference_data(
                 document_text,
                 document_id,
                 as_of or datetime.now(timezone.utc),
             )
+            # Keep deterministic code resolution as a compatibility fallback for
+            # securities not yet present in the mastered reference catalog.
+            if not self.allow_code_fallback or (
+                resolved and any(item.entity_id for item in resolved)
+            ):
+                return resolved
 
         results: list[EntityResolution] = []
         seen_codes: set[str] = set()

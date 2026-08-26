@@ -117,11 +117,16 @@ class DynamicWorkflowService:
         self.repository.save_workflow_run(run)
 
         planner = ResearchPlanner(registry=self.registry, model_gateway=self.model_gateway)
+        event_type = None
+        if event_id:
+            event = self.repository.get_event(event_id)
+            event_type = event.event_type if event else None
         plan = planner.create_plan(
             workflow_id=run.id,
             question=question,
             as_of=effective_as_of,
             event_id=event_id,
+            event_type=event_type,
             budget_profile=budget_profile,
             use_llm=self.model_gateway is not None,
         )

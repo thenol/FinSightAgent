@@ -15,9 +15,11 @@ from app.domain import (
     AgentRegistration,
     Artifact,
     AuditLog,
+    AutoReviewAttempt,
     Brief,
     BriefEntry,
     BudgetLedgerEntry,
+    CapabilityEvaluation,
     Claim,
     ClaimEvidenceRelation,
     ConflictRecord,
@@ -32,6 +34,7 @@ from app.domain import (
     EntityLink,
     Event,
     EventImpactRelation,
+    EventTypeProposal,
     EventTypeRegistryEntry,
     EvidenceSpan,
     FactCard,
@@ -61,10 +64,15 @@ from app.domain import (
     MergeReviewTask,
     ModelRun,
     NodeAttempt,
+    OODCluster,
+    OODFeatureSnapshot,
+    OODObservation,
     ParsedDocument,
     QuarantineItem,
+    ReprocessingJob,
     ResearchPlan,
     ResearchTask,
+    ReviewPolicy,
     ReviewTask,
     Security,
     Source,
@@ -81,9 +89,11 @@ from app.platform.db_models import (
     AgentRegistrationModel,
     ArtifactModel,
     AuditLogModel,
+    AutoReviewAttemptModel,
     Base,
     BriefModel,
     BudgetLedgerModel,
+    CapabilityEvaluationModel,
     ClaimEvidenceRelationModel,
     ClaimModel,
     ConflictModel,
@@ -98,6 +108,7 @@ from app.platform.db_models import (
     EventEntityModel,
     EventImpactRelationModel,
     EventModel,
+    EventTypeProposalModel,
     EventTypeRegistryModel,
     EvidenceSpanModel,
     FactCardModel,
@@ -130,11 +141,16 @@ from app.platform.db_models import (
     MergeReviewTaskModel,
     ModelRunModel,
     NodeAttemptModel,
+    OODClusterModel,
+    OODFeatureSnapshotModel,
+    OODObservationModel,
     OutboxModel,
     ParsedDocumentModel,
     QuarantineItemModel,
+    ReprocessingJobModel,
     ResearchPlanModel,
     ResearchTaskModel,
+    ReviewPolicyModel,
     ReviewTaskModel,
     SecurityModel,
     SourceModel,
@@ -258,6 +274,16 @@ class Repository(Protocol):
     ) -> list[ReviewTask]: ...
 
     def update_review_task(self, task: ReviewTask) -> None: ...
+
+    def get_review_policy(self) -> ReviewPolicy: ...
+
+    def save_review_policy(self, policy: ReviewPolicy) -> None: ...
+
+    def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None: ...
+
+    def list_auto_review_attempts(
+        self, task_id: str, limit: int = 20
+    ) -> list[AutoReviewAttempt]: ...
 
     def save_model_run(self, run: ModelRun) -> None: ...
 
@@ -522,6 +548,40 @@ class Repository(Protocol):
     def save_event_type_registry(self, entry: EventTypeRegistryEntry) -> None: ...
 
     def increment_event_type_registry_count(self, type_label: str) -> EventTypeRegistryEntry: ...
+
+    def save_ood_observation(self, observation: OODObservation) -> None: ...
+
+    def get_ood_observation(self, observation_id: str) -> Optional[OODObservation]: ...
+
+    def list_ood_observations(
+        self, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> list[OODObservation]: ...
+
+    def update_ood_observation(self, observation: OODObservation) -> None: ...
+
+    def save_ood_cluster(self, cluster: OODCluster) -> None: ...
+
+    def get_ood_cluster(self, cluster_id: str) -> Optional[OODCluster]: ...
+
+    def list_ood_clusters(self, status: Optional[str] = None) -> list[OODCluster]: ...
+
+    def save_ood_feature_snapshot(self, snapshot: OODFeatureSnapshot) -> None: ...
+    def get_ood_feature_snapshot(self, snapshot_id: str) -> Optional[OODFeatureSnapshot]: ...
+    def save_event_type_proposal(self, proposal: EventTypeProposal) -> None: ...
+    def get_event_type_proposal(self, proposal_id: str) -> Optional[EventTypeProposal]: ...
+    def list_event_type_proposals(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeProposal]: ...
+    def update_event_type_proposal(self, proposal: EventTypeProposal) -> None: ...
+    def save_capability_evaluation(self, evaluation: CapabilityEvaluation) -> None: ...
+    def get_capability_evaluation(self, evaluation_id: str) -> Optional[CapabilityEvaluation]: ...
+    def list_capability_evaluations(
+        self, pack_id: Optional[str] = None
+    ) -> list[CapabilityEvaluation]: ...
+    def save_reprocessing_job(self, job: ReprocessingJob) -> None: ...
+    def get_reprocessing_job(self, job_id: str) -> Optional[ReprocessingJob]: ...
+    def list_reprocessing_jobs(self) -> list[ReprocessingJob]: ...
+    def update_reprocessing_job(self, job: ReprocessingJob) -> None: ...
 
     def save_match_decision(self, decision: MatchDecision) -> None: ...
 
@@ -872,6 +932,8 @@ class InMemoryRepository:
         self.users: dict[str, User] = {}
         self.audit_logs: list[AuditLog] = []
         self.review_tasks: dict[str, ReviewTask] = {}
+        self.review_policy = ReviewPolicy()
+        self.auto_review_attempts: list[AutoReviewAttempt] = []
         self.model_runs: dict[str, ModelRun] = {}
         self.workflow_runs: dict[str, WorkflowRun] = {}
         self.tool_calls: list[ToolCall] = []
@@ -886,6 +948,12 @@ class InMemoryRepository:
         self.merge_review_tasks: list[MergeReviewTask] = []
         self.watch_triggers: dict[str, WatchTrigger] = {}
         self.event_type_registry: dict[str, EventTypeRegistryEntry] = {}
+        self.ood_observations: dict[str, OODObservation] = {}
+        self.ood_clusters: dict[str, OODCluster] = {}
+        self.ood_feature_snapshots: dict[str, OODFeatureSnapshot] = {}
+        self.event_type_proposals: dict[str, EventTypeProposal] = {}
+        self.capability_evaluations: dict[str, CapabilityEvaluation] = {}
+        self.reprocessing_jobs: dict[str, ReprocessingJob] = {}
         self.match_decisions: list[MatchDecision] = []
         self.evidence: dict[str, EvidenceSpan] = {}
         self.claims: dict[str, Claim] = {}
@@ -1076,6 +1144,19 @@ class InMemoryRepository:
         if task.id not in self.review_tasks:
             raise KeyError(f"Review task not found: {task.id}")
         self.review_tasks[task.id] = task
+
+    def get_review_policy(self) -> ReviewPolicy:
+        return self.review_policy
+
+    def save_review_policy(self, policy: ReviewPolicy) -> None:
+        self.review_policy = policy
+
+    def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None:
+        self.auto_review_attempts.append(attempt)
+
+    def list_auto_review_attempts(self, task_id: str, limit: int = 20) -> list[AutoReviewAttempt]:
+        values = [item for item in self.auto_review_attempts if item.task_id == task_id]
+        return sorted(values, key=lambda item: item.created_at, reverse=True)[:limit]
 
     def save_model_run(self, run: ModelRun) -> None:
         self.model_runs[run.id] = run
@@ -1640,6 +1721,97 @@ class InMemoryRepository:
             entry = replace(existing, event_count=existing.event_count + 1, updated_at=now)
         self.event_type_registry[type_label] = entry
         return entry
+
+    def save_ood_observation(self, observation: OODObservation) -> None:
+        self.ood_observations[observation.id] = observation
+
+    def get_ood_observation(self, observation_id: str) -> Optional[OODObservation]:
+        return self.ood_observations.get(observation_id)
+
+    def list_ood_observations(
+        self, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> list[OODObservation]:
+        values = [
+            item
+            for item in self.ood_observations.values()
+            if status is None or item.status == status
+        ]
+        values.sort(key=lambda item: (item.observed_at or datetime.min, item.id), reverse=True)
+        return values[:limit] if limit else values
+
+    def update_ood_observation(self, observation: OODObservation) -> None:
+        if observation.id not in self.ood_observations:
+            raise KeyError(f"OOD observation not found: {observation.id}")
+        self.ood_observations[observation.id] = observation
+
+    def save_ood_cluster(self, cluster: OODCluster) -> None:
+        self.ood_clusters[cluster.id] = cluster
+
+    def get_ood_cluster(self, cluster_id: str) -> Optional[OODCluster]:
+        return self.ood_clusters.get(cluster_id)
+
+    def list_ood_clusters(self, status: Optional[str] = None) -> list[OODCluster]:
+        values = [
+            item for item in self.ood_clusters.values() if status is None or item.status == status
+        ]
+        return sorted(values, key=lambda item: item.id)
+
+    def save_ood_feature_snapshot(self, snapshot: OODFeatureSnapshot) -> None:
+        self.ood_feature_snapshots[snapshot.id] = snapshot
+
+    def get_ood_feature_snapshot(self, snapshot_id: str) -> Optional[OODFeatureSnapshot]:
+        return self.ood_feature_snapshots.get(snapshot_id)
+
+    def save_event_type_proposal(self, proposal: EventTypeProposal) -> None:
+        self.event_type_proposals[proposal.id] = proposal
+
+    def get_event_type_proposal(self, proposal_id: str) -> Optional[EventTypeProposal]:
+        return self.event_type_proposals.get(proposal_id)
+
+    def list_event_type_proposals(self, status: Optional[str] = None) -> list[EventTypeProposal]:
+        values = [
+            item for item in self.event_type_proposals.values()
+            if status is None or item.status == status
+        ]
+        return sorted(values, key=lambda item: item.created_at or datetime.min, reverse=True)
+
+    def update_event_type_proposal(self, proposal: EventTypeProposal) -> None:
+        if proposal.id not in self.event_type_proposals:
+            raise KeyError(f"event type proposal not found: {proposal.id}")
+        self.event_type_proposals[proposal.id] = proposal
+
+    def save_capability_evaluation(self, evaluation: CapabilityEvaluation) -> None:
+        self.capability_evaluations[evaluation.id] = evaluation
+
+    def get_capability_evaluation(self, evaluation_id: str) -> Optional[CapabilityEvaluation]:
+        return self.capability_evaluations.get(evaluation_id)
+
+    def list_capability_evaluations(
+        self, pack_id: Optional[str] = None
+    ) -> list[CapabilityEvaluation]:
+        values = [
+            item for item in self.capability_evaluations.values()
+            if pack_id is None or item.pack_id == pack_id
+        ]
+        return sorted(values, key=lambda item: item.created_at or datetime.min, reverse=True)
+
+    def save_reprocessing_job(self, job: ReprocessingJob) -> None:
+        self.reprocessing_jobs[job.id] = job
+
+    def get_reprocessing_job(self, job_id: str) -> Optional[ReprocessingJob]:
+        return self.reprocessing_jobs.get(job_id)
+
+    def list_reprocessing_jobs(self) -> list[ReprocessingJob]:
+        return sorted(
+            self.reprocessing_jobs.values(),
+            key=lambda item: item.created_at or datetime.min,
+            reverse=True,
+        )
+
+    def update_reprocessing_job(self, job: ReprocessingJob) -> None:
+        if job.id not in self.reprocessing_jobs:
+            raise KeyError(f"reprocessing job not found: {job.id}")
+        self.reprocessing_jobs[job.id] = job
 
     def save_match_decision(self, decision: MatchDecision) -> None:
         self.match_decisions.append(decision)
@@ -2576,6 +2748,30 @@ class SqlAlchemyRepository:
 
     def get_event(self, event_id: str) -> Optional[Event]:
         return self._read(lambda repository: repository.get_event(event_id))
+
+    def save_review_task(self, value: ReviewTask) -> None:
+        with self.transaction() as repository:
+            repository.save_review_task(value)
+
+    def get_review_policy(self) -> ReviewPolicy:
+        return self._read(lambda repository: repository.get_review_policy())
+
+    def save_review_policy(self, policy: ReviewPolicy) -> None:
+        with self.transaction() as repository:
+            repository.save_review_policy(policy)
+
+    def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None:
+        with self.transaction() as repository:
+            repository.save_auto_review_attempt(attempt)
+
+    def list_auto_review_attempts(self, task_id: str, limit: int = 20) -> list[AutoReviewAttempt]:
+        return self._read(lambda repository: repository.list_auto_review_attempts(task_id, limit))
+
+    def get_claim(self, claim_id: str) -> Optional[Claim]:
+        return self._read(lambda repository: repository.get_claim(claim_id))
+
+    def list_claim_evidence(self, claim_id: str) -> list[ClaimEvidenceRelation]:
+        return self._read(lambda repository: repository.list_claim_evidence(claim_id))
 
     def get_claims_for_event(self, event_id: str, as_of: Optional[datetime] = None) -> list[Claim]:
         return self._read(lambda repository: repository.get_claims_for_event(event_id, as_of))
@@ -3554,6 +3750,43 @@ class SqlAlchemyTransaction:
         self.session.add(ReviewTaskModel(**data))
         self.session.flush()
 
+    def get_review_policy(self) -> ReviewPolicy:
+        model = self.session.get(ReviewPolicyModel, "review_policy:default")
+        if model is None:
+            return ReviewPolicy()
+        return ReviewPolicy(
+            id=model.id,
+            mode=model.mode,
+            min_confidence=model.min_confidence,
+            updated_by=model.updated_by,
+            updated_at=model.updated_at,
+        )
+
+    def save_review_policy(self, value: ReviewPolicy) -> None:
+        model = self.session.get(ReviewPolicyModel, value.id)
+        data = value.__dict__.copy()
+        data["updated_at"] = data.get("updated_at") or datetime.now(timezone.utc)
+        if model is None:
+            self.session.add(ReviewPolicyModel(**data))
+        else:
+            for field, field_value in data.items():
+                if field != "id":
+                    setattr(model, field, field_value)
+        self.session.flush()
+
+    def save_auto_review_attempt(self, value: AutoReviewAttempt) -> None:
+        self.session.add(AutoReviewAttemptModel(**value.__dict__))
+        self.session.flush()
+
+    def list_auto_review_attempts(self, task_id: str, limit: int = 20) -> list[AutoReviewAttempt]:
+        statement = (
+            select(AutoReviewAttemptModel)
+            .where(AutoReviewAttemptModel.task_id == task_id)
+            .order_by(AutoReviewAttemptModel.created_at.desc())
+            .limit(limit)
+        )
+        return [_auto_review_attempt(model) for model in self.session.scalars(statement)]
+
     def get_review_task(self, task_id: str) -> Optional[ReviewTask]:
         model = self.session.get(ReviewTaskModel, task_id)
         return _review_task(model) if model else None
@@ -4416,6 +4649,8 @@ class SqlAlchemyTransaction:
         model.classifier_version = value.classifier_version
         model.missing_required = value.missing_required
         model.time_resolution = value.time_resolution
+        model.capability_pack_id = value.capability_pack_id
+        model.capability_pack_version = value.capability_pack_version
         model.version = value.version
         self.session.flush()
 
@@ -4619,6 +4854,222 @@ class SqlAlchemyTransaction:
             model.updated_at = now
         self.session.flush()
         return _event_type_registry(model)
+
+    def save_ood_observation(self, value: OODObservation) -> None:
+        model = self.session.get(OODObservationModel, value.id)
+        fields = {
+            "event_id": value.event_id,
+            "document_id": value.document_id,
+            "status": value.status,
+            "ood_score": Decimal(str(value.ood_score)),
+            "financial_relevance": Decimal(str(value.financial_relevance)),
+            "closest_known_types": value.closest_known_types,
+            "extracted_features": value.extracted_features,
+            "evidence_ids": value.evidence_ids,
+            "classifier_version": value.classifier_version,
+            "router_version": value.router_version,
+            "embedding_model_version": value.embedding_model_version,
+            "generic_pack_id": value.generic_pack_id,
+            "generic_pack_version": value.generic_pack_version,
+            "cluster_id": value.cluster_id,
+            "observed_at": value.observed_at or datetime.now(timezone.utc),
+            "as_of": value.as_of,
+            "version": value.version,
+        }
+        if model is None:
+            self.session.add(OODObservationModel(id=value.id, **fields))
+        else:
+            for key, field_value in fields.items():
+                setattr(model, key, field_value)
+        self.session.flush()
+
+    def get_ood_observation(self, observation_id: str) -> Optional[OODObservation]:
+        model = self.session.get(OODObservationModel, observation_id)
+        return _ood_observation(model) if model else None
+
+    def list_ood_observations(
+        self, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> list[OODObservation]:
+        statement = select(OODObservationModel).order_by(
+            OODObservationModel.observed_at.desc(), OODObservationModel.id.desc()
+        )
+        if status:
+            statement = statement.where(OODObservationModel.status == status)
+        if limit:
+            statement = statement.limit(limit)
+        return [_ood_observation(model) for model in self.session.scalars(statement)]
+
+    def update_ood_observation(self, value: OODObservation) -> None:
+        if self.session.get(OODObservationModel, value.id) is None:
+            raise KeyError(f"OOD observation not found: {value.id}")
+        self.save_ood_observation(value)
+
+    def save_ood_cluster(self, value: OODCluster) -> None:
+        model = self.session.get(OODClusterModel, value.id)
+        fields = {
+            "label": value.label,
+            "status": value.status,
+            "member_count": value.member_count,
+            "independent_source_count": value.independent_source_count,
+            "cohesion_score": Decimal(str(value.cohesion_score)),
+            "separation_score": Decimal(str(value.separation_score)),
+            "stability_score": Decimal(str(value.stability_score)),
+            "first_seen_at": value.first_seen_at,
+            "last_seen_at": value.last_seen_at,
+            "cluster_version": value.cluster_version,
+        }
+        if model is None:
+            self.session.add(OODClusterModel(id=value.id, **fields))
+        else:
+            for key, field_value in fields.items():
+                setattr(model, key, field_value)
+        self.session.flush()
+
+    def get_ood_cluster(self, cluster_id: str) -> Optional[OODCluster]:
+        model = self.session.get(OODClusterModel, cluster_id)
+        return _ood_cluster(model) if model else None
+
+    def list_ood_clusters(self, status: Optional[str] = None) -> list[OODCluster]:
+        statement = select(OODClusterModel).order_by(OODClusterModel.id)
+        if status:
+            statement = statement.where(OODClusterModel.status == status)
+        return [_ood_cluster(model) for model in self.session.scalars(statement)]
+
+    def save_ood_feature_snapshot(self, value: OODFeatureSnapshot) -> None:
+        model = self.session.get(OODFeatureSnapshotModel, value.id)
+        if model is None:
+            self.session.add(
+                OODFeatureSnapshotModel(
+                    id=value.id,
+                    observation_id=value.observation_id,
+                    feature_schema_version=value.feature_schema_version,
+                    features=value.features,
+                    generated_at=value.generated_at or datetime.now(timezone.utc),
+                )
+            )
+        else:
+            model.features = value.features
+            model.feature_schema_version = value.feature_schema_version
+        self.session.flush()
+
+    def get_ood_feature_snapshot(self, snapshot_id: str) -> Optional[OODFeatureSnapshot]:
+        model = self.session.get(OODFeatureSnapshotModel, snapshot_id)
+        return _ood_feature_snapshot(model) if model else None
+
+    def save_event_type_proposal(self, value: EventTypeProposal) -> None:
+        model = self.session.get(EventTypeProposalModel, value.id)
+        fields = {
+            "cluster_id": value.cluster_id,
+            "proposed_label": value.proposed_label,
+            "display_name": value.display_name,
+            "definition": value.definition,
+            "status": value.status,
+            "parent_type": value.parent_type,
+            "inclusion_rules": value.inclusion_rules,
+            "exclusion_rules": value.exclusion_rules,
+            "required_fields": value.required_fields,
+            "optional_fields": value.optional_fields,
+            "mechanisms": value.mechanisms,
+            "representative_event_ids": value.representative_event_ids,
+            "counterexample_event_ids": value.counterexample_event_ids,
+            "confidence": Decimal(str(value.confidence)),
+            "agent_run_id": value.agent_run_id,
+            "created_at": value.created_at or datetime.now(timezone.utc),
+            "decided_at": value.decided_at,
+        }
+        if model is None:
+            self.session.add(EventTypeProposalModel(id=value.id, **fields))
+        else:
+            for key, field_value in fields.items():
+                setattr(model, key, field_value)
+        self.session.flush()
+
+    def get_event_type_proposal(self, proposal_id: str) -> Optional[EventTypeProposal]:
+        model = self.session.get(EventTypeProposalModel, proposal_id)
+        return _event_type_proposal(model) if model else None
+
+    def list_event_type_proposals(
+        self, status: Optional[str] = None
+    ) -> list[EventTypeProposal]:
+        statement = select(EventTypeProposalModel).order_by(
+            EventTypeProposalModel.created_at.desc()
+        )
+        if status:
+            statement = statement.where(EventTypeProposalModel.status == status)
+        return [_event_type_proposal(model) for model in self.session.scalars(statement)]
+
+    def update_event_type_proposal(self, proposal: EventTypeProposal) -> None:
+        if self.session.get(EventTypeProposalModel, proposal.id) is None:
+            raise KeyError(f"event type proposal not found: {proposal.id}")
+        self.save_event_type_proposal(proposal)
+
+    def save_capability_evaluation(self, value: CapabilityEvaluation) -> None:
+        model = self.session.get(CapabilityEvaluationModel, value.id)
+        fields = {
+            "pack_id": value.pack_id,
+            "pack_version": value.pack_version,
+            "baseline_pack_id": value.baseline_pack_id,
+            "baseline_pack_version": value.baseline_pack_version,
+            "status": value.status,
+            "metrics": value.metrics,
+            "comparison": value.comparison,
+            "recommendation": value.recommendation,
+            "created_at": value.created_at or datetime.now(timezone.utc),
+        }
+        if model is None:
+            self.session.add(CapabilityEvaluationModel(id=value.id, **fields))
+        else:
+            for key, field_value in fields.items():
+                setattr(model, key, field_value)
+        self.session.flush()
+
+    def get_capability_evaluation(self, evaluation_id: str) -> Optional[CapabilityEvaluation]:
+        model = self.session.get(CapabilityEvaluationModel, evaluation_id)
+        return _capability_evaluation(model) if model else None
+
+    def list_capability_evaluations(
+        self, pack_id: Optional[str] = None
+    ) -> list[CapabilityEvaluation]:
+        statement = select(CapabilityEvaluationModel).order_by(
+            CapabilityEvaluationModel.created_at.desc()
+        )
+        if pack_id:
+            statement = statement.where(CapabilityEvaluationModel.pack_id == pack_id)
+        return [_capability_evaluation(model) for model in self.session.scalars(statement)]
+
+    def save_reprocessing_job(self, value: ReprocessingJob) -> None:
+        model = self.session.get(ReprocessingJobModel, value.id)
+        fields = {
+            "source_pack_id": value.source_pack_id,
+            "target_pack_id": value.target_pack_id,
+            "event_ids": value.event_ids,
+            "status": value.status,
+            "total_count": value.total_count,
+            "success_count": value.success_count,
+            "failed_count": value.failed_count,
+            "summary": value.summary,
+            "created_at": value.created_at or datetime.now(timezone.utc),
+            "updated_at": value.updated_at or datetime.now(timezone.utc),
+        }
+        if model is None:
+            self.session.add(ReprocessingJobModel(id=value.id, **fields))
+        else:
+            for key, field_value in fields.items():
+                setattr(model, key, field_value)
+        self.session.flush()
+
+    def get_reprocessing_job(self, job_id: str) -> Optional[ReprocessingJob]:
+        model = self.session.get(ReprocessingJobModel, job_id)
+        return _reprocessing_job(model) if model else None
+
+    def list_reprocessing_jobs(self) -> list[ReprocessingJob]:
+        statement = select(ReprocessingJobModel).order_by(ReprocessingJobModel.created_at.desc())
+        return [_reprocessing_job(model) for model in self.session.scalars(statement)]
+
+    def update_reprocessing_job(self, job: ReprocessingJob) -> None:
+        if self.session.get(ReprocessingJobModel, job.id) is None:
+            raise KeyError(f"reprocessing job not found: {job.id}")
+        self.save_reprocessing_job(job)
 
     def save_match_decision(self, value: MatchDecision) -> None:
         self.session.add(
@@ -6212,6 +6663,21 @@ def _review_task(value: ReviewTaskModel) -> ReviewTask:
     )
 
 
+def _auto_review_attempt(value: AutoReviewAttemptModel) -> AutoReviewAttempt:
+    return AutoReviewAttempt(
+        id=value.id,
+        task_id=value.task_id,
+        object_type=value.object_type,
+        object_id=value.object_id,
+        status=value.status,
+        decision=value.decision,
+        confidence=value.confidence,
+        reason=value.reason,
+        model_run_id=value.model_run_id,
+        created_at=value.created_at,
+    )
+
+
 def _model_run(value: ModelRunModel) -> ModelRun:
     return ModelRun(
         id=value.id,
@@ -6401,6 +6867,8 @@ def _event(value: EventModel) -> Event:
         classifier_version=value.classifier_version or "",
         missing_required=value.missing_required if value.missing_required is not None else [],
         time_resolution=value.time_resolution if value.time_resolution is not None else {},
+        capability_pack_id=getattr(value, "capability_pack_id", None),
+        capability_pack_version=getattr(value, "capability_pack_version", None),
     )
 
 
@@ -6484,6 +6952,109 @@ def _event_type_registry(value: EventTypeRegistryModel) -> EventTypeRegistryEntr
         event_count=value.event_count,
         decided_by=value.decided_by,
         decided_at=value.decided_at,
+        created_at=value.created_at,
+        updated_at=value.updated_at,
+    )
+
+
+def _ood_observation(value: OODObservationModel) -> OODObservation:
+    return OODObservation(
+        id=value.id,
+        event_id=value.event_id,
+        document_id=value.document_id,
+        status=value.status,
+        ood_score=float(value.ood_score or 0),
+        financial_relevance=float(value.financial_relevance or 0),
+        closest_known_types=value.closest_known_types or [],
+        extracted_features=value.extracted_features or {},
+        evidence_ids=value.evidence_ids or [],
+        classifier_version=value.classifier_version,
+        router_version=value.router_version,
+        embedding_model_version=value.embedding_model_version,
+        generic_pack_id=value.generic_pack_id,
+        generic_pack_version=value.generic_pack_version,
+        cluster_id=value.cluster_id,
+        observed_at=value.observed_at,
+        as_of=value.as_of,
+        version=value.version,
+    )
+
+
+def _ood_cluster(value: OODClusterModel) -> OODCluster:
+    return OODCluster(
+        id=value.id,
+        label=value.label,
+        status=value.status,
+        member_count=value.member_count,
+        independent_source_count=value.independent_source_count,
+        cohesion_score=float(value.cohesion_score or 0),
+        separation_score=float(value.separation_score or 0),
+        stability_score=float(value.stability_score or 0),
+        first_seen_at=value.first_seen_at,
+        last_seen_at=value.last_seen_at,
+        cluster_version=value.cluster_version,
+    )
+
+
+def _ood_feature_snapshot(value: OODFeatureSnapshotModel) -> OODFeatureSnapshot:
+    return OODFeatureSnapshot(
+        id=value.id,
+        observation_id=value.observation_id,
+        feature_schema_version=value.feature_schema_version,
+        features=value.features or {},
+        generated_at=value.generated_at,
+    )
+
+
+def _event_type_proposal(value: EventTypeProposalModel) -> EventTypeProposal:
+    return EventTypeProposal(
+        id=value.id,
+        cluster_id=value.cluster_id,
+        proposed_label=value.proposed_label,
+        display_name=value.display_name,
+        definition=value.definition,
+        status=value.status,
+        parent_type=value.parent_type,
+        inclusion_rules=value.inclusion_rules or [],
+        exclusion_rules=value.exclusion_rules or [],
+        required_fields=value.required_fields or [],
+        optional_fields=value.optional_fields or [],
+        mechanisms=value.mechanisms or [],
+        representative_event_ids=value.representative_event_ids or [],
+        counterexample_event_ids=value.counterexample_event_ids or [],
+        confidence=float(value.confidence or 0),
+        agent_run_id=value.agent_run_id,
+        created_at=value.created_at,
+        decided_at=value.decided_at,
+    )
+
+
+def _capability_evaluation(value: CapabilityEvaluationModel) -> CapabilityEvaluation:
+    return CapabilityEvaluation(
+        id=value.id,
+        pack_id=value.pack_id,
+        pack_version=value.pack_version,
+        baseline_pack_id=value.baseline_pack_id,
+        baseline_pack_version=value.baseline_pack_version,
+        status=value.status,
+        metrics=value.metrics or {},
+        comparison=value.comparison or {},
+        recommendation=value.recommendation,
+        created_at=value.created_at,
+    )
+
+
+def _reprocessing_job(value: ReprocessingJobModel) -> ReprocessingJob:
+    return ReprocessingJob(
+        id=value.id,
+        source_pack_id=value.source_pack_id,
+        target_pack_id=value.target_pack_id,
+        event_ids=value.event_ids or [],
+        status=value.status,
+        total_count=value.total_count,
+        success_count=value.success_count,
+        failed_count=value.failed_count,
+        summary=value.summary or {},
         created_at=value.created_at,
         updated_at=value.updated_at,
     )
