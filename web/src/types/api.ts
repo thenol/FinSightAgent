@@ -265,6 +265,55 @@ export type LlmAgentBinding = {
   updated_at?: string | null;
 };
 
+export type ReviewPolicy = {
+  id: string;
+  mode: "agent" | "human";
+  min_confidence: number;
+  source: string;
+  updated_by?: string | null;
+  updated_at?: string | null;
+  emergency_disabled: boolean;
+};
+
+export type ReviewQueueItem = ReviewTask & {
+  display: {
+    title: string;
+    type_label: string;
+    subtitle: string;
+    summary: string;
+    href: string;
+    reference_id: string;
+  };
+  context?: {
+    event_id?: string;
+    event_title?: string;
+    event_type?: string;
+    occurred_at?: string;
+    importance?: number;
+    candidate_count?: number;
+  };
+  risk_level: "high" | "normal";
+  priority_score: number;
+  priority_band: "critical" | "high" | "normal";
+  priority_reasons: string[];
+  review_state: string;
+  last_auto_review_status?: string | null;
+  last_auto_review_at?: string | null;
+  last_auto_review_confidence?: number | null;
+  last_auto_review_reason?: string | null;
+  auto_review_attempt_count: number;
+  reviewer_type: "agent" | "human" | "none";
+  age_seconds: number;
+  sla_seconds: number;
+};
+
+export type ReviewQueueOverview = {
+  counts: Record<string, number>;
+  total: number;
+  oldest_pending_at?: string | null;
+  refreshed_at: string;
+};
+
 export type AdminMetrics = {
   workflows: {
     total: number;

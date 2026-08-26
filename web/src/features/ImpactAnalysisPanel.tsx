@@ -7,7 +7,7 @@ import {
   type GraphScenario,
   type ImpactGraph,
 } from "./ImpactGraphFlow";
-import { apiGet, apiGetWithStatus, apiPost } from "@/lib/api";
+import { ApiError, apiGet, apiGetWithStatus, apiPost } from "@/lib/api";
 import { EmptyState, ErrorState, Skeleton } from "@/components/EmptyState";
 import type {
   ImpactAnalysis as ImpactAnalysisType,
@@ -32,19 +32,29 @@ export function ImpactAnalysisPanel({ eventId }: Props) {
   const query = useQuery({
     queryKey: ["event-impact-analysis", eventId],
     queryFn: async (): Promise<QueryResult> => {
-      const { data, status } = await apiGetWithStatus<
-        ImpactAnalysisType | { status: string }
-      >(`/api/v1/events/${encodeURIComponent(eventId)}/impact-analysis`);
-      if (status === 202 && "status" in data && data.status === "pending")
-        return { kind: "pending" };
-      if (
-        data &&
-        typeof data === "object" &&
-        "id" in data &&
-        "event_id" in data
-      )
-        return { kind: "analysis", value: data as ImpactAnalysisType };
-      return { kind: "empty" };
+      try {
+        const { data, status } = await apiGetWithStatus<
+          ImpactAnalysisType | { status: string }
+        >(`/api/v1/events/${encodeURIComponent(eventId)}/impact-analysis`);
+        if (status === 202 && "status" in data && data.status === "pending")
+          return { kind: "pending" };
+        if (
+          data &&
+          typeof data === "object" &&
+          "id" in data &&
+          "event_id" in data
+        )
+          return { kind: "analysis", value: data as ImpactAnalysisType };
+        return { kind: "empty" };
+      } catch (error) {
+        // A missing analysis is a normal state before the fact card is
+        // published; it should expose the manual generation action instead
+        // of looking like a broken evidence panel.
+        if (error instanceof ApiError && error.code === "IMPACT_ANALYSIS_NOT_FOUND") {
+          return { kind: "empty" };
+        }
+        throw error;
+      }
     },
     retry: false,
     refetchInterval: (value) =>

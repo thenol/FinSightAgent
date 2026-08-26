@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
-function Broken() {
+function Broken(): ReactElement {
   throw new Error("boom");
 }
 

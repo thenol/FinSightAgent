@@ -9,13 +9,16 @@ import { useAuth } from "@/app/AuthContext";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { asList } from "@/lib/format";
 import { canManageLlm } from "@/lib/roles";
-import type { LlmAgentBinding, LlmPreset, LlmProvider } from "@/types/api";
+import type { LlmAgentBinding, LlmPreset, LlmProvider, ReviewPolicy } from "@/types/api";
 
 const AGENT_LABELS: Record<string, string> = {
   fact_check: "Fact Checker",
   company_analysis: "Company Analyst",
   skeptic_review: "Skeptic",
   synthesize: "Synthesizer",
+  default_reviewer: "Default Reviewer",
+  impact_analysis: "Impact Analyst",
+  plan: "Research Planner",
 };
 
 const AGENT_KEYS = Object.keys(AGENT_LABELS);
@@ -45,10 +48,16 @@ export function ModelsPage() {
     queryFn: () => apiGet<LlmAgentBinding[]>("/api/v1/llm/bindings"),
     enabled: manage,
   });
+  const policyQuery = useQuery({
+    queryKey: ["review-policy"],
+    queryFn: () => apiGet<ReviewPolicy>("/api/v1/admin/review-policy"),
+    enabled: manage,
+  });
 
   const providers = asList<LlmProvider>(providersQuery.data);
   const presets = asList<LlmPreset>(presetsQuery.data);
   const bindings = asList<LlmAgentBinding>(bindingsQuery.data);
+  const policy = policyQuery.data;
   const bindingMap = useMemo(
     () => Object.fromEntries(bindings.map((item) => [item.agent_key, item])),
     [bindings],
@@ -58,6 +67,7 @@ export function ModelsPage() {
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
     await queryClient.invalidateQueries({ queryKey: ["llm-bindings"] });
+    await queryClient.invalidateQueries({ queryKey: ["review-policy"] });
   };
 
   const testMutation = useMutation({
@@ -356,6 +366,35 @@ export function ModelsPage() {
           </tr>
         ))}
       />
+
+      <section className="panel" style={{ marginTop: "1rem" }}>
+        <h3>审核自动化</h3>
+        <p className="muted">默认由 Agent 处理审核队列；低置信度、证据不足和质量门失败的任务会自动保留人工审核。</p>
+        <div className="toolbar">
+          <label htmlFor="review-mode">审核方式</label>
+          <select
+            id="review-mode"
+            value={policy?.mode || "agent"}
+            disabled={policyQuery.isLoading || policy?.emergency_disabled}
+            onChange={async (event) => {
+              try {
+                await apiPatch("/api/v1/admin/review-policy", { mode: event.target.value });
+                push(event.target.value === "agent" ? "已启用 Agent 自动审核" : "已切换为人工审核");
+                await queryClient.invalidateQueries({ queryKey: ["review-policy"] });
+              } catch (error) {
+                push(error instanceof Error ? error.message : "审核策略更新失败", "error");
+              }
+            }}
+          >
+            <option value="agent">Agent 自动审核</option>
+            <option value="human">人工审核</option>
+          </select>
+          <span className="muted">
+            置信度门槛 {policy?.min_confidence ?? 0.85} · 来源 {policy?.source || "environment"}
+          </span>
+          {policy?.emergency_disabled ? <StatusBadge value="emergency disabled" /> : null}
+        </div>
+      </section>
 
       <section className="panel" style={{ marginTop: "1rem" }}>
         <h3>Agent 绑定</h3>
