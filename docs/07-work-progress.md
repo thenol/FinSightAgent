@@ -2,6 +2,14 @@
 
 > 最后更新：2026-08-16（进入真实研究闭环生产化准备阶段）。状态符号：`[x]` 已完成，`[ ]` 待完成，`[-]` 进行中或部分完成。
 
+## 17.32 事件初步研判（Event Preliminary Assessment）
+
+- [x] 新增独立 `EventPreliminaryAssessment` 领域对象、Schema、内存/PostgreSQL Repository 与 Alembic `20260827_0037` 迁移；保存事件级 Agent 公开研判、输入快照、模型/提示词版本、质量报告和版本链。
+- [x] 新增 `PreliminaryAssessmentService` 与 `preliminary_assessor` 注册；事实核验后生成，可在模型不可用或无已验证 Claim 时保存 `limited` 降级研判，不把初判当作 Evidence。
+- [x] 影响分析固定写入 `preliminary_assessment_id`，动态研究计划加入 `preliminary_assess` 节点；Company/Skeptic/Synthesizer 输入保留初判上下文。
+- [x] 新增初判生成、最新版本、版本列表和稳定 ID 查询 API；事件影响分析页展示初判卡片、方向、置信度、影响范围、关注项和数据截面。
+- [ ] 完成正式结论相对初判的 `upheld/revised/overturned/insufficient` 差异字段、专用对照页、固定工作流完整 DAG 节点和历史事件批量回填验收。
+
 ## 1. 方案与详细设计
 
 - [x] 完成总体方案、产品需求、功能架构和 MVP 验收标准。

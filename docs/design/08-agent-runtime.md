@@ -117,6 +117,7 @@ class AgentRegistration:
 | `planner` | `["plan"]` | `research-plan/1.0.0` | `read_blackboard`（只读） |
 | `retriever` | `["retrieve"]` | `retrieval-trace/1.0.0` | `planned_retrieval` |
 | `impact_analyst` | `["impact_analyze"]` | `impact-analysis-output/1.0.0` | `get_financial_statements`, `find_similar_events` |
+| `preliminary_assessor` | `["preliminary_assess"]` | `preliminary-assessment-output/1.0.0` | 无（仅使用已核验上下文） |
 
 ## 6. ResearchPlanner
 
@@ -127,7 +128,8 @@ class AgentRegistration:
    - 提取实体、时间窗、`as_of`（默认现在）。
 2. **任务模板选择**：
    - 每个问题类型对应一个默认任务 DAG 模板。例如 `company_event` → `[retrieve, fact_verify, company_analyze, skeptic_review, synthesize]`。
-   - `macro_policy` → `[retrieve, fact_verify, impact_analyze, synthesize]`。
+   - `macro_policy` → `[retrieve, fact_verify, preliminary_assess, impact_analyze, synthesize]`。
+   - `preliminary_assess` 生成不可变的事件级研究假设；下游 Agent 可引用其观点，但必须继续绑定原始 Evidence。
 3. **LLM 可选增强**：
    - 调用 `planner` Agent，输入问题+模板，输出对任务的增删改建议（必须在预定义 Schema 内）。
    - Supervisor 校验建议：不允许新增未注册 Agent、不允许放宽预算、不允许设置未来 `as_of`。
