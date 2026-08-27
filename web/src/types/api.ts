@@ -71,6 +71,18 @@ export type EventItem = {
   missing_required?: string[];
 };
 
+export type ResearchOverview = {
+  as_of: string;
+  window: string;
+  publication_scope: string;
+  rule_version: string;
+  summary: { direction: string; positive_strength: number; negative_strength: number; event_count: number; confidence: number };
+  events: Array<{ event: EventItem; analysis_status: string; direction: string; positive_strength: number; negative_strength: number; confidence: number; horizon?: string | null; affected_targets: Array<{ target_id: string; name: string; target_type: string; direction: string; magnitude: string; horizon: string }>; explanation: string }>;
+  targets: Array<{ target_id: string; target_type: string; target_code: string; canonical_name: string; direction: string; net_score: number; confidence: number; event_count: number }>;
+  risks: Array<Record<string, unknown>>;
+  data_quality: Record<string, unknown>;
+};
+
 export type Claim = {
   id: string;
   subject_text: string;
@@ -517,6 +529,13 @@ export type ImpactDashboardContribution = {
   source_url?: string | null;
   analysis_id?: string | null;
   analysis_version?: number | null;
+  target_role?: string;
+  relationship_confidence?: number;
+  inference_kind?: string;
+  publication_scope?: string;
+  evidence_refs?: Array<Record<string, unknown>>;
+  conditions?: string[];
+  invalidation_conditions?: string[];
 };
 
 export type ImpactDashboard = {
@@ -524,6 +543,14 @@ export type ImpactDashboard = {
   snapshot: ImpactSnapshot | null;
   contributions: ImpactDashboardContribution[];
   events: Array<Record<string, unknown>>;
+  dimensions?: Array<{
+    dimension: string;
+    positive_gross: number;
+    negative_gross: number;
+    net_score: number;
+    direction: string;
+    confidence: number;
+  }>;
   calculation: {
     formula: string;
     rule_version: string;

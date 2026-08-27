@@ -513,6 +513,25 @@ a:hover {
   font-size: 0.75rem;
 }
 
+.operational-metric { position: relative; display: block; min-height: 5.5rem; padding: 0.7rem 0.8rem 0.65rem; overflow: hidden; color: inherit; background: var(--color-surface-1); border: 1px solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); text-decoration: none; }
+.operational-metric::before { content: ""; position: absolute; inset: 0 0 auto; width: auto; height: 2px; background: var(--color-text-faint); }
+.operational-metric header { display: flex; align-items: center; gap: 0.45rem; color: var(--color-text-muted); font-size: 0.75rem; }
+.operational-metric__icon { display: inline-grid; place-items: center; width: 1rem; height: 1rem; border-radius: 50%; background: var(--color-surface-2); font-size: 0.65rem; }
+.operational-metric strong { display: block; margin-top: 0.28rem; color: var(--color-text-strong); font-size: clamp(1.25rem, 1.8vw, 1.55rem); font-variant-numeric: tabular-nums; letter-spacing: -0.04em; line-height: 1; }
+.operational-metric p { margin: 0.3rem 0 0; color: var(--color-text-faint); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.operational-metric__progress { display: block; height: 3px; margin-top: 0.45rem; overflow: hidden; border-radius: 99px; background: var(--color-surface-3); }
+.operational-metric__progress i { display: block; height: 100%; border-radius: inherit; background: currentColor; }
+.operational-metric.is-critical { color: var(--color-red); }.operational-metric.is-critical::before { background: var(--color-red); }
+.operational-metric.is-warning { color: var(--color-amber); }.operational-metric.is-warning::before { background: var(--color-amber); }
+.operational-metric.is-attention { color: var(--color-blue); }.operational-metric.is-attention::before { background: var(--color-blue); }
+.operational-metric.is-healthy { color: var(--color-green); }.operational-metric.is-healthy::before { background: var(--color-green); }
+.operational-metric.is-neutral { color: var(--color-text-muted); }
+.operational-metric strong, .operational-metric p, .operational-metric header { color: inherit; }
+.operational-metric p { color: var(--color-text-faint); }
+.operational-metric:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.operational-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.65rem; }
+.operational-metric-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.55rem; }
+
 .panel h3 {
   margin: 0 0 0.65rem;
   color: var(--color-text-strong);
@@ -684,6 +703,11 @@ a:hover {
   display: grid;
   gap: 0.45rem;
 }
+
+.impact-dimension-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.impact-dimension-card { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-2); }
+.impact-dimension-card strong { font-size: 1.15rem; }
+.impact-dimension-card small, .impact-waterfall-label small { display: block; color: var(--color-text-muted); font-size: 0.72rem; margin-top: 3px; }
 
 .impact-timeline-row,
 .impact-waterfall-row {
@@ -1326,6 +1350,16 @@ textarea {
 .review-queue-overview__foot { justify-content: flex-start; gap: 1.5rem; padding-top: 0.7rem; color: var(--color-text-muted); font-size: 0.72rem; }
 .review-queue-overview__foot strong { color: var(--color-text-strong); font-variant-numeric: tabular-nums; }
 
+/* Compact queue overview: keep status distribution visible without dominating the worklist. */
+.review-queue-overview { padding: 0.75rem 0.85rem 0.65rem; }
+.review-queue-overview__head { padding-bottom: 0.55rem; }
+.review-queue-overview__head h3 { font-size: 0.95rem; }
+.review-queue-overview__headline.operational-metric-grid { padding: 0.5rem 0; gap: 0.5rem; }
+.review-queue-overview__distribution { padding: 0.55rem 0; }
+.review-queue-status-list { gap: 0.35rem; }
+.review-queue-status-item { padding: 0.38rem 0.5rem; }
+.review-queue-overview__foot { gap: 1rem; padding-top: 0.5rem; }
+
 @media (max-width: 760px) {
   .review-queue-overview__head, .review-queue-overview__headline { align-items: flex-start; flex-direction: column; }
   .review-queue-overview__refresh { justify-content: space-between; width: 100%; }
@@ -1956,3 +1990,19 @@ dialog::backdrop {
   background: var(--surface);
   color: var(--text);
 }
+
+.research-overview { margin-bottom: 0.75rem; }
+.section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.section-heading h2 { margin: 0.2rem 0; }
+.metric-strip.compact { margin: 0.75rem 0; }
+.overview-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.overview-event-card { border: 1px solid var(--color-border); border-radius: 12px; padding: 0.9rem; background: var(--color-surface-2); }
+.overview-event-card h3 { margin: 0.45rem 0; font-size: 1rem; }
+.overview-event-card p { color: var(--color-text-muted); margin: 0 0 0.65rem; line-height: 1.5; }
+.event-card-top { display: flex; justify-content: space-between; align-items: center; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tag { font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 999px; background: var(--color-surface); color: var(--color-text-muted); }
+@media (max-width: 800px) { .overview-event-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .operational-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .operational-metric-grid { grid-template-columns: 1fr; } }
+.review-queue-overview__headline.operational-metric-grid { display: grid; align-items: stretch; justify-content: initial; padding: 0.65rem 0; }

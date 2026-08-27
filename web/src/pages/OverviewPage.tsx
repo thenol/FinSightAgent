@@ -1,13 +1,25 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
+import { OperationalMetricCard } from "@/components/OperationalMetricCard";
 import { EmptyState, Skeleton } from "@/components/EmptyState";
 import { apiGet } from "@/lib/api";
+import { ImpactGraphFlow, type GraphFilter, type ImpactGraph } from "@/features/ImpactGraphFlow";
 import { asList, formatDate, taskAge } from "@/lib/format";
-import type { AdminMetrics, ReviewTask, Source, Workflow } from "@/types/api";
+import type { AdminMetrics, ResearchOverview, ReviewTask, Source, Workflow } from "@/types/api";
 
 export function OverviewPage() {
+  const [graphFilter, setGraphFilter] = useState<GraphFilter>({ scenarioId: "all", horizon: "all", minimumConfidence: 0, coreOnly: true });
+  const researchQuery = useQuery({
+    queryKey: ["research-overview"],
+    queryFn: () => apiGet<ResearchOverview>("/api/v1/overview/research?window=7d"),
+  });
+  const graphQuery = useQuery({
+    queryKey: ["event-knowledge-graph"],
+    queryFn: () => apiGet<{ nodes: ImpactGraph["nodes"]; edges: ImpactGraph["edges"]; truncated: boolean }>("/api/v1/events/graph?window=7d"),
+  });
   const metricsQuery = useQuery({
     queryKey: ["admin-metrics"],
     queryFn: () => apiGet<AdminMetrics>("/api/v1/admin/metrics"),
@@ -25,6 +37,8 @@ export function OverviewPage() {
     queryKey: ["workflows", "active"],
     queryFn: () => apiGet<Workflow[] | { items: Workflow[] }>("/api/v1/workflows?limit=200"),
   });
+
+  const research = researchQuery.data;
 
   if (
     metricsQuery.isLoading ||
@@ -76,37 +90,26 @@ export function OverviewPage() {
         }
       />
 
-      <section className="metric-strip" aria-label="运行概览">
-        <article className="metric-card">
-          <span>待审任务</span>
-          <strong>{metrics?.reviews.pending ?? reviews.length}</strong>
-          <p>{oldest ? `最老 ${taskAge(oldest.created_at)}` : "队列为空"}</p>
-        </article>
-        <article className="metric-card">
-          <span>异常来源</span>
-          <strong>{metrics?.sources ? metrics.sources.total - (metrics.sources.by_status.active || 0) : degraded.length}</strong>
-          <p>共 {metrics?.sources.total ?? sources.length} 个来源</p>
-        </article>
-        <article className="metric-card">
-          <span>工作流成功率</span>
-          <strong>{workflowSuccessRate}</strong>
-          <p>{metrics?.workflows.total ?? workflows.length} 个总运行</p>
-        </article>
-        <article className="metric-card">
-          <span>模型平均延迟</span>
-          <strong>{modelLatency}</strong>
-          <p>24h 内 {metrics?.models.last_24h_runs ?? 0} 次调用</p>
-        </article>
-        <article className="metric-card">
-          <span>引用完整率</span>
-          <strong>{citationRate}</strong>
-          <p>{metrics?.citations.claims_with_evidence ?? 0} / {metrics?.citations.total_claims ?? 0} Claim 含证据</p>
-        </article>
-        <article className="metric-card">
-          <span>Outbox 积压</span>
-          <strong>{metrics?.outbox.pending ?? 0}</strong>
-          <p>{metrics?.outbox.dead_lettered ?? 0} 条死信</p>
-        </article>
+      <section className="research-overview panel">
+        <div className="section-heading"><div><span className="eyebrow">Research cockpit</span><h2>近期事件影响</h2><p className="muted">截至 {research ? formatDate(research.as_of) : "–"}，基于已批准分析聚合</p></div><Link className="button ghost sm" to="/events">查看事件中心</Link></div>
+        {researchQuery.isError ? <p className="muted">事件影响暂时不可用，运营指标仍可正常查看。</p> : research ? <>
+          <div className="metric-strip compact"><div className="metric-card"><span>综合方向</span><strong><StatusBadge value={research.summary.direction} /></strong><p>{research.summary.event_count} 个重大事件</p></div><div className="metric-card"><span>正向 / 负向</span><strong>{research.summary.positive_strength.toFixed(2)} / {research.summary.negative_strength.toFixed(2)}</strong><p>影响强度</p></div><div className="metric-card"><span>平均置信度</span><strong>{Math.round(research.summary.confidence * 100)}%</strong><p>正式结论</p></div></div>
+          <div className="overview-event-grid">{research.events.map((item) => <article className="overview-event-card" key={item.event.id}><div className="event-card-top"><StatusBadge value={item.direction} /><span className="muted">{formatDate(item.event.occurred_at)}</span></div><Link to={`/events/${item.event.id}`}><h3>{item.event.title}</h3></Link><p>{item.explanation || "暂无概括性影响解释"}</p><div className="tag-row">{item.affected_targets.slice(0, 4).map((target) => <Link className="tag" key={`${item.event.id}-${target.target_id}`} to={`/impact-targets/${target.target_id}`}>{target.name} · {target.direction === "positive" ? "利好" : target.direction === "negative" ? "利空" : "混合"}</Link>)}</div></article>)}</div>
+        </> : <EmptyState>暂无可用的正式事件影响分析</EmptyState>}
+      </section>
+
+      <section className="panel research-graph-panel">
+        <div className="section-heading"><div><span className="eyebrow">Knowledge graph</span><h2>事件关系图谱</h2><p className="muted">展示事件之间的因果、更新、放大和对冲，以及其对目标的传导。</p></div><Link className="button ghost sm" to="/events">事件中心</Link></div>
+        {graphQuery.isError ? <p className="muted">事件图谱暂时不可用。</p> : graphQuery.data?.nodes.length ? <ImpactGraphFlow analysisId="overview-event-graph" graph={{ nodes: graphQuery.data.nodes, edges: graphQuery.data.edges }} scenarios={[]} legacy={false} filter={graphFilter} onFilterChange={setGraphFilter} readOnly /> : <EmptyState>近期暂无可展示的事件关系</EmptyState>}
+      </section>
+
+      <section className="metric-strip operational-metric-strip" aria-label="运行概览">
+        <OperationalMetricCard label="待审任务" value={metrics?.reviews.pending ?? reviews.length} secondary={oldest ? `最早等待 ${taskAge(oldest.created_at)}` : "队列为空"} tone={reviews.length ? "attention" : "healthy"} href="/reviews?status=pending" icon="◷" />
+        <OperationalMetricCard label="异常来源" value={metrics?.sources ? metrics.sources.total - (metrics.sources.by_status.active || 0) : degraded.length} secondary={`共 ${metrics?.sources.total ?? sources.length} 个来源`} tone={degraded.length ? "warning" : "healthy"} href="/sources" icon="◉" />
+        <OperationalMetricCard label="工作流成功率" value={workflowSuccessRate} secondary={`${metrics?.workflows.total ?? workflows.length} 个总运行`} progress={metrics?.workflows.success_rate ?? 0} tone={(metrics?.workflows.success_rate ?? 1) < 0.9 ? "warning" : "healthy"} href="/workflows" icon="↗" />
+        <OperationalMetricCard label="模型平均延迟" value={modelLatency} secondary={`24h 内 ${metrics?.models.last_24h_runs ?? 0} 次调用`} tone="neutral" href="/models" icon="◌" />
+        <OperationalMetricCard label="引用完整率" value={citationRate} secondary={`${metrics?.citations.claims_with_evidence ?? 0} / ${metrics?.citations.total_claims ?? 0} Claim 含证据`} progress={metrics?.citations.completeness_rate ?? 0} tone={(metrics?.citations.completeness_rate ?? 1) < 0.8 ? "warning" : "healthy"} href="/audit" icon="✓" />
+        <OperationalMetricCard label="Outbox 积压" value={metrics?.outbox.pending ?? 0} secondary={`${metrics?.outbox.dead_lettered ?? 0} 条死信`} tone={(metrics?.outbox.dead_lettered ?? 0) ? "critical" : (metrics?.outbox.pending ?? 0) ? "attention" : "healthy"} href="/workflows" icon="⌁" />
       </section>
 
       <div className="split">

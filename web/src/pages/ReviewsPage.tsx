@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/PageHeader";
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
+import { OperationalMetricCard } from "@/components/OperationalMetricCard";
 import { EmptyState, ErrorState, Skeleton } from "@/components/EmptyState";
 import { ConfirmDialog, type ConfirmConfig } from "@/components/ConfirmDialog";
 import { EvidenceRail } from "@/features/EvidenceRail";
@@ -190,13 +191,11 @@ function ReviewQueueOverview({
           <button className="button ghost" type="button" onClick={onRefresh} disabled={isRefreshing}>{isRefreshing ? "刷新中" : "刷新队列"}</button>
         </div>
       </div>
-      <div className="review-queue-overview__headline">
-        <div className="review-queue-total"><span className="muted">总任务</span><strong>{total}</strong><span className="muted">当前队列</span></div>
-        <div className="review-queue-kpis">
-          <div><span className="muted">等待人工</span><strong className="is-warn">{humanPending}</strong><small>需人工介入</small></div>
-          <div><span className="muted">SLA 超时</span><strong className="is-bad">{counts.sla_breached || 0}</strong><small>{slaRate}% 的队列</small></div>
-          <div><span className="muted">已完成</span><strong className="is-ok">{counts.decided || 0}</strong><small>已处理任务</small></div>
-        </div>
+      <div className="review-queue-overview__headline operational-metric-grid">
+        <OperationalMetricCard label="当前队列" value={total} secondary={oldestPendingAt ? `最早等待 ${taskAge(oldestPendingAt)}` : "暂无待处理任务"} tone={total ? "attention" : "healthy"} icon="◷" />
+        <OperationalMetricCard label="等待人工" value={humanPending} secondary="需人工介入" tone={humanPending ? "warning" : "healthy"} icon="◉" />
+        <OperationalMetricCard label="SLA 超时" value={counts.sla_breached || 0} secondary={`${slaRate}% 的当前队列`} progress={slaRate / 100} tone={(counts.sla_breached || 0) ? "critical" : "healthy"} icon="!" />
+        <OperationalMetricCard label="已完成" value={counts.decided || 0} secondary="已处理任务" progress={total ? (counts.decided || 0) / total : 0} tone="healthy" icon="✓" />
       </div>
       <div className="review-queue-overview__distribution">
         <div className="review-queue-overview__section-label"><span>状态分布</span><button type="button" className={!activeStatus ? "is-active" : ""} onClick={() => onStatusChange("")}>查看全部</button></div>

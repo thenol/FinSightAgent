@@ -14,6 +14,7 @@ type GraphResponse = { legacy: boolean; causal_graph: ImpactGraph };
 export function ImpactTargetDetailPage() {
   const { targetId = "" } = useParams();
   const [tab, setTab] = useState<"overview" | "graph" | "audit">("overview");
+  const [publicationScope, setPublicationScope] = useState<"official" | "exploration">("official");
   const [selectedContribution, setSelectedContribution] = useState<string | null>(null);
   const [filter, setFilter] = useState<GraphFilter>({
     scenarioId: "all",
@@ -22,8 +23,8 @@ export function ImpactTargetDetailPage() {
     coreOnly: false,
   });
   const dashboardQuery = useQuery({
-    queryKey: ["impact-target-dashboard", targetId],
-    queryFn: () => apiGet<ImpactDashboard>(`/api/v1/impact-targets/${encodeURIComponent(targetId)}/dashboard`),
+    queryKey: ["impact-target-dashboard", targetId, publicationScope],
+    queryFn: () => apiGet<ImpactDashboard>(`/api/v1/impact-targets/${encodeURIComponent(targetId)}/dashboard?publication_scope=${publicationScope}`),
     enabled: Boolean(targetId),
   });
   const timelineQuery = useQuery({
@@ -57,6 +58,10 @@ export function ImpactTargetDetailPage() {
       />
       <div className="impact-target-toolbar">
         <span className="muted">知识截止：{snapshot ? new Date(snapshot.as_of).toLocaleString("zh-CN") : "–"}</span>
+        <div className="button-group" aria-label="影响范围">
+          <button type="button" className={`button ghost sm ${publicationScope === "official" ? "active" : ""}`} onClick={() => setPublicationScope("official")}>正式结论</button>
+          <button type="button" className={`button ghost sm ${publicationScope === "exploration" ? "active" : ""}`} onClick={() => setPublicationScope("exploration")}>探索情景</button>
+        </div>
         <Link className="button ghost sm" to={`/future-events?target_id=${encodeURIComponent(dashboard.target.id)}`}>研究日历</Link>
         <Link className="button ghost sm" to={`/impact-targets/${encodeURIComponent(dashboard.target.id)}/forward`}>未来行业前瞻</Link>
       </div>
@@ -115,10 +120,20 @@ function Overview({ dashboard, timeline, selected, onSelect }: { dashboard: Impa
         </div>
       </section>
       <section className="panel">
+        <h3>影响维度</h3>
+        {!dashboard.dimensions?.length ? <p className="muted">暂无维度级贡献</p> : <div className="impact-dimension-grid">
+          {dashboard.dimensions.map((item) => <div className="impact-dimension-card" key={item.dimension}>
+            <span className="muted">{item.dimension}</span>
+            <strong>{item.net_score >= 0 ? "+" : "−"}{Math.abs(item.net_score).toFixed(3)}</strong>
+            <small>{item.direction} · 置信度 {Math.round(item.confidence * 100)}%</small>
+          </div>)}
+        </div>}
+      </section>
+      <section className="panel">
         <h3>事件贡献瀑布</h3>
         {!dashboard.contributions.length ? <EmptyState>暂无事件贡献</EmptyState> : <div className="impact-waterfall">
           {dashboard.contributions.map((item) => <button type="button" className="impact-waterfall-row" key={item.contribution_id} onClick={() => onSelect(item.contribution_id)}>
-            <span className="impact-waterfall-label">{item.event_title}</span>
+            <span className="impact-waterfall-label">{item.event_title}<small>{item.target_role || "直接影响"} · 关系置信度 {Math.round((item.relationship_confidence ?? 1) * 100)}%</small></span>
             <span className="impact-waterfall-track"><i className={item.direction === "negative" ? "is-negative" : "is-positive"} style={{ width: `${Math.max(4, item.effective_strength / max * 100)}%` }} /></span>
             <strong>{item.direction === "negative" ? "−" : "+"}{item.effective_strength.toFixed(3)}</strong>
             <small>{Math.round(item.contribution_share * 100)}%</small>
