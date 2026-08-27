@@ -10,6 +10,7 @@ from typing import Optional
 from app.analysis.agents import ImpactAnalystAgent
 from app.analysis.context import ImpactContextBuilder
 from app.analysis.mechanisms import ImpactCritic, MechanismGenerator
+from app.analysis.preliminary import PreliminaryAssessmentService
 from app.analysis.quality import validate_impact_output
 from app.analysis.schemas import (
     ImpactAnalysisOutput,
@@ -41,6 +42,9 @@ class ImpactAnalysisService:
         self.context_builder = ImpactContextBuilder(repository)
         self.mechanism_generator = MechanismGenerator()
         self.impact_critic = ImpactCritic()
+        self.preliminary_service = PreliminaryAssessmentService(
+            repository, gateway=getattr(self.agent, "gateway", None)
+        )
 
     def generate(self, event_id: str, actor: Optional[str] = None) -> ImpactAnalysis:
         """为事件生成新一版影响分析；LLM 失败时使用规则模板。"""
@@ -52,9 +56,17 @@ class ImpactAnalysisService:
         claims = context.claims
         fact_card = context.fact_card
         entities = context.entities
+        preliminary = self.preliminary_service.generate(
+            event_id, actor=actor or IMPACT_ANALYSIS_ACTOR
+        )
 
         output = self.agent.analyze(
-            event, claims, fact_card, entities, context=context.to_payload()
+            event, claims, fact_card, entities,
+            context={
+                **context.to_payload(),
+                "preliminary_assessment": preliminary.assessment_payload,
+                "preliminary_assessment_id": preliminary.id,
+            },
         )
         degraded = output is None
         model_failure = getattr(self.agent, "last_failure", None)
@@ -113,6 +125,7 @@ class ImpactAnalysisService:
             created_at=datetime.now(timezone.utc),
             analysis_payload=v2_payload,
             quality_report=quality_report,
+            preliminary_assessment_id=preliminary.id,
         )
         self.repository.save_impact_analysis(analysis)
         self._audit("impact_analysis.generated", analysis, actor or IMPACT_ANALYSIS_ACTOR)

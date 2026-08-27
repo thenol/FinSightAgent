@@ -34,6 +34,7 @@ from app.domain import (
     EntityLink,
     Event,
     EventImpactRelation,
+    EventPreliminaryAssessment,
     EventTypeProposal,
     EventTypeRegistryEntry,
     EvidenceSpan,
@@ -109,6 +110,7 @@ from app.platform.db_models import (
     EventEntityModel,
     EventImpactRelationModel,
     EventModel,
+    EventPreliminaryAssessmentModel,
     EventTypeProposalModel,
     EventTypeRegistryModel,
     EvidenceSpanModel,
@@ -701,6 +703,17 @@ class Repository(Protocol):
     ) -> list["ImpactAnalysis"]: ...
 
     def update_impact_analysis(self, impact_analysis: "ImpactAnalysis") -> None: ...
+    def save_preliminary_assessment(self, assessment: "EventPreliminaryAssessment") -> None: ...
+    def get_preliminary_assessment(
+        self, assessment_id: str
+    ) -> Optional["EventPreliminaryAssessment"]: ...
+    def get_latest_preliminary_assessment_for_event(
+        self, event_id: str
+    ) -> Optional["EventPreliminaryAssessment"]: ...
+    def list_preliminary_assessments_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list["EventPreliminaryAssessment"]: ...
+    def update_preliminary_assessment(self, assessment: "EventPreliminaryAssessment") -> None: ...
 
     def get_impact_graph_layout(
         self, analysis_id: str, user_id: str
@@ -968,6 +981,7 @@ class InMemoryRepository:
         self.conflicts: list[ConflictRecord] = []
         self.fact_cards: dict[str, FactCard] = {}
         self.impact_analyses: dict[str, ImpactAnalysis] = {}
+        self.preliminary_assessments: dict[str, EventPreliminaryAssessment] = {}
         self.impact_graph_layouts: dict[tuple[str, str], ImpactGraphLayout] = {}
         self.impact_targets: dict[str, ImpactTargetDefinition] = {}
         self.market_instruments: dict[str, MarketInstrument] = {}
@@ -1778,7 +1792,8 @@ class InMemoryRepository:
 
     def list_event_type_proposals(self, status: Optional[str] = None) -> list[EventTypeProposal]:
         values = [
-            item for item in self.event_type_proposals.values()
+            item
+            for item in self.event_type_proposals.values()
             if status is None or item.status == status
         ]
         return sorted(values, key=lambda item: item.created_at or datetime.min, reverse=True)
@@ -1798,7 +1813,8 @@ class InMemoryRepository:
         self, pack_id: Optional[str] = None
     ) -> list[CapabilityEvaluation]:
         values = [
-            item for item in self.capability_evaluations.values()
+            item
+            for item in self.capability_evaluations.values()
             if pack_id is None or item.pack_id == pack_id
         ]
         return sorted(values, key=lambda item: item.created_at or datetime.min, reverse=True)
@@ -1929,6 +1945,49 @@ class InMemoryRepository:
         if impact_analysis.id not in self.impact_analyses:
             raise KeyError(f"impact_analysis not found: {impact_analysis.id}")
         self.impact_analyses[impact_analysis.id] = impact_analysis
+
+    def save_preliminary_assessment(self, assessment: EventPreliminaryAssessment) -> None:
+        existing = self.preliminary_assessments.get(assessment.id)
+        if existing is not None:
+            raise ReportVersionConflict("PRELIMINARY_ASSESSMENT_IMMUTABLE")
+        if any(
+            item.event_id == assessment.event_id and item.version == assessment.version
+            for item in self.preliminary_assessments.values()
+        ):
+            raise ReportVersionConflict("PRELIMINARY_ASSESSMENT_VERSION_CONFLICT")
+        self.preliminary_assessments[assessment.id] = assessment
+
+    def get_preliminary_assessment(
+        self, assessment_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        return self.preliminary_assessments.get(assessment_id)
+
+    def get_latest_preliminary_assessment_for_event(
+        self, event_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        items = [
+            item
+            for item in self.preliminary_assessments.values()
+            if item.event_id == event_id and item.status != "superseded"
+        ]
+        return max(
+            items, key=lambda item: (item.version, item.created_at or datetime.min), default=None
+        )
+
+    def list_preliminary_assessments_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[EventPreliminaryAssessment]:
+        items = sorted(
+            (item for item in self.preliminary_assessments.values() if item.event_id == event_id),
+            key=lambda item: (item.version, item.created_at or datetime.min),
+            reverse=True,
+        )
+        return items[:limit] if limit is not None else items
+
+    def update_preliminary_assessment(self, assessment: EventPreliminaryAssessment) -> None:
+        if assessment.id not in self.preliminary_assessments:
+            raise KeyError(f"preliminary_assessment not found: {assessment.id}")
+        self.preliminary_assessments[assessment.id] = assessment
 
     def get_impact_graph_layout(
         self, analysis_id: str, user_id: str
@@ -2828,6 +2887,33 @@ class SqlAlchemyRepository:
     def update_impact_analysis(self, impact_analysis: ImpactAnalysis) -> None:
         with self.transaction() as repository:
             repository.update_impact_analysis(impact_analysis)
+
+    def save_preliminary_assessment(self, assessment: EventPreliminaryAssessment) -> None:
+        with self.transaction() as repository:
+            repository.save_preliminary_assessment(assessment)
+
+    def get_preliminary_assessment(
+        self, assessment_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        return self._read(lambda repository: repository.get_preliminary_assessment(assessment_id))
+
+    def get_latest_preliminary_assessment_for_event(
+        self, event_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        return self._read(
+            lambda repository: repository.get_latest_preliminary_assessment_for_event(event_id)
+        )
+
+    def list_preliminary_assessments_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[EventPreliminaryAssessment]:
+        return self._read(
+            lambda repository: repository.list_preliminary_assessments_for_event(event_id, limit)
+        )
+
+    def update_preliminary_assessment(self, assessment: EventPreliminaryAssessment) -> None:
+        with self.transaction() as repository:
+            repository.update_preliminary_assessment(assessment)
 
     def get_impact_graph_layout(
         self, analysis_id: str, user_id: str
@@ -5008,9 +5094,7 @@ class SqlAlchemyTransaction:
         model = self.session.get(EventTypeProposalModel, proposal_id)
         return _event_type_proposal(model) if model else None
 
-    def list_event_type_proposals(
-        self, status: Optional[str] = None
-    ) -> list[EventTypeProposal]:
+    def list_event_type_proposals(self, status: Optional[str] = None) -> list[EventTypeProposal]:
         statement = select(EventTypeProposalModel).order_by(
             EventTypeProposalModel.created_at.desc()
         )
@@ -5324,6 +5408,64 @@ class SqlAlchemyTransaction:
         model.quality_report = value.quality_report or {}
         model.edit_revision = value.edit_revision
         model.derived_from_id = value.derived_from_id
+        model.preliminary_assessment_id = value.preliminary_assessment_id
+        self.session.flush()
+
+    def save_preliminary_assessment(self, value: EventPreliminaryAssessment) -> None:
+        if self.session.get(EventPreliminaryAssessmentModel, value.id) is not None:
+            raise ReportVersionConflict("PRELIMINARY_ASSESSMENT_IMMUTABLE")
+        try:
+            with self.session.begin_nested():
+                self.session.add(EventPreliminaryAssessmentModel(**value.__dict__))
+                self.session.flush()
+        except IntegrityError as exc:
+            raise ReportVersionConflict("PRELIMINARY_ASSESSMENT_VERSION_CONFLICT") from exc
+
+    def get_preliminary_assessment(
+        self, assessment_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        model = self.session.get(EventPreliminaryAssessmentModel, assessment_id)
+        return _preliminary_assessment(model) if model else None
+
+    def get_latest_preliminary_assessment_for_event(
+        self, event_id: str
+    ) -> Optional[EventPreliminaryAssessment]:
+        statement = (
+            select(EventPreliminaryAssessmentModel)
+            .where(
+                EventPreliminaryAssessmentModel.event_id == event_id,
+                EventPreliminaryAssessmentModel.status != "superseded",
+            )
+            .order_by(
+                EventPreliminaryAssessmentModel.version.desc(),
+                EventPreliminaryAssessmentModel.created_at.desc(),
+            )
+            .limit(1)
+        )
+        model = self.session.scalar(statement)
+        return _preliminary_assessment(model) if model else None
+
+    def list_preliminary_assessments_for_event(
+        self, event_id: str, limit: Optional[int] = None
+    ) -> list[EventPreliminaryAssessment]:
+        statement = (
+            select(EventPreliminaryAssessmentModel)
+            .where(EventPreliminaryAssessmentModel.event_id == event_id)
+            .order_by(
+                EventPreliminaryAssessmentModel.version.desc(),
+                EventPreliminaryAssessmentModel.created_at.desc(),
+            )
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return [_preliminary_assessment(model) for model in self.session.scalars(statement)]
+
+    def update_preliminary_assessment(self, value: EventPreliminaryAssessment) -> None:
+        model = self.session.get(EventPreliminaryAssessmentModel, value.id)
+        if model is None:
+            raise KeyError(f"preliminary_assessment not found: {value.id}")
+        model.status = value.status
+        self.session.flush()
 
     def get_impact_graph_layout(
         self, analysis_id: str, user_id: str
@@ -5596,9 +5738,7 @@ class SqlAlchemyTransaction:
             statement = statement.where(
                 ImpactDimensionContributionModel.contribution_id == contribution_id
             )
-        return [
-            _impact_dimension_contribution(item) for item in self.session.scalars(statement)
-        ]
+        return [_impact_dimension_contribution(item) for item in self.session.scalars(statement)]
 
     def save_target_impact_snapshot(
         self, value: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
@@ -6713,6 +6853,7 @@ def _auto_review_attempt(value: AutoReviewAttemptModel) -> AutoReviewAttempt:
         reason=value.reason,
         model_run_id=value.model_run_id,
         created_at=value.created_at,
+        context=getattr(value, "context", None) or {},
     )
 
 
@@ -7138,6 +7279,34 @@ def _impact_analysis(value: ImpactAnalysisModel) -> ImpactAnalysis:
         quality_report=value.quality_report or {},
         edit_revision=value.edit_revision or 0,
         derived_from_id=value.derived_from_id,
+        preliminary_assessment_id=getattr(value, "preliminary_assessment_id", None),
+    )
+
+
+def _preliminary_assessment(value: EventPreliminaryAssessmentModel) -> EventPreliminaryAssessment:
+    return EventPreliminaryAssessment(
+        id=value.id,
+        event_id=value.event_id,
+        workflow_id=value.workflow_id,
+        version=value.version,
+        status=value.status,
+        event_title_snapshot=value.event_title_snapshot,
+        as_of=value.as_of,
+        summary=value.summary,
+        thesis=value.thesis,
+        direction=value.direction,
+        significance=value.significance,
+        confidence=float(value.confidence),
+        assessment_payload=value.assessment_payload or {},
+        input_snapshot=value.input_snapshot or {},
+        input_hash=value.input_hash,
+        quality_report=value.quality_report or {},
+        generated_by=value.generated_by,
+        model_run_id=value.model_run_id,
+        agent_version=value.agent_version,
+        prompt_version=value.prompt_version,
+        supersedes_id=value.supersedes_id,
+        created_at=value.created_at,
     )
 
 

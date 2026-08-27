@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from app.analysis.preliminary import PreliminaryAssessmentService
 from app.analysis.service import ImpactAnalysisService
 from app.domain import (
     NodeAttempt,
@@ -82,6 +83,7 @@ class DynamicWorkflowService:
             "skeptic": self._execute_skeptic,
             "synthesizer": self._execute_synthesizer,
             "impact_analyst": self._execute_impact_analyst,
+            "preliminary_assessor": self._execute_preliminary_assessor,
             "market_analyst": self._execute_market_analyst,
             "industry_analyst": self._execute_industry_analyst,
             "regulatory_analyst": self._execute_regulatory_analyst,
@@ -432,6 +434,8 @@ class DynamicWorkflowService:
             "workflow_id": run.id,
             "as_of": run.as_of.isoformat(),
             "fact_check_snapshot": inputs.get("fact_verify", {}),
+            "preliminary_assessment": inputs.get("preliminary_assess", {}),
+            "preliminary_assessment_ref": inputs.get("preliminary_assess", {}).get("id"),
             "company_analysis": inputs.get("company_analyze", {}),
             "counter_analysis": inputs.get("skeptic_review", {}),
         }
@@ -454,6 +458,26 @@ class DynamicWorkflowService:
             "watch_items": analysis.watch_items,
             "model_run_id": analysis.model_run_id,
             "degraded": analysis.degraded,
+            "preliminary_assessment_id": analysis.preliminary_assessment_id,
+        }
+
+    def _execute_preliminary_assessor(
+        self, task: ResearchTask, inputs: dict[str, Any], run: WorkflowRun
+    ) -> dict[str, Any]:
+        if not run.event_id:
+            return {"status": "limited", "summary": "没有关联事件，无法生成事件级初步研判。"}
+        assessment = PreliminaryAssessmentService(self.repository, self.model_gateway).generate(
+            run.event_id, workflow_id=run.id, actor="agent:preliminary_assessor"
+        )
+        return {
+            "id": assessment.id,
+            "version": assessment.version,
+            "status": assessment.status,
+            "summary": assessment.summary,
+            "thesis": assessment.thesis,
+            "direction": assessment.direction,
+            "confidence": assessment.confidence,
+            "assessment_payload": assessment.assessment_payload,
         }
 
     def _execute_market_analyst(

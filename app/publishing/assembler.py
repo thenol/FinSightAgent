@@ -50,6 +50,7 @@ class ReportAssembler:
         synthesis = blackboard.get("synthesis", {})
         company = blackboard.get("company_analysis", {})
         counter = blackboard.get("counter_analysis", {})
+        preliminary = blackboard.get("preliminary_assessment", {})
 
         report_type = self._report_type(blackboard, synthesis)
         sections = self._sections(verified, conflicted, unverified, company, counter, synthesis)
@@ -71,6 +72,16 @@ class ReportAssembler:
             "watch_items": synthesis.get("watch_items", []),
             "reanalysis_conditions": synthesis.get("reanalysis_triggers", []),
         }
+        preliminary_id = blackboard.get("preliminary_assessment_ref") or preliminary.get("id")
+        if preliminary_id:
+            content["preliminary_assessment"] = {
+                "id": preliminary_id,
+                "thesis": preliminary.get("thesis"),
+                "direction": preliminary.get("direction"),
+                "disposition": synthesis.get("assessment_disposition"),
+                "delta": synthesis.get("assessment_delta", {}),
+                "delta_reasons": synthesis.get("delta_reasons", []),
+            }
         tool_calls = self.repository.list_tool_calls(run.id)
         provenance = {
             "workflow_run_id": run.id,
@@ -78,6 +89,7 @@ class ReportAssembler:
             "analysis_refs": self._analysis_refs(blackboard),
             "model_run_ids": self._model_run_ids(blackboard),
             "tool_call_ids": [call.id for call in tool_calls],
+            "preliminary_assessment_id": preliminary_id,
         }
 
         return {

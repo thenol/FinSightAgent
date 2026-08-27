@@ -13,6 +13,7 @@ from app.agents.registry import AgentRegistry
 from app.analysis.aggregation import ImpactAggregationService
 from app.analysis.backfill import ImpactProjectionBackfillService
 from app.analysis.forward import ForwardImpactService
+from app.analysis.preliminary import PreliminaryAssessmentService
 from app.analysis.service import ImpactAnalysisService
 from app.api.auth import PASSWORD_HASH, require_roles
 from app.api.errors import openapi_error_responses
@@ -71,6 +72,7 @@ from app.api.schemas import (
     OODClusterResponse,
     OODObservationResponse,
     PipelineResponse,
+    PreliminaryAssessmentResponse,
     ReportTransitionRequest,
     ReprocessingJobResponse,
     ResearchBlackboardResponse,
@@ -4085,6 +4087,82 @@ def generate_event_impact_analysis(
         raise HTTPException(status_code=409, detail="IMPACT_ANALYSIS_VERSION_CONFLICT") from exc
     return DataEnvelope(
         data=ImpactAnalysisResponse.model_validate(analysis, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.post("/api/v1/events/{event_id}/preliminary-assessments", response_model=DataEnvelope)
+def generate_event_preliminary_assessment(
+    event_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        assessment = PreliminaryAssessmentService(request.app.state.repository).generate(
+            event_id, actor=user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="EVENT_NOT_FOUND") from exc
+    return DataEnvelope(
+        data=PreliminaryAssessmentResponse.model_validate(assessment, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/events/{event_id}/preliminary-assessment", response_model=DataEnvelope)
+def get_event_preliminary_assessment(
+    event_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    assessment = request.app.state.repository.get_latest_preliminary_assessment_for_event(event_id)
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="PRELIMINARY_ASSESSMENT_NOT_FOUND")
+    return DataEnvelope(
+        data=PreliminaryAssessmentResponse.model_validate(assessment, from_attributes=True),
+        meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get(
+    "/api/v1/events/{event_id}/preliminary-assessment/versions", response_model=DataEnvelope
+)
+def list_event_preliminary_assessment_versions(
+    event_id: str,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    values = request.app.state.repository.list_preliminary_assessments_for_event(
+        event_id, limit=limit
+    )
+    return DataEnvelope(
+        data=[
+            PreliminaryAssessmentResponse.model_validate(item, from_attributes=True)
+            for item in values
+        ],
+        meta={
+            "request_id": request.state.request_id,
+            "schema_version": "1.0",
+            "count": len(values),
+        },
+    )
+
+
+@router.get("/api/v1/preliminary-assessments/{assessment_id}", response_model=DataEnvelope)
+def get_preliminary_assessment(
+    assessment_id: str,
+    request: Request,
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    _ = user
+    assessment = request.app.state.repository.get_preliminary_assessment(assessment_id)
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="PRELIMINARY_ASSESSMENT_NOT_FOUND")
+    return DataEnvelope(
+        data=PreliminaryAssessmentResponse.model_validate(assessment, from_attributes=True),
         meta={"request_id": request.state.request_id, "schema_version": "1.0"},
     )
 

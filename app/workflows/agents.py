@@ -37,7 +37,6 @@ def _try_parse_payload(payload: Any, schema: type[BaseModel]) -> BaseModel | Non
         return None
 
 
-
 def _parse_as_of(state: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(state["as_of"])
 
@@ -116,6 +115,7 @@ class CompanyAnalystAgent:
                     "event_type": event.event_type if event else "unknown",
                     "verified_claim_ids": claim_ids,
                     "tool_result_ids": tool_result_ids,
+                    "preliminary_assessment": state.get("preliminary_assessment", {}),
                 },
             )
         )
@@ -129,9 +129,7 @@ class CompanyAnalystAgent:
                         "financial_impacts": [
                             FinancialImpact(
                                 metric="net_profit",
-                                direction=(
-                                    "increase" if direction == "positive" else "uncertain"
-                                ),
+                                direction=("increase" if direction == "positive" else "uncertain"),
                                 period=(
                                     event.key_fields.get("period", "unknown")
                                     if event
@@ -226,6 +224,7 @@ class SkepticAgent:
                 payload={
                     "company_analysis_summary": company.get("financial_impacts"),
                     "claim_ids": claim_ids,
+                    "preliminary_assessment": state.get("preliminary_assessment", {}),
                 },
             )
         )
@@ -291,6 +290,8 @@ class SynthesizerAgent:
                     "key_fact_claim_ids": key_facts,
                     "company_direction": company.get("direction"),
                     "counter_direction": counter.get("direction_assessment"),
+                    "preliminary_assessment": state.get("preliminary_assessment", {}),
+                    "preliminary_assessment_ref": state.get("preliminary_assessment_ref"),
                 },
             )
         )
@@ -299,9 +300,7 @@ class SynthesizerAgent:
             output = parsed.model_copy(update={"model_run_id": response.run_id})
         else:
             signal = (
-                "moderately_positive"
-                if company.get("direction") == "positive"
-                else "uncertain"
+                "moderately_positive" if company.get("direction") == "positive" else "uncertain"
             )
             output = SynthesisOutput(
                 model_run_id=response.run_id,
@@ -350,5 +349,15 @@ class SynthesizerAgent:
                 ],
                 limitations=["MVP 阶段未接入市场预期与定价分析"],
                 confidence_factors=["verified_claims", "skeptic_adjustment"],
+                preliminary_assessment_id=state.get("preliminary_assessment_ref"),
+                assessment_disposition=(
+                    "revised" if state.get("preliminary_assessment") else "insufficient"
+                ),
+                assessment_delta={"direction": "待正式结论验证"}
+                if state.get("preliminary_assessment")
+                else {},
+                delta_reasons=["正式结论尚未完成独立反方审查"]
+                if state.get("preliminary_assessment")
+                else [],
             )
         return {"synthesis": output.model_dump()}

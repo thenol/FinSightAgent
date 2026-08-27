@@ -207,13 +207,14 @@ def compile_capability_plan(
     if missing:
         tasks.append(CapabilityPlanTask("fill_missing_fields", "targeted_retrieve", dependencies=("verify_primary_evidence",), required=False, output_field="missing_fields"))
     if "company_analyze" in pack.manifest.required_capabilities:
-        tasks.append(CapabilityPlanTask("analyze_company", "company_analyze", dependencies=("verify_primary_evidence", "resolve_entities"), output_field="company_analysis"))
+        tasks.append(CapabilityPlanTask("analyze_company", "company_analyze", dependencies=("assess_event",), output_field="company_analysis"))
     if "industry_analyze" in pack.manifest.required_capabilities:
-        tasks.append(CapabilityPlanTask("analyze_industry", "industry_analyze", dependencies=("verify_primary_evidence", "resolve_entities"), output_field="industry_analysis"))
+        tasks.append(CapabilityPlanTask("analyze_industry", "industry_analyze", dependencies=("assess_event",), output_field="industry_analysis"))
     if market_data_available and "market_analyze" in pack.manifest.required_capabilities:
-        tasks.append(CapabilityPlanTask("analyze_market_reaction", "market_analyze", dependencies=("verify_primary_evidence", "resolve_entities"), output_field="market_analysis"))
+        tasks.append(CapabilityPlanTask("analyze_market_reaction", "market_analyze", dependencies=("assess_event",), output_field="market_analysis"))
     tasks.extend([
-        CapabilityPlanTask("build_impact_graph", "impact_analyze", dependencies=("verify_primary_evidence", "resolve_entities"), output_field="impact_analysis"),
+        CapabilityPlanTask("assess_event", "preliminary_assessor", dependencies=("verify_primary_evidence", "resolve_entities"), output_field="preliminary_assessment"),
+        CapabilityPlanTask("build_impact_graph", "impact_analyze", dependencies=("assess_event",), output_field="impact_analysis"),
         CapabilityPlanTask("challenge_conclusion", "skeptic_review", dependencies=("build_impact_graph",), output_field="skeptic_review"),
         CapabilityPlanTask("synthesize_research", "synthesize", dependencies=("build_impact_graph", "challenge_conclusion"), output_field="research_conclusion"),
     ])

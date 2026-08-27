@@ -12,6 +12,15 @@ from app.domain import AgentRegistration
 
 DEFAULT_REGISTRATIONS: list[AgentRegistration] = [
     AgentRegistration(
+        agent_key="preliminary_assessor",
+        version="1.0.0",
+        display_name="事件初步研判 Agent",
+        capabilities=["preliminary_assess"],
+        input_schema_refs=["event-context/1.0.0"],
+        output_schema_ref="preliminary-assessment/1.0.0",
+        allowed_tools=[],
+    ),
+    AgentRegistration(
         agent_key="fact_checker",
         version="1.0.0",
         display_name="事实核验 Agent",
@@ -218,7 +227,4 @@ class AgentRegistry:
 
     def to_tool_gateway_whitelist(self) -> dict[str, frozenset[str]]:
         """将注册表转换为 ToolGateway 可用的白名单格式。"""
-        return {
-            r.agent_key: frozenset(r.allowed_tools)
-            for r in self._registrations.values()
-        }
+        return {r.agent_key: frozenset(r.allowed_tools) for r in self._registrations.values()}

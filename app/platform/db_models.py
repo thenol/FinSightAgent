@@ -163,6 +163,7 @@ class AutoReviewAttemptModel(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     model_run_id: Mapped[Optional[str]] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class ModelRunModel(Base):
@@ -821,6 +822,40 @@ class ImpactAnalysisModel(Base):
     quality_report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     edit_revision: Mapped[int] = mapped_column(default=0)
     derived_from_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    preliminary_assessment_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+
+
+class EventPreliminaryAssessmentModel(Base):
+    __tablename__ = "event_preliminary_assessments"
+    __table_args__ = (
+        UniqueConstraint("event_id", "version", name="uq_preliminary_assessment_event_version"),
+        Index("ix_preliminary_assessments_event_created", "event_id", "created_at"),
+        Index("ix_preliminary_assessments_input_hash", "event_id", "input_hash"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, index=True)
+    workflow_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16))
+    event_title_snapshot: Mapped[str] = mapped_column(Text)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[str] = mapped_column(Text)
+    thesis: Mapped[str] = mapped_column(Text)
+    direction: Mapped[str] = mapped_column(String(16))
+    significance: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column()
+    assessment_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    quality_report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    generated_by: Mapped[str] = mapped_column(String(100))
+    model_run_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    agent_version: Mapped[str] = mapped_column(String(24), default="1.0.0")
+    prompt_version: Mapped[str] = mapped_column(String(80), default="preliminary-assessment-v1")
+    supersedes_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ImpactGraphLayoutModel(Base):

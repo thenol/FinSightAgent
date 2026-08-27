@@ -670,6 +670,32 @@ class ImpactAnalysisResponse(BaseModel):
     quality_report: dict[str, Any] = Field(default_factory=dict)
     edit_revision: int = 0
     derived_from_id: Optional[str] = None
+    preliminary_assessment_id: Optional[str] = None
+
+
+class PreliminaryAssessmentResponse(BaseModel):
+    id: str
+    event_id: str
+    workflow_id: Optional[str] = None
+    version: int
+    status: str
+    event_title_snapshot: str
+    as_of: datetime
+    summary: str
+    thesis: str
+    direction: str
+    significance: str
+    confidence: float
+    assessment_payload: dict[str, Any] = Field(default_factory=dict)
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    input_hash: str
+    quality_report: dict[str, Any] = Field(default_factory=dict)
+    generated_by: str
+    model_run_id: Optional[str] = None
+    agent_version: str
+    prompt_version: str
+    supersedes_id: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 class ImpactGraphEditRequest(BaseModel):

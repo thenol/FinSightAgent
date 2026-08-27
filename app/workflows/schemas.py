@@ -172,3 +172,9 @@ class SynthesisOutput(BaseModel):
     reanalysis_triggers: list[ReanalysisTrigger] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     confidence_factors: list[str] = Field(default_factory=list)
+    preliminary_assessment_id: str | None = None
+    assessment_disposition: Literal["upheld", "revised", "overturned", "insufficient"] = (
+        "insufficient"
+    )
+    assessment_delta: dict = Field(default_factory=dict)
+    delta_reasons: list[str] = Field(default_factory=list)

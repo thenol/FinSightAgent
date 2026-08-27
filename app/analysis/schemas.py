@@ -62,6 +62,37 @@ class EvidenceBinding(BaseModel):
     as_of: Optional[str] = None
 
 
+class PreliminaryScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_type: Literal["macro", "market", "sector", "industry", "company", "asset_class"]
+    target_name: str = Field(min_length=1)
+    target_code: Optional[str] = None
+    direction: Literal["positive", "negative", "mixed", "neutral", "uncertain"]
+    horizon: Literal["immediate", "short_term", "medium_term", "long_term", "uncertain"]
+    rationale: str = Field(min_length=1)
+
+
+class PreliminaryAssessmentOutputV1(BaseModel):
+    """Agent 面向用户的事件级初步研判；是推理快照而非事实或正式结论。"""
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    summary: str = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    direction: Literal["positive", "negative", "mixed", "neutral", "uncertain"]
+    significance: Literal["critical", "high", "medium", "low"]
+    confidence: float = Field(ge=0, le=1)
+    event_characterization: dict = Field(default_factory=dict)
+    affected_scope: list[PreliminaryScope] = Field(default_factory=list)
+    mechanism_hypotheses: list[dict] = Field(default_factory=list)
+    scenario_outline: list[dict] = Field(default_factory=list)
+    counter_hypotheses: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    missing_data: list[str] = Field(default_factory=list)
+    watch_items: list[str] = Field(default_factory=list)
+    evidence_refs: list[EvidenceBinding] = Field(default_factory=list)
+
+
 class CausalNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
     node_id: str = Field(pattern=r"^node_[a-zA-Z0-9_-]+$")
@@ -107,8 +138,18 @@ class Scenario(BaseModel):
 class ImpactDimension(BaseModel):
     model_config = ConfigDict(extra="forbid")
     dimension: Literal[
-        "demand", "revenue", "cost", "margin", "cash_flow", "valuation",
-        "liquidity", "credit", "supply", "fx", "commodity", "other",
+        "demand",
+        "revenue",
+        "cost",
+        "margin",
+        "cash_flow",
+        "valuation",
+        "liquidity",
+        "credit",
+        "supply",
+        "fx",
+        "commodity",
+        "other",
     ]
     direction: Literal["positive", "negative", "mixed", "uncertain"]
     magnitude: Literal["strong", "moderate", "weak", "uncertain"]
@@ -160,3 +201,6 @@ class ImpactAnalysisOutputV2(BaseModel):
     watch_items: list[str] = Field(default_factory=list)
     quality_report: QualityReport
     model_run_id: Optional[str] = None
+
+
+PreliminaryAssessmentOutputV1.model_rebuild()

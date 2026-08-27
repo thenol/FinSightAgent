@@ -105,13 +105,56 @@ class AutoReviewService:
         return decision
 
     def attempt_workflow_review(self, task: ReviewTask) -> Optional[AutoReviewDecision]:
-        """workflow 类型暂不适合自动决定，统一转人工。"""
-        self._record_attempt(task, "escalated", None, "工作流审核保留人工质量门")
-        return None
+        """默认由 Agent 审核工作流质量门；无法安全决定时再升级人工。"""
+        if self.mode() != "agent" or "workflow" not in self.settings.auto_review_enabled_types:
+            self._record_attempt(task, "disabled", None, "工作流自动审核未启用")
+            return None
+        run = self.repository.get_workflow_run(task.object_id)
+        context = {
+            "task_type": "workflow",
+            "reason_code": task.reason_code,
+            "workflow_id": task.object_id,
+            "blackboard": (run.blackboard if run else {}),
+            "allowed_decisions": task.allowed_decisions,
+        }
+        decision = self._maybe_llm(context)
+        if decision is None or decision.escalate:
+            self._record_attempt(
+                task, "escalated", decision, decision.reason if decision else "Agent 未能作出决定"
+            )
+            return None
+        if decision.confidence < self._min_confidence():
+            self._record_attempt(task, "escalated", decision, "置信度低于自动审核门槛")
+            return None
+        self._mark_task_decided(task, decision)
+        if run and decision.decision in {
+            "approve",
+            "return",
+            "return_for_supplement",
+            "downgrade_to_fact_card",
+        }:
+            from app.workflows.service import WorkflowService
 
-    def attempt_merge_review(
-        self, task: MergeReviewTask
-    ) -> Optional[AutoReviewDecision]:
+            if decision.decision == "downgrade_to_fact_card":
+                WorkflowService(self.repository).resume(
+                    run.id,
+                    trigger="downgrade_fact_only",
+                    force_fact_only=True,
+                    actor_id=DEFAULT_REVIEWER_ID,
+                    reason=decision.reason,
+                )
+            else:
+                WorkflowService(self.repository).resume(
+                    run.id,
+                    trigger="review_resume",
+                    resume_from=task.resume_from,
+                    actor_id=DEFAULT_REVIEWER_ID,
+                    reason=decision.reason,
+                )
+        self._record_attempt(task, "decided", decision, decision.reason)
+        return decision
+
+    def attempt_merge_review(self, task: MergeReviewTask) -> Optional[AutoReviewDecision]:
         """尝试自动审核 merge_review 任务。"""
         if self._has_attempt(task.id):
             return None
@@ -133,8 +176,7 @@ class AutoReviewService:
         policy_getter = getattr(self.repository, "get_review_policy", None)
         policy = policy_getter() if callable(policy_getter) else None
         return float(
-            getattr(policy, "min_confidence", None)
-            or self.settings.auto_review_min_confidence
+            getattr(policy, "min_confidence", None) or self.settings.auto_review_min_confidence
         )
 
     def _record_attempt(
@@ -159,6 +201,7 @@ class AutoReviewService:
                 reason=reason,
                 model_run_id=decision.model_run_id if decision else None,
                 created_at=datetime.now(timezone.utc),
+                context=decision.context if decision else {},
             )
         )
 
@@ -172,9 +215,7 @@ class AutoReviewService:
         event = self.repository.get_event(card.event_id)
         claims = self.repository.get_claims_for_event(card.event_id) if event else []
         if any(claim.status == "conflicted" for claim in claims):
-            return self._maybe_llm(
-                {"task_type": "report", "reason": "存在冲突 claim"}
-            )
+            return self._maybe_llm({"task_type": "report", "reason": "存在冲突 claim"})
         if event and event.missing_required:
             return self._maybe_llm(
                 {
@@ -209,18 +250,12 @@ class AutoReviewService:
         self, task: ReviewTask, conflict: ConflictRecord
     ) -> Optional[AutoReviewDecision]:
         if conflict.severity == "critical":
-            return self._maybe_llm(
-                {"task_type": "claim_conflict", "reason": "critical severity"}
-            )
+            return self._maybe_llm({"task_type": "claim_conflict", "reason": "critical severity"})
 
-        claims = [
-            self.repository.get_claim(claim_id) for claim_id in conflict.claim_ids
-        ]
+        claims = [self.repository.get_claim(claim_id) for claim_id in conflict.claim_ids]
         claims = [c for c in claims if c is not None]
         if len(claims) < 2:
-            return self._maybe_llm(
-                {"task_type": "claim_conflict", "reason": "claim 数量不足"}
-            )
+            return self._maybe_llm({"task_type": "claim_conflict", "reason": "claim 数量不足"})
 
         tiers = [self._source_tier_for_claim(c) for c in claims]
         ranks = [self._tier_rank(t) for t in tiers]
@@ -250,9 +285,7 @@ class AutoReviewService:
     def _decide_merge(self, task: MergeReviewTask) -> Optional[AutoReviewDecision]:
         decisions = self.repository.list_match_decisions(task.document_id)
         if not decisions:
-            return self._maybe_llm(
-                {"task_type": "merge_review", "reason": "无 matcher 决策记录"}
-            )
+            return self._maybe_llm({"task_type": "merge_review", "reason": "无 matcher 决策记录"})
         latest = max(decisions, key=lambda d: d.created_at or datetime.min.replace(tzinfo=None))
         score = float(latest.score or 0)
         if score <= 0.25:
@@ -300,15 +333,10 @@ class AutoReviewService:
         winner_ids = set(decision.context.get("winner_claim_ids", []))
         if not winner_ids and decision.decision == "approve":
             # 兜底：按来源等级重新选出胜者
-            claims = [
-                self.repository.get_claim(cid)
-                for cid in conflict.claim_ids
-            ]
+            claims = [self.repository.get_claim(cid) for cid in conflict.claim_ids]
             claims = [c for c in claims if c is not None]
             if claims:
-                winner = max(
-                    claims, key=lambda c: self._tier_rank(self._source_tier_for_claim(c))
-                )
+                winner = max(claims, key=lambda c: self._tier_rank(self._source_tier_for_claim(c)))
                 winner_ids = {winner.id}
 
         for claim_id in conflict.claim_ids:
@@ -318,9 +346,7 @@ class AutoReviewService:
             next_status = "verified" if claim_id in winner_ids else "rejected"
             if claim.status == next_status:
                 continue
-            self.repository.update_claim(
-                replace(claim, status=next_status)
-            )
+            self.repository.update_claim(replace(claim, status=next_status))
 
         self.repository.update_conflict(
             replace(
@@ -332,9 +358,7 @@ class AutoReviewService:
         )
         self._mark_task_decided(task, decision)
 
-    def _apply_merge_decision(
-        self, task: MergeReviewTask, decision: AutoReviewDecision
-    ) -> None:
+    def _apply_merge_decision(self, task: MergeReviewTask, decision: AutoReviewDecision) -> None:
         updated = replace(
             task,
             status="decided",
@@ -345,9 +369,7 @@ class AutoReviewService:
         self.repository.update_merge_review_task(updated)
         self._audit("merge_review.auto_decided", task.id, decision)
 
-    def _mark_task_decided(
-        self, task: ReviewTask, decision: AutoReviewDecision
-    ) -> None:
+    def _mark_task_decided(self, task: ReviewTask, decision: AutoReviewDecision) -> None:
         updated = replace(
             task,
             status="decided",

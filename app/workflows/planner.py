@@ -44,6 +44,7 @@ class PlanAdjustmentOutput(BaseModel):
     adjustments: list[TaskAdjustment] = Field(default_factory=list)
     reasoning: str = Field(default="", max_length=1000)
 
+
 # 问题类型 -> 默认任务 DAG 模板
 DEFAULT_TEMPLATES: dict[str, list[dict[str, Any]]] = {
     "company_event": [
@@ -66,12 +67,21 @@ DEFAULT_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "output_field": "fact_verify",
         },
         {
-            "name": "company_analyze",
-            "agent_key": "company_analyst",
-            "description": "公司基本面影响分析",
+            "name": "preliminary_assess",
+            "agent_key": "preliminary_assessor",
+            "description": "形成整个事件的初步研判，供后续 Agent 参考",
             "dependencies": ["fact_verify"],
             "required": True,
             "input_fields": ["fact_verify"],
+            "output_field": "preliminary_assess",
+        },
+        {
+            "name": "company_analyze",
+            "agent_key": "company_analyst",
+            "description": "公司基本面影响分析",
+            "dependencies": ["preliminary_assess"],
+            "required": True,
+            "input_fields": ["fact_verify", "preliminary_assess"],
             "output_field": "company_analyze",
         },
         {
@@ -113,21 +123,30 @@ DEFAULT_TEMPLATES: dict[str, list[dict[str, Any]]] = {
             "output_field": "fact_verify",
         },
         {
-            "name": "impact_analyze",
-            "agent_key": "impact_analyst",
-            "description": "宏观/行业传导影响分析",
+            "name": "preliminary_assess",
+            "agent_key": "preliminary_assessor",
+            "description": "形成整个事件的初步研判，供后续 Agent 参考",
             "dependencies": ["fact_verify"],
             "required": True,
             "input_fields": ["fact_verify"],
+            "output_field": "preliminary_assess",
+        },
+        {
+            "name": "impact_analyze",
+            "agent_key": "impact_analyst",
+            "description": "宏观/行业传导影响分析",
+            "dependencies": ["preliminary_assess"],
+            "required": True,
+            "input_fields": ["fact_verify", "preliminary_assess"],
             "output_field": "impact_analyze",
         },
         {
             "name": "synthesize",
             "agent_key": "synthesizer",
             "description": "综合形成结论",
-            "dependencies": ["impact_analyze"],
+            "dependencies": ["impact_analyze", "preliminary_assess"],
             "required": True,
-            "input_fields": ["fact_verify", "impact_analyze"],
+            "input_fields": ["fact_verify", "impact_analyze", "preliminary_assess"],
             "output_field": "synthesize",
         },
     ],
@@ -282,9 +301,7 @@ class ResearchPlanner:
 
         # 可选 LLM 增强：仅在注册表存在 planner Agent 时启用
         if use_llm and self.model_gateway and self.registry and self.registry.get("planner"):
-            tasks = self._apply_llm_suggestions(
-                question, question_type, tasks, event_id=event_id
-            )
+            tasks = self._apply_llm_suggestions(question, question_type, tasks, event_id=event_id)
             self._validate_dag({t.name: t for t in tasks})
 
         metadata: dict[str, Any] = {"question_type": question_type}

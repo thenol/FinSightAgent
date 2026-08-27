@@ -174,6 +174,7 @@ class AutoReviewAttempt:
     reason: str
     model_run_id: Optional[str]
     created_at: datetime
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -810,6 +811,35 @@ class ImpactAnalysis:
     quality_report: dict[str, Any] = field(default_factory=dict)
     edit_revision: int = 0
     derived_from_id: Optional[str] = None
+    preliminary_assessment_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class EventPreliminaryAssessment:
+    """事件初步研判：事实核验后的可追溯研究假设，不等同于正式结论。"""
+
+    id: str
+    event_id: str
+    version: int
+    status: str  # ready / limited / superseded
+    event_title_snapshot: str
+    as_of: datetime
+    summary: str
+    thesis: str
+    direction: str
+    significance: str
+    confidence: float
+    assessment_payload: dict[str, Any] = field(default_factory=dict)
+    input_snapshot: dict[str, Any] = field(default_factory=dict)
+    input_hash: str = ""
+    quality_report: dict[str, Any] = field(default_factory=dict)
+    generated_by: str = "agent:preliminary_assessor"
+    model_run_id: Optional[str] = None
+    agent_version: str = "1.0.0"
+    prompt_version: str = "preliminary-assessment-v1"
+    supersedes_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
