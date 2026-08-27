@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, Skeleton } from "@/components/EmptyState";
 import type {
   ImpactAnalysis as ImpactAnalysisType,
   ImpactTarget,
+  PreliminaryAssessment,
 } from "@/types/api";
 
 type Props = { eventId: string };
@@ -29,6 +30,18 @@ type UnifiedGraphResponse = {
 
 export function ImpactAnalysisPanel({ eventId }: Props) {
   const queryClient = useQueryClient();
+  const preliminaryQuery = useQuery({
+    queryKey: ["event-preliminary-assessment", eventId],
+    queryFn: async () => {
+      try {
+        return await apiGet<PreliminaryAssessment>(`/api/v1/events/${encodeURIComponent(eventId)}/preliminary-assessment`);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "PRELIMINARY_ASSESSMENT_NOT_FOUND") return null;
+        throw error;
+      }
+    },
+    retry: false,
+  });
   const query = useQuery({
     queryKey: ["event-impact-analysis", eventId],
     queryFn: async (): Promise<QueryResult> => {
@@ -77,6 +90,7 @@ export function ImpactAnalysisPanel({ eventId }: Props) {
   const pending = result?.kind === "pending";
   return (
     <div className="panel">
+      {preliminaryQuery.data ? <PreliminaryAssessmentCard assessment={preliminaryQuery.data} /> : null}
       <div className="panel-header">
         <h3>影响分析</h3>
         <button
@@ -105,6 +119,25 @@ export function ImpactAnalysisPanel({ eventId }: Props) {
       ) : null}
       {analysis ? <ImpactAnalysisView analysis={analysis} /> : null}
     </div>
+  );
+}
+
+function PreliminaryAssessmentCard({ assessment }: { assessment: PreliminaryAssessment }) {
+  const payload = assessment.assessment_payload || {};
+  const scope = Array.isArray(payload.affected_scope) ? payload.affected_scope : [];
+  const watchItems = Array.isArray(payload.watch_items) ? payload.watch_items : [];
+  return (
+    <section className={`preliminary-assessment-card status-${assessment.status}`}>
+      <div className="panel-header">
+        <div><h3>Agent 初步研判</h3><span className="muted">正式结论前的事件级研究假设 · v{assessment.version}</span></div>
+        <div className="tag-row"><span className="tag">{assessment.direction}</span><span className="tag">置信度 {(assessment.confidence * 100).toFixed(0)}%</span><span className="tag">{assessment.status === "limited" ? "证据有限" : "可供下游参考"}</span></div>
+      </div>
+      <p className="preliminary-assessment-thesis">{assessment.thesis}</p>
+      <p className="muted">{assessment.summary}</p>
+      {scope.length ? <div className="preliminary-assessment-scope">{scope.slice(0, 6).map((item, index) => { const value = item as Record<string, unknown>; return <div key={index}><strong>{String(value.target_name || "目标")}</strong><span>{String(value.direction || "不确定")} · {String(value.horizon || "时间待定")}</span><small>{String(value.rationale || "")}</small></div>; })}</div> : null}
+      {watchItems.length ? <details className="preliminary-assessment-details"><summary>关注与不确定性</summary><ul className="muted">{watchItems.slice(0, 5).map((item, index) => <li key={index}>{String(item)}</li>)}</ul></details> : null}
+      <div className="preliminary-assessment-meta muted">数据截面 {new Date(assessment.as_of).toLocaleString("zh-CN")} · {assessment.generated_by}</div>
+    </section>
   );
 }
 

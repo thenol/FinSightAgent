@@ -405,6 +405,7 @@ export type ImpactAnalysis = {
   model_run_id?: string | null;
   degraded: boolean;
   supersedes_id?: string | null;
+  preliminary_assessment_id?: string | null;
   created_at?: string | null;
   analysis_payload?: Record<string, unknown>;
   quality_report?: {
@@ -413,6 +414,29 @@ export type ImpactAnalysis = {
     blockers?: string[];
     warnings?: string[];
   };
+};
+
+export type PreliminaryAssessment = {
+  id: string;
+  event_id: string;
+  workflow_id?: string | null;
+  version: number;
+  status: "ready" | "limited" | "superseded" | string;
+  event_title_snapshot: string;
+  as_of: string;
+  summary: string;
+  thesis: string;
+  direction: string;
+  significance: string;
+  confidence: number;
+  assessment_payload: Record<string, unknown>;
+  quality_report: Record<string, unknown>;
+  generated_by: string;
+  model_run_id?: string | null;
+  agent_version: string;
+  prompt_version: string;
+  supersedes_id?: string | null;
+  created_at?: string | null;
 };
 
 export type ResearchTask = {

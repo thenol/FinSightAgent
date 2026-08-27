@@ -667,6 +667,31 @@ a:hover {
   margin: 18px 0 24px;
 }
 
+.preliminary-assessment-card { margin: 0 0 1rem; padding: 1rem 1.1rem; border: 1px solid var(--color-border-strong); border-left: 4px solid var(--color-blue); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-surface-2), var(--color-surface)); }
+.preliminary-assessment-card.status-limited { border-left-color: var(--color-amber); }
+.preliminary-assessment-card h3 { margin: 0; }
+.preliminary-assessment-thesis { margin: .8rem 0 .35rem; font-weight: 700; line-height: 1.55; }
+.preliminary-assessment-scope { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin-top: .8rem; }
+.preliminary-assessment-scope > div { display: grid; gap: .2rem; padding: .6rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+.preliminary-assessment-scope span, .preliminary-assessment-scope small { color: var(--color-text-muted); font-size: .78rem; }
+.preliminary-assessment-details { margin-top: .7rem; }
+.preliminary-assessment-meta { margin-top: .75rem; font-size: .75rem; }
+@media (max-width: 800px) { .preliminary-assessment-scope { grid-template-columns: 1fr; } }
+
+.overview-review-list { display: grid; gap: .45rem; margin-top: .8rem; }
+.overview-review-item { display: grid; grid-template-columns: .45rem minmax(0, 1fr) auto; align-items: center; gap: .7rem; padding: .7rem .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); color: inherit; transition: border-color 140ms ease, background 140ms ease; }
+.overview-review-item:hover { border-color: var(--color-blue); background: var(--color-blue-soft); text-decoration: none; }
+.overview-review-item__marker { width: .45rem; height: 2.25rem; border-radius: 999px; background: var(--color-blue); }
+.overview-review-item.priority-critical .overview-review-item__marker { background: var(--color-red); }
+.overview-review-item.priority-high .overview-review-item__marker { background: var(--color-amber); }
+.overview-review-item__body, .overview-review-item__meta { display: grid; gap: .16rem; min-width: 0; }
+.overview-review-item__body strong { overflow: hidden; color: var(--color-text-strong); text-overflow: ellipsis; white-space: nowrap; }
+.overview-review-item__body small, .overview-review-item__meta small { overflow: hidden; color: var(--color-text-muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+.overview-review-item__meta { justify-items: end; text-align: right; }
+.overview-review-item__meta em { color: var(--color-text-muted); font-size: .7rem; font-style: normal; font-weight: 700; }
+.priority-critical .overview-review-item__meta em { color: var(--color-red); }
+.priority-high .overview-review-item__meta em { color: var(--color-amber); }
+
 .impact-target-summary > div {
   display: grid;
   gap: 6px;

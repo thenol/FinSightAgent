@@ -8,7 +8,7 @@ import { EmptyState, Skeleton } from "@/components/EmptyState";
 import { apiGet } from "@/lib/api";
 import { ImpactGraphFlow, type GraphFilter, type ImpactGraph } from "@/features/ImpactGraphFlow";
 import { asList, formatDate, taskAge } from "@/lib/format";
-import type { AdminMetrics, ResearchOverview, ReviewTask, Source, Workflow } from "@/types/api";
+import type { AdminMetrics, ResearchOverview, ReviewQueueItem, Source, Workflow } from "@/types/api";
 
 export function OverviewPage() {
   const [graphFilter, setGraphFilter] = useState<GraphFilter>({ scenarioId: "all", horizon: "all", minimumConfidence: 0, coreOnly: true });
@@ -31,7 +31,7 @@ export function OverviewPage() {
   const reviewsQuery = useQuery({
     queryKey: ["reviews", "pending"],
     queryFn: () =>
-      apiGet<ReviewTask[] | { items: ReviewTask[] }>("/api/v1/reviews?status_filter=pending"),
+      apiGet<ReviewQueueItem[] | { items: ReviewQueueItem[] }>("/api/v1/review-queue/items?status_filter=pending&sort=priority_desc&limit=20"),
   });
   const workflowsQuery = useQuery({
     queryKey: ["workflows", "active"],
@@ -51,7 +51,7 @@ export function OverviewPage() {
 
   const metrics = metricsQuery.data;
   const sources = asList<Source>(sourcesQuery.data);
-  const reviews = asList<ReviewTask>(reviewsQuery.data);
+  const reviews = asList<ReviewQueueItem>(reviewsQuery.data);
   const workflows = asList<Workflow>(workflowsQuery.data);
   const waiting = workflows.filter((item) => item.status === "waiting_review");
   const degraded = sources.filter((item) => item.status !== "active");
@@ -120,15 +120,15 @@ export function OverviewPage() {
             {oldest ? ` · 最老任务 ${taskAge(oldest.created_at)}（${formatDate(oldest.created_at)}）` : ""}
           </p>
           {reviews.length ? (
-            <ul>
+            <div className="overview-review-list">
               {reviews.slice(0, 5).map((task) => (
-                <li key={task.id}>
-                  <Link to={`/reviews/${task.id}`}>
-                    {task.object_type} · {task.reason_code}
-                  </Link>
-                </li>
+                <Link className={`overview-review-item priority-${task.priority_band}`} to={task.display.href || `/reviews/${task.id}`} key={task.id}>
+                  <span className="overview-review-item__marker" aria-hidden="true" />
+                  <span className="overview-review-item__body"><strong>{task.display.title}</strong><small>{task.display.type_label} · {task.display.subtitle}</small><small className="muted">{task.display.summary || reviewReasonLabel(task.reason_code)}</small></span>
+                  <span className="overview-review-item__meta"><em>{priorityLabel(task.priority_band)}</em><small>{task.age_seconds >= 3600 ? `${Math.floor(task.age_seconds / 3600)}小时` : `${Math.max(1, Math.floor(task.age_seconds / 60))}分钟`}未处理</small></span>
+                </Link>
               ))}
-            </ul>
+            </div>
           ) : (
             <EmptyState>暂无待审任务</EmptyState>
           )}
@@ -168,4 +168,19 @@ export function OverviewPage() {
       </section>
     </>
   );
+}
+
+function priorityLabel(value: string): string {
+  return value === "critical" ? "紧急" : value === "high" ? "高优先级" : "待处理";
+}
+
+function reviewReasonLabel(value: string): string {
+  const labels: Record<string, string> = {
+    REPORT_REVIEW_REQUIRED: "研究报告需要审核",
+    QUALITY_GATE_FAILED: "质量门禁未通过",
+    LOW_CONFIDENCE: "分析置信度较低",
+    CLAIM_CONFLICT: "事实证据存在冲突",
+    EVENT_MERGE_CANDIDATE: "等待事件归并判断",
+  };
+  return labels[value] || "需要研究人员处理";
 }
