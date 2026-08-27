@@ -463,6 +463,41 @@ class EventResponse(BaseModel):
     capability_pack_version: Optional[str] = None
 
 
+class OverviewEventImpactResponse(BaseModel):
+    event: EventResponse
+    analysis_status: str
+    direction: str
+    positive_strength: float = 0.0
+    negative_strength: float = 0.0
+    confidence: float = 0.0
+    horizon: Optional[str] = None
+    affected_targets: list[dict[str, Any]] = Field(default_factory=list)
+    explanation: str = ""
+
+
+class OverviewTargetImpactResponse(BaseModel):
+    target_id: str
+    target_type: str
+    target_code: str
+    canonical_name: str
+    direction: str
+    net_score: float
+    confidence: float
+    event_count: int
+
+
+class ResearchOverviewResponse(BaseModel):
+    as_of: datetime
+    window: str
+    publication_scope: str
+    rule_version: str
+    summary: dict[str, Any] = Field(default_factory=dict)
+    events: list[OverviewEventImpactResponse] = Field(default_factory=list)
+    targets: list[OverviewTargetImpactResponse] = Field(default_factory=list)
+    risks: list[dict[str, Any]] = Field(default_factory=list)
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+
+
 class EventTypeRegistryResponse(BaseModel):
     type_label: str
     status: str
@@ -662,6 +697,13 @@ class ImpactTargetResponse(BaseModel):
     target_code: str
     canonical_name: str
     taxonomy_version: str
+    parent_target_id: Optional[str] = None
+    hierarchy_level: int = 0
+    hierarchy_status: str = "approved"
+    hierarchy_source: str = "manual"
+    propagation_weight: float = 0.85
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
 
 
 class ImpactSnapshotResponse(BaseModel):

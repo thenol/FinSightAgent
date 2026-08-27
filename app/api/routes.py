@@ -75,6 +75,7 @@ from app.api.schemas import (
     ReprocessingJobResponse,
     ResearchBlackboardResponse,
     ResearchCreateRequest,
+    ResearchOverviewResponse,
     ResearchPlanListResponse,
     ResearchPlanResponse,
     ResearchTaskResponse,
@@ -298,6 +299,35 @@ def market_instruments(
     return DataEnvelope(
         data=jsonable_encoder(catalog.list(market=market, instrument_type=instrument_type)),
         meta={"request_id": request.state.request_id, "schema_version": "1.0"},
+    )
+
+
+@router.get("/api/v1/market/universe", response_model=DataEnvelope)
+def market_universe(
+    request: Request,
+    market: Optional[str] = Query(default=None),  # noqa: B008
+    instrument_type: Optional[str] = Query(default=None),  # noqa: B008
+    user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
+) -> DataEnvelope:
+    """Return the dynamically governed set of markets available to the UI."""
+    _ = user
+    catalog = getattr(request.app.state, "market_instruments", None)
+    if catalog is None:
+        raise HTTPException(status_code=503, detail="MARKET_INSTRUMENT_CATALOG_UNAVAILABLE")
+    values = catalog.list(market=market, instrument_type=instrument_type)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in values:
+        grouped.setdefault(item.market, []).append(jsonable_encoder(item))
+    provider = _market_data_provider(request)
+    return envelope(
+        {
+            "markets": grouped,
+            "market_count": len(grouped),
+            "instrument_count": len(values),
+            "capability": jsonable_encoder(provider.capability),
+            "as_of": datetime.now(timezone.utc),
+        },
+        request.state.request_id,
     )
 
 
@@ -1592,8 +1622,7 @@ def review_queue_items(
         items = [item for item in items if item["risk_level"] == risk_level]
     if sort == "created_desc":
         items.sort(
-            key=lambda item: item.get("created_at")
-            or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda item: item.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
     elif sort == "sla_asc":
@@ -3453,6 +3482,257 @@ def list_events(
     return _page_envelope(values, limit, lambda value: value.occurred_at, request.state.request_id)
 
 
+@router.get("/api/v1/overview/research", response_model=DataEnvelope)
+def get_research_overview(
+    request: Request,
+    window: str = Query(default="7d", pattern="^(1d|7d|30d)$"),
+    publication_scope: str = Query(default="official", pattern="^(official|exploration)$"),
+    as_of: Optional[datetime] = Query(default=None),  # noqa: B008
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    """研究驾驶舱聚合：事件影响、目标排名和数据质量一次返回。"""
+    repository = request.app.state.repository
+    cutoff = as_of or datetime.now(timezone.utc)
+    days = int(window[:-1])
+    start = cutoff - timedelta(days=days)
+    targets = {item.id: item for item in repository.list_impact_targets()}
+    events_payload: list[dict[str, Any]] = []
+    target_scores: dict[str, dict[str, Any]] = {}
+    pending = 0
+    recent_events = [
+        item
+        for item in repository.list_events(limit=500)
+        if item.occurred_at and start <= item.occurred_at <= cutoff
+    ]
+    for event in recent_events:
+        analysis = repository.get_latest_impact_analysis_for_event(event.id)
+        status_value = analysis.status if analysis else "not_started"
+        if status_value not in {"approved"}:
+            pending += 1
+        if not analysis or (publication_scope == "official" and analysis.status != "approved"):
+            continue
+        contributions = repository.list_impact_contributions()
+        contributions = [item for item in contributions if item.event_id == event.id]
+        positive = sum(item.base_strength for item in contributions if item.direction == "positive")
+        negative = sum(item.base_strength for item in contributions if item.direction == "negative")
+        net = positive - negative
+        direction = (
+            "positive"
+            if net > 0.08
+            else "negative"
+            if net < -0.08
+            else "mixed"
+            if positive or negative
+            else "uncertain"
+        )
+        affected: list[dict[str, Any]] = []
+        for contribution in contributions:
+            target = targets.get(contribution.target_id)
+            if not target:
+                continue
+            affected.append(
+                {
+                    "target_id": target.id,
+                    "name": target.canonical_name,
+                    "target_type": target.target_type,
+                    "direction": contribution.direction,
+                    "magnitude": contribution.magnitude,
+                    "horizon": contribution.horizon,
+                }
+            )
+            row = target_scores.setdefault(
+                target.id, {"positive": 0.0, "negative": 0.0, "events": set()}
+            )
+            row["positive" if contribution.direction == "positive" else "negative"] += (
+                contribution.base_strength
+            )
+            row["events"].add(event.id)
+        events_payload.append(
+            {
+                "event": EventResponse.model_validate(event, from_attributes=True),
+                "analysis_status": status_value,
+                "direction": direction,
+                "positive_strength": round(positive, 4),
+                "negative_strength": round(negative, 4),
+                "confidence": round(
+                    sum(item.assessment_confidence for item in contributions) / len(contributions),
+                    4,
+                )
+                if contributions
+                else 0.0,
+                "horizon": contributions[0].horizon if contributions else None,
+                "affected_targets": affected[:8],
+                "explanation": analysis.summary if analysis else "尚未生成影响分析",
+            }
+        )
+    events_payload.sort(
+        key=lambda item: (item["event"].importance, item["event"].occurred_at), reverse=True
+    )
+    target_payload = []
+    for target_id, row in target_scores.items():
+        net = row["positive"] - row["negative"]
+        target = targets[target_id]
+        target_payload.append(
+            {
+                "target_id": target.id,
+                "target_type": target.target_type,
+                "target_code": target.target_code,
+                "canonical_name": target.canonical_name,
+                "direction": "positive" if net > 0.08 else "negative" if net < -0.08 else "mixed",
+                "net_score": round(net, 4),
+                "confidence": 0.0,
+                "event_count": len(row["events"]),
+            }
+        )
+    target_payload.sort(key=lambda item: abs(item["net_score"]), reverse=True)
+    positive_total = sum(item["positive_strength"] for item in events_payload)
+    negative_total = sum(item["negative_strength"] for item in events_payload)
+    summary_direction = (
+        "positive"
+        if positive_total - negative_total > 0.08
+        else "negative"
+        if negative_total - positive_total > 0.08
+        else "mixed"
+        if positive_total or negative_total
+        else "uncertain"
+    )
+    payload = ResearchOverviewResponse(
+        as_of=cutoff,
+        window=window,
+        publication_scope=publication_scope,
+        rule_version="impact-aggregation-v2",
+        summary={
+            "direction": summary_direction,
+            "positive_strength": round(positive_total, 4),
+            "negative_strength": round(negative_total, 4),
+            "event_count": len(events_payload),
+            "confidence": round(
+                sum(item["confidence"] for item in events_payload) / len(events_payload), 4
+            )
+            if events_payload
+            else 0.0,
+        },
+        events=events_payload[:8],
+        targets=target_payload[:6],
+        risks=[{"type": "pending_analysis", "count": pending}] if pending else [],
+        data_quality={"recent_events": len(recent_events), "pending_analysis": pending},
+    )
+    return envelope(payload.model_dump(), request.state.request_id)
+
+
+@router.get("/api/v1/events/graph", response_model=DataEnvelope)
+def get_event_knowledge_graph(
+    request: Request,
+    window: str = Query(default="7d", pattern="^(1d|7d|30d)$"),
+    minimum_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+    publication_scope: str = Query(default="official", pattern="^(official|exploration)$"),
+    _user: User = Depends(require_roles(*BUSINESS_ROLES)),  # noqa: B008
+) -> DataEnvelope:
+    """Build an explainable cross-event graph from governed relations and impacts."""
+    repository = request.app.state.repository
+    cutoff = datetime.now(timezone.utc)
+    start = cutoff - timedelta(days=int(window[:-1]))
+    events = {
+        item.id: item
+        for item in repository.list_events(limit=500)
+        if item.occurred_at and start <= item.occurred_at <= cutoff
+    }
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    for event in events.values():
+        nodes[f"event_{event.id}"] = {
+            "node_id": f"event_{event.id}",
+            "node_type": "event",
+            "label": event.title,
+            "layer": 0,
+            "importance": event.importance,
+            "event_id": event.id,
+        }
+        topic_id = f"topic_{event.event_type}"
+        nodes.setdefault(
+            topic_id,
+            {"node_id": topic_id, "node_type": "topic", "label": event.event_type, "layer": 1},
+        )
+        edges.append(
+            {
+                "edge_id": f"topic_{event.id}",
+                "source_node_id": f"event_{event.id}",
+                "target_node_id": topic_id,
+                "mechanism": "主题归类",
+                "direction": "mixed",
+                "order": "direct",
+                "confidence": event.confidence or 0.0,
+            }
+        )
+    for relation in repository.list_event_impact_relations():
+        if relation.source_event_id not in events or relation.target_event_id not in events:
+            continue
+        if relation.confidence < minimum_confidence:
+            continue
+        if publication_scope == "official" and relation.status != "approved":
+            continue
+        edges.append(
+            {
+                "edge_id": relation.id,
+                "source_node_id": f"event_{relation.source_event_id}",
+                "target_node_id": f"event_{relation.target_event_id}",
+                "mechanism": relation.relation_type,
+                "direction": "mixed",
+                "order": "first_order",
+                "confidence": relation.confidence,
+                "inference_kind": "fact" if relation.status == "approved" else "inference",
+                "evidence_refs": relation.evidence_refs,
+                "status": relation.status,
+            }
+        )
+    targets = {item.id: item for item in repository.list_impact_targets()}
+    for contribution in repository.list_impact_contributions():
+        if (
+            contribution.event_id not in events
+            or contribution.publication_scope != publication_scope
+        ):
+            continue
+        target = targets.get(contribution.target_id)
+        if target is None:
+            continue
+        target_node = f"target_{target.id}"
+        nodes.setdefault(
+            target_node,
+            {
+                "node_id": target_node,
+                "node_type": "impact",
+                "label": target.canonical_name,
+                "layer": 2,
+                "target_id": target.id,
+            },
+        )
+        edges.append(
+            {
+                "edge_id": f"affects_{contribution.id}",
+                "source_node_id": f"event_{contribution.event_id}",
+                "target_node_id": target_node,
+                "mechanism": contribution.target_role,
+                "direction": contribution.direction,
+                "order": "second_order",
+                "horizon": contribution.horizon,
+                "confidence": contribution.relationship_confidence,
+                "inference_kind": contribution.inference_kind,
+                "evidence_refs": contribution.evidence_refs,
+            }
+        )
+    return envelope(
+        {
+            "schema_version": "event-knowledge-graph-v1",
+            "as_of": cutoff,
+            "window": window,
+            "nodes": list(nodes.values())[:60],
+            "edges": edges[:120],
+            "truncated": len(nodes) > 60 or len(edges) > 120,
+        },
+        request.state.request_id,
+    )
+
+
 @router.get("/api/v1/ood/observations", response_model=DataEnvelope)
 def list_ood_observations(
     request: Request,
@@ -4096,6 +4376,7 @@ def get_impact_target_dashboard(
     as_of: Optional[datetime] = Query(default=None),  # noqa: B008
     horizon: Optional[str] = Query(default=None),  # noqa: B008
     scenario_set_id: str = Query(default="baseline"),  # noqa: B008
+    publication_scope: str = Query(default="official", pattern="^(official|exploration)$"),  # noqa: B008
     user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
 ) -> DataEnvelope:
     _ = user
@@ -4104,6 +4385,7 @@ def get_impact_target_dashboard(
         as_of=as_of,
         horizon=horizon,
         scenario_set_id=scenario_set_id,
+        publication_scope=publication_scope,
     )
     if dashboard is None:
         raise HTTPException(status_code=404, detail="IMPACT_TARGET_NOT_FOUND")

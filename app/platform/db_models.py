@@ -857,6 +857,13 @@ class ImpactTargetDefinitionModel(Base):
     canonical_name: Mapped[str] = mapped_column(Text)
     taxonomy_version: Mapped[str] = mapped_column(String(64), default="default-v1")
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    parent_target_id: Mapped[Optional[str]] = mapped_column(String, index=True)
+    hierarchy_level: Mapped[int] = mapped_column(default=0)
+    hierarchy_status: Mapped[str] = mapped_column(String(24), default="approved")
+    hierarchy_source: Mapped[str] = mapped_column(String(64), default="manual")
+    propagation_weight: Mapped[float] = mapped_column(default=0.85)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(128))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -1048,11 +1055,40 @@ class ImpactContributionModel(Base):
     assessment_confidence: Mapped[float] = mapped_column()
     path_confidence: Mapped[float] = mapped_column()
     dependency_weight: Mapped[float] = mapped_column(default=1.0)
+    target_role: Mapped[str] = mapped_column(String(32), default="direct_subject")
+    relationship_id: Mapped[Optional[str]] = mapped_column(String)
+    relationship_confidence: Mapped[float] = mapped_column(default=1.0)
+    inference_kind: Mapped[str] = mapped_column(String(24), default="derived")
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    conditions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    invalidation_conditions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    publication_scope: Mapped[str] = mapped_column(String(20), default="official")
     valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     expected_peak_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     rule_version: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImpactDimensionContributionModel(Base):
+    __tablename__ = "impact_dimension_contributions"
+    __table_args__ = (
+        UniqueConstraint("contribution_id", "dimension", name="uq_impact_dimension_contribution"),
+        Index("ix_impact_dimension_contributions_dimension", "dimension"),
+        {"schema": "analysis"},
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    contribution_id: Mapped[str] = mapped_column(String, index=True)
+    dimension: Mapped[str] = mapped_column(String(32))
+    direction: Mapped[str] = mapped_column(String(16))
+    magnitude: Mapped[str] = mapped_column(String(16))
+    base_strength: Mapped[float] = mapped_column()
+    effective_strength: Mapped[float] = mapped_column()
+    confidence: Mapped[float] = mapped_column()
+    quantitative_range: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    unit: Mapped[Optional[str]] = mapped_column(String(32))
+    evidence_refs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class TargetImpactSnapshotModel(Base):

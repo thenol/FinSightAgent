@@ -47,6 +47,7 @@ from app.domain import (
     FutureEventTargetImpact,
     ImpactAnalysis,
     ImpactContribution,
+    ImpactDimensionContribution,
     ImpactGraphLayout,
     ImpactTargetDefinition,
     ImpactTargetMapping,
@@ -122,6 +123,7 @@ from app.platform.db_models import (
     IdempotencyModel,
     ImpactAnalysisModel,
     ImpactContributionModel,
+    ImpactDimensionContributionModel,
     ImpactGraphLayoutModel,
     ImpactTargetDefinitionModel,
     ImpactTargetMappingModel,
@@ -752,6 +754,11 @@ class Repository(Protocol):
     def list_impact_contributions(
         self, target_id: Optional[str] = None
     ) -> list[ImpactContribution]: ...
+
+    def save_impact_dimension_contribution(self, item: ImpactDimensionContribution) -> None: ...
+    def list_impact_dimension_contributions(
+        self, contribution_id: Optional[str] = None
+    ) -> list[ImpactDimensionContribution]: ...
     def save_target_impact_snapshot(
         self, snapshot: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
     ) -> None: ...
@@ -971,6 +978,7 @@ class InMemoryRepository:
         self.market_master_data_import_runs: dict[str, MarketMasterDataImportRun] = {}
         self.event_impact_relations: dict[str, EventImpactRelation] = {}
         self.impact_contributions: dict[str, ImpactContribution] = {}
+        self.impact_dimension_contributions: dict[str, ImpactDimensionContribution] = {}
         self.target_impact_snapshots: dict[str, TargetImpactSnapshot] = {}
         self.target_impact_snapshot_contributions: list[TargetImpactSnapshotContribution] = []
         self.market_forecast_runs: dict[str, MarketForecastRun] = {}
@@ -2106,6 +2114,18 @@ class InMemoryRepository:
             item
             for item in self.impact_contributions.values()
             if target_id is None or item.target_id == target_id
+        ]
+
+    def save_impact_dimension_contribution(self, item: ImpactDimensionContribution) -> None:
+        self.impact_dimension_contributions[item.id] = item
+
+    def list_impact_dimension_contributions(
+        self, contribution_id: Optional[str] = None
+    ) -> list[ImpactDimensionContribution]:
+        return [
+            item
+            for item in self.impact_dimension_contributions.values()
+            if contribution_id is None or item.contribution_id == contribution_id
         ]
 
     def save_target_impact_snapshot(
@@ -5562,6 +5582,24 @@ class SqlAlchemyTransaction:
             statement = statement.where(ImpactContributionModel.target_id == target_id)
         return [_impact_contribution(item) for item in self.session.scalars(statement)]
 
+    def save_impact_dimension_contribution(self, value: ImpactDimensionContribution) -> None:
+        if self.session.get(ImpactDimensionContributionModel, value.id) is None:
+            self.session.add(ImpactDimensionContributionModel(**value.__dict__))
+
+    def list_impact_dimension_contributions(
+        self, contribution_id: Optional[str] = None
+    ) -> list[ImpactDimensionContribution]:
+        statement = select(ImpactDimensionContributionModel).order_by(
+            ImpactDimensionContributionModel.id
+        )
+        if contribution_id:
+            statement = statement.where(
+                ImpactDimensionContributionModel.contribution_id == contribution_id
+            )
+        return [
+            _impact_dimension_contribution(item) for item in self.session.scalars(statement)
+        ]
+
     def save_target_impact_snapshot(
         self, value: TargetImpactSnapshot, contributions: list[TargetImpactSnapshotContribution]
     ) -> None:
@@ -7122,6 +7160,13 @@ def _impact_target(value: ImpactTargetDefinitionModel) -> ImpactTargetDefinition
         canonical_name=value.canonical_name,
         taxonomy_version=value.taxonomy_version,
         aliases=value.aliases or [],
+        parent_target_id=getattr(value, "parent_target_id", None),
+        hierarchy_level=getattr(value, "hierarchy_level", 0),
+        hierarchy_status=getattr(value, "hierarchy_status", "approved"),
+        hierarchy_source=getattr(value, "hierarchy_source", "manual"),
+        propagation_weight=getattr(value, "propagation_weight", 0.85),
+        reviewed_by=getattr(value, "reviewed_by", None),
+        reviewed_at=getattr(value, "reviewed_at", None),
         valid_from=value.valid_from,
         valid_to=value.valid_to,
     )
@@ -7211,11 +7256,37 @@ def _impact_contribution(value: ImpactContributionModel) -> ImpactContribution:
         assessment_confidence=value.assessment_confidence,
         path_confidence=value.path_confidence,
         dependency_weight=value.dependency_weight,
+        target_role=getattr(value, "target_role", "direct_subject"),
+        relationship_id=getattr(value, "relationship_id", None),
+        relationship_confidence=getattr(value, "relationship_confidence", 1.0),
+        inference_kind=getattr(value, "inference_kind", "derived"),
+        evidence_refs=getattr(value, "evidence_refs", None) or [],
+        conditions=getattr(value, "conditions", None) or [],
+        invalidation_conditions=getattr(value, "invalidation_conditions", None) or [],
+        publication_scope=getattr(value, "publication_scope", "official"),
         valid_from=value.valid_from,
         expected_peak_at=value.expected_peak_at,
         valid_to=value.valid_to,
         rule_version=value.rule_version,
         created_at=value.created_at,
+    )
+
+
+def _impact_dimension_contribution(
+    value: ImpactDimensionContributionModel,
+) -> ImpactDimensionContribution:
+    return ImpactDimensionContribution(
+        id=value.id,
+        contribution_id=value.contribution_id,
+        dimension=value.dimension,
+        direction=value.direction,
+        magnitude=value.magnitude,
+        base_strength=value.base_strength,
+        effective_strength=value.effective_strength,
+        confidence=value.confidence,
+        quantitative_range=value.quantitative_range,
+        unit=value.unit,
+        evidence_refs=value.evidence_refs or [],
     )
 
 

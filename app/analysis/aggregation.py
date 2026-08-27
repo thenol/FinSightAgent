@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -15,13 +16,14 @@ from typing import Any
 from app.domain import (
     ImpactAnalysis,
     ImpactContribution,
+    ImpactDimensionContribution,
     TargetImpactSnapshot,
     TargetImpactSnapshotContribution,
 )
 from app.platform.ids import new_id
 from app.platform.repository import Repository
 
-RULE_VERSION = "impact-aggregation-v1"
+RULE_VERSION = "impact-aggregation-v2"
 MAGNITUDE_WEIGHT = {"strong": 1.0, "moderate": 0.65, "weak": 0.35, "uncertain": 0.2}
 HORIZON_HALF_LIFE_DAYS = {
     "0_1d": 1.0,
@@ -90,6 +92,16 @@ class ImpactAggregationService:
                 event_importance=float(event.importance),
                 assessment_confidence=confidence,
                 path_confidence=path_confidence,
+                target_role=str(assessment.get("target_role", "direct_subject")),
+                relationship_id=assessment.get("relationship_id"),
+                relationship_confidence=float(
+                    assessment.get("relationship_confidence", 1.0) or 1.0
+                ),
+                inference_kind=str(assessment.get("inference_kind", "derived")),
+                evidence_refs=assessment.get("evidence_refs") or [],
+                conditions=assessment.get("conditions") or [],
+                invalidation_conditions=assessment.get("invalidation_conditions") or [],
+                publication_scope=str(assessment.get("publication_scope", "official")),
                 valid_from=self._timing_date(assessment, "onset_at") or event.occurred_at,
                 expected_peak_at=self._timing_date(assessment, "expected_peak_at")
                 or event.occurred_at + timedelta(days=self._peak_days(horizon)),
@@ -103,6 +115,27 @@ class ImpactAggregationService:
                 created_at=analysis.created_at or datetime.now(timezone.utc),
             )
             self.repository.save_impact_contribution(contribution)
+            dimensions = assessment.get("dimensions") or [
+                {"dimension": "other", "direction": direction, "magnitude": magnitude}
+            ]
+            for dimension in dimensions:
+                name = str(dimension.get("dimension", "other"))
+                strength = float(dimension.get("strength", base) or base)
+                self.repository.save_impact_dimension_contribution(
+                    ImpactDimensionContribution(
+                        id=f"idc_{contribution.id}_{name}",
+                        contribution_id=contribution.id,
+                        dimension=name,
+                        direction=str(dimension.get("direction", direction)),
+                        magnitude=str(dimension.get("magnitude", magnitude)),
+                        base_strength=max(0.0, min(1.0, strength)),
+                        effective_strength=max(0.0, min(1.0, strength)),
+                        confidence=float(dimension.get("confidence", confidence) or confidence),
+                        quantitative_range=dimension.get("quantitative_range"),
+                        unit=dimension.get("unit"),
+                        evidence_refs=dimension.get("evidence_refs") or [],
+                    )
+                )
             created.append(contribution)
         return created
 
@@ -113,13 +146,19 @@ class ImpactAggregationService:
         as_of: datetime | None = None,
         horizon: str | None = None,
         scenario_set_id: str = "baseline",
+        publication_scope: str = "official",
         persist: bool = True,
     ) -> TargetImpactSnapshot | None:
         as_of = as_of or datetime.now(timezone.utc)
         target = self.repository.get_impact_target(target_id)
         if target is None:
             return None
-        contributions = self.repository.list_impact_contributions(target_id)
+        target_scope = self._target_scope(target_id, as_of=as_of)
+        contributions = [
+            item
+            for scoped_target in target_scope
+            for item in self.repository.list_impact_contributions(scoped_target)
+        ]
         # Filter by platform knowledge time before choosing the latest analysis
         # version. Otherwise a future version can hide the older version that
         # was actually visible at the requested replay cutoff.
@@ -129,7 +168,10 @@ class ImpactAggregationService:
         approved_latest: dict[str, ImpactAnalysis] = {}
         for contribution in contributions:
             analysis = self.repository.get_impact_analysis(contribution.analysis_id)
-            if analysis is None or analysis.status != "approved":
+            allowed_statuses = {"approved"} if publication_scope == "official" else {
+                "draft", "needs_review", "approved"
+            }
+            if analysis is None or analysis.status not in allowed_statuses:
                 continue
             current = approved_latest.get(analysis.event_id)
             if current is None or analysis.version > current.version:
@@ -138,6 +180,10 @@ class ImpactAggregationService:
             item
             for item in contributions
             if item.analysis_id in {analysis.id for analysis in approved_latest.values()}
+            and (
+                item.publication_scope == publication_scope
+                or publication_scope == "exploration"
+            )
         ]
         if horizon:
             contributions = [item for item in contributions if item.horizon == horizon]
@@ -160,7 +206,17 @@ class ImpactAggregationService:
             half_life = HORIZON_HALF_LIFE_DAYS.get(item.horizon, 30.0)
             time_weight = math.exp(-math.log(2) * age_days / half_life)
             dependency = relation_weights.get(item.event_id, 1.0)
-            effective = max(0.0, min(1.0, item.base_strength * time_weight * dependency))
+            effective = max(
+                0.0,
+                min(
+                    1.0,
+                    item.base_strength
+                    * time_weight
+                    * dependency
+                    * max(0.0, min(1.0, item.relationship_confidence))
+                    * target_scope.get(item.target_id, 1.0),
+                ),
+            )
             if effective > 0:
                 scored.append((item, effective, time_weight))
         positive = [score for item, score, _ in scored if item.direction == "positive"]
@@ -238,6 +294,7 @@ class ImpactAggregationService:
         as_of: datetime | None = None,
         horizon: str | None = None,
         scenario_set_id: str = "baseline",
+        publication_scope: str = "official",
     ) -> dict[str, Any] | None:
         """Build the explainable target view without mutating the read model."""
         target = self.repository.get_impact_target(target_id)
@@ -249,21 +306,31 @@ class ImpactAggregationService:
             as_of=as_of,
             horizon=horizon,
             scenario_set_id=scenario_set_id,
+            publication_scope=publication_scope,
             persist=False,
         )
         if snapshot is None:
             return {"target": target.__dict__, "snapshot": None, "contributions": []}
-        all_contributions = self.repository.list_impact_contributions(target_id)
+        target_scope = self._target_scope(target_id, as_of=as_of)
+        all_contributions = [
+            item
+            for scoped_target in target_scope
+            for item in self.repository.list_impact_contributions(scoped_target)
+        ]
+        allowed_statuses = {"approved"} if publication_scope == "official" else {
+            "draft", "needs_review", "approved"
+        }
         approved_ids = {
             item.id
             for item in all_contributions
             if (analysis := self.repository.get_impact_analysis(item.analysis_id))
-            and analysis.status == "approved"
+            and analysis.status in allowed_statuses
         }
         contributions = {
             item.id: item
             for item in all_contributions
             if item.id in approved_ids
+            and (item.publication_scope == publication_scope or publication_scope == "exploration")
             and (item.created_at is None or item.created_at <= as_of)
             and (item.valid_from is None or item.valid_from <= as_of)
             and (horizon is None or item.horizon == horizon)
@@ -286,7 +353,9 @@ class ImpactAggregationService:
                     1.0,
                     contribution.base_strength
                     * time_weight
-                    * relations.get(contribution.event_id, 1.0),
+                    * relations.get(contribution.event_id, 1.0)
+                    * max(0.0, min(1.0, contribution.relationship_confidence))
+                    * target_scope.get(contribution.target_id, 1.0),
                 ),
             )
             if contribution.valid_to is not None and as_of > contribution.valid_to:
@@ -323,6 +392,13 @@ class ImpactAggregationService:
                     "assessment_confidence": contribution.assessment_confidence,
                     "path_confidence": contribution.path_confidence,
                     "dependency_weight": relations.get(contribution.event_id, 1.0),
+                    "target_role": contribution.target_role,
+                    "relationship_confidence": contribution.relationship_confidence,
+                    "inference_kind": contribution.inference_kind,
+                    "publication_scope": contribution.publication_scope,
+                    "evidence_refs": contribution.evidence_refs,
+                    "conditions": contribution.conditions,
+                    "invalidation_conditions": contribution.invalidation_conditions,
                     "time_weight": round(time_weight, 6),
                     "valid_from": contribution.valid_from,
                     "expected_peak_at": contribution.expected_peak_at,
@@ -332,11 +408,56 @@ class ImpactAggregationService:
                 }
             )
         enriched.sort(key=lambda item: item["effective_strength"], reverse=True)
+        dimension_rows: dict[str, list[tuple[ImpactContribution, float]]] = {}
+        time_weights = {item.id: weight for item, _, weight in scored}
+        contribution_ids = {item.id for item in contributions.values()}
+        for dimension_item in self.repository.list_impact_dimension_contributions():
+            if dimension_item.contribution_id not in contribution_ids:
+                continue
+            parent = next(
+                (
+                    item
+                    for item in contributions.values()
+                    if item.id == dimension_item.contribution_id
+                ),
+                None,
+            )
+            if parent is None:
+                continue
+            dimension_rows.setdefault(dimension_item.dimension, []).append(
+                (parent, dimension_item.effective_strength * time_weights.get(parent.id, 1.0))
+            )
+        dimensions: list[dict[str, Any]] = []
+        for name, rows in dimension_rows.items():
+            positive_values = [value for item, value in rows if item.direction == "positive"]
+            negative_values = [value for item, value in rows if item.direction == "negative"]
+            positive_gross = (
+                1 - math.prod(1 - min(1.0, value) for value in positive_values)
+                if positive_values
+                else 0.0
+            )
+            negative_gross = (
+                1 - math.prod(1 - min(1.0, value) for value in negative_values)
+                if negative_values
+                else 0.0
+            )
+            net = round(positive_gross - negative_gross, 6)
+            dimensions.append({
+                "dimension": name,
+                "positive_gross": round(positive_gross, 6),
+                "negative_gross": round(negative_gross, 6),
+                "net_score": net,
+                "direction": self._direction(net, positive_gross, negative_gross),
+                "confidence": round(
+                    sum(item.assessment_confidence for item, _ in rows) / len(rows), 6
+                ),
+            })
         return {
             "target": target.__dict__,
             "snapshot": snapshot.__dict__,
             "contributions": enriched,
             "events": list(events.values()),
+            "dimensions": sorted(dimensions, key=lambda item: abs(item["net_score"]), reverse=True),
             "calculation": {
                 "formula": (
                     "magnitude × event_importance × assessment_confidence × "
@@ -409,6 +530,31 @@ class ImpactAggregationService:
             return scenario_id in {"baseline", "base", "scn_base"}
         return scenario_id in {scenario_set_id, f"scn_{scenario_set_id}"}
 
+    def _target_scope(self, target_id: str, *, as_of: datetime | None = None) -> dict[str, float]:
+        """Resolve valid descendants and apply configurable decay per level."""
+        decay = max(0.0, min(1.0, float(os.getenv("FINSIGHT_TARGET_PROPAGATION_DECAY", "0.85"))))
+        children: dict[str, list[Any]] = {}
+        for target in self.repository.list_impact_targets():
+            if as_of and (
+                (target.valid_from and target.valid_from > as_of)
+                or (target.valid_to and as_of > target.valid_to)
+            ):
+                continue
+            if target.parent_target_id and target.hierarchy_status == "approved":
+                children.setdefault(target.parent_target_id, []).append(target)
+        scope = {target_id: 1.0}
+        frontier = [(target_id, 1.0)]
+        while frontier:
+            parent, parent_weight = frontier.pop()
+            for child in children.get(parent, []):
+                if child.id in scope:
+                    continue
+                child_weight = max(0.0, min(1.0, child.propagation_weight or decay))
+                weight = round(parent_weight * child_weight, 6)
+                scope[child.id] = weight
+                frontier.append((child.id, weight))
+        return scope
+
     def recompute_all(self, *, as_of: datetime | None = None) -> list[TargetImpactSnapshot]:
         approved = []
         for event in self.repository.list_events():
@@ -458,20 +604,77 @@ class ImpactAggregationService:
                         "layer": 0,
                     }
                 )
-            edges.append(
-                {
-                    "edge_id": f"aggregate_{contribution.id}_{index}",
-                    "source_node_id": event_node,
-                    "target_node_id": f"target_{target.id}",
-                    "mechanism": "组合影响贡献",
-                    "direction": contribution.direction,
-                    "order": "first_order",
-                    "horizon": contribution.horizon,
-                    "inference_kind": "derived",
-                    "confidence": contribution.assessment_confidence,
-                    "evidence_refs": [],
-                }
-            )
+            dimension_items = self.repository.list_impact_dimension_contributions(contribution.id)
+            if not dimension_items:
+                dimension_items = [
+                    ImpactDimensionContribution(
+                        id=f"legacy_{contribution.id}",
+                        contribution_id=contribution.id,
+                        dimension="other",
+                        direction=contribution.direction,
+                        magnitude=contribution.magnitude,
+                        base_strength=contribution.base_strength,
+                        effective_strength=contribution.effective_strength,
+                        confidence=contribution.assessment_confidence,
+                    )
+                ]
+            for dimension_item in dimension_items:
+                mechanism_node = f"mechanism_{contribution.id}_{dimension_item.dimension}"
+                dimension_node = f"dimension_{contribution.id}_{dimension_item.dimension}"
+                nodes.extend(
+                    [
+                        {
+                            "node_id": mechanism_node,
+                            "node_type": "mechanism",
+                            "label": contribution.target_role,
+                            "layer": 1,
+                        },
+                        {
+                            "node_id": dimension_node,
+                            "node_type": "financial_dimension",
+                            "label": dimension_item.dimension,
+                            "layer": 2,
+                        },
+                    ]
+                )
+                edges.extend(
+                    [
+                        {
+                            "edge_id": f"aggregate_{contribution.id}_{index}_mechanism",
+                            "source_node_id": event_node,
+                            "target_node_id": mechanism_node,
+                            "mechanism": contribution.target_role,
+                            "direction": dimension_item.direction,
+                            "order": "first_order",
+                            "inference_kind": contribution.inference_kind,
+                            "confidence": contribution.relationship_confidence,
+                            "evidence_refs": contribution.evidence_refs,
+                        },
+                        {
+                            "edge_id": f"aggregate_{contribution.id}_{index}_dimension",
+                            "source_node_id": mechanism_node,
+                            "target_node_id": dimension_node,
+                            "mechanism": "财务维度传导",
+                            "direction": dimension_item.direction,
+                            "order": "second_order",
+                            "inference_kind": contribution.inference_kind,
+                            "confidence": dimension_item.confidence,
+                            "evidence_refs": dimension_item.evidence_refs,
+                        },
+                        {
+                            "edge_id": f"aggregate_{contribution.id}_{index}_target",
+                            "source_node_id": dimension_node,
+                            "target_node_id": f"target_{target.id}",
+                            "mechanism": "组合影响贡献",
+                            "direction": dimension_item.direction,
+                            "order": "third_order",
+                            "horizon": contribution.horizon,
+                            "inference_kind": contribution.inference_kind,
+                            "confidence": dimension_item.confidence,
+                            "evidence_refs": dimension_item.evidence_refs,
+                        },
+                    ]
+                )
         return {"nodes": nodes, "edges": edges}
 
     def _target_for_assessment(self, assessment: dict[str, Any]):

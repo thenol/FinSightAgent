@@ -834,6 +834,13 @@ class ImpactTargetDefinition:
     canonical_name: str
     taxonomy_version: str = "default-v1"
     aliases: list[str] = field(default_factory=list)
+    parent_target_id: Optional[str] = None
+    hierarchy_level: int = 0
+    hierarchy_status: str = "approved"
+    hierarchy_source: str = "manual"
+    propagation_weight: float = 0.85
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     valid_from: Optional[datetime] = None
     valid_to: Optional[datetime] = None
 
@@ -951,6 +958,14 @@ class ImpactContribution:
     assessment_confidence: float
     path_confidence: float
     dependency_weight: float = 1.0
+    target_role: str = "direct_subject"
+    relationship_id: Optional[str] = None
+    relationship_confidence: float = 1.0
+    inference_kind: str = "derived"
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    conditions: list[str] = field(default_factory=list)
+    invalidation_conditions: list[str] = field(default_factory=list)
+    publication_scope: str = "official"
     valid_from: Optional[datetime] = None
     expected_peak_at: Optional[datetime] = None
     valid_to: Optional[datetime] = None
@@ -990,6 +1005,35 @@ class TargetImpactSnapshotContribution:
     direction: str
     effective_strength: float
     contribution_share: float
+
+
+@dataclass(frozen=True)
+class ImpactDimensionContribution:
+    id: str
+    contribution_id: str
+    dimension: str
+    direction: str
+    magnitude: str
+    base_strength: float
+    effective_strength: float
+    confidence: float
+    quantitative_range: Optional[dict[str, Any]] = None
+    unit: Optional[str] = None
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TargetImpactDimensionSnapshot:
+    snapshot_id: str
+    dimension: str
+    positive_gross: float
+    negative_gross: float
+    net_score: float
+    direction: str
+    magnitude: str
+    confidence: float
+    dominant_event_id: Optional[str] = None
+    explanation: str = ""
 
 
 @dataclass(frozen=True)
