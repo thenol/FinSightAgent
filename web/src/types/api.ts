@@ -181,6 +181,22 @@ export type Workflow = {
   blackboard: Record<string, unknown>;
   error_code?: string | null;
   budget_profile?: string;
+  display?: {
+    title?: string;
+    subtitle?: string;
+    event_title?: string;
+    event_href?: string | null;
+    title_source?: string;
+    event_type_label?: string;
+    trigger_label?: string;
+    status_label?: string;
+    current_stage_label?: string;
+    progress_percent?: number;
+    last_activity_at?: string | null;
+    short_id?: string;
+    error_label?: string | null;
+  };
+  technical?: { workflow_id?: string; current_node?: string | null; error_code?: string | null };
 };
 
 export type BudgetEntry = {
@@ -288,7 +304,7 @@ export type ReviewPolicy = {
 };
 
 export type ReviewQueueItem = ReviewTask & {
-  display: {
+  display?: {
     title: string;
     type_label: string;
     subtitle: string;

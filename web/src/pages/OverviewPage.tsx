@@ -122,9 +122,9 @@ export function OverviewPage() {
           {reviews.length ? (
             <div className="overview-review-list">
               {reviews.slice(0, 5).map((task) => (
-                <Link className={`overview-review-item priority-${task.priority_band}`} to={task.display.href || `/reviews/${task.id}`} key={task.id}>
+                <Link className={`overview-review-item priority-${task.priority_band}`} to={task.display?.href || `/reviews/${task.id}`} key={task.id}>
                   <span className="overview-review-item__marker" aria-hidden="true" />
-                  <span className="overview-review-item__body"><strong>{task.display.title}</strong><small>{task.display.type_label} · {task.display.subtitle}</small><small className="muted">{task.display.summary || reviewReasonLabel(task.reason_code)}</small></span>
+                  <span className="overview-review-item__body"><strong>{task.display?.title || task.object_id}</strong><small>{task.display?.type_label || task.object_type} · {task.display?.subtitle || "待处理"}</small><small className="muted">{task.display?.summary || reviewReasonLabel(task.reason_code)}</small></span>
                   <span className="overview-review-item__meta"><em>{priorityLabel(task.priority_band)}</em><small>{task.age_seconds >= 3600 ? `${Math.floor(task.age_seconds / 3600)}小时` : `${Math.max(1, Math.floor(task.age_seconds / 60))}分钟`}未处理</small></span>
                 </Link>
               ))}
@@ -157,7 +157,7 @@ export function OverviewPage() {
             {waiting.slice(0, 8).map((run) => (
               <li key={run.id}>
                 <Link to={`/workflows/${run.id}`}>
-                  {run.id} · 节点 {run.current_node || "–"} · {run.error_code || run.status}
+                  <strong>{run.display?.title || `工作流 ${run.id}`}</strong><span className="muted">{run.display?.current_stage_label || run.current_node || "等待启动"} · {run.display?.error_label || run.error_code || run.status}</span>
                 </Link>
               </li>
             ))}

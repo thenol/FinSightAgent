@@ -13,7 +13,7 @@ import { asList, formatDate } from "@/lib/format";
 import { canReview, canRunWorkflow } from "@/lib/roles";
 import type { BudgetEntry, NodeAttempt, Workflow } from "@/types/api";
 
-const NODES = ["context", "fact_check", "company", "skeptic", "synthesize", "draft", "guardrail"];
+const NODES = ["context", "fact_check", "preliminary_assess", "company", "skeptic", "synthesize", "draft", "guardrail"];
 
 export function WorkflowsPage() {
   const { workflowId } = useParams();
@@ -36,21 +36,21 @@ function WorkflowListPage() {
       {query.isError ? <ErrorState>工作流列表加载失败</ErrorState> : null}
       {!query.isLoading && !workflows.length ? <EmptyState>暂无工作流运行</EmptyState> : null}
       <DataTable
-        headers={["Workflow", "状态", "当前节点", "版本", "事件", "错误"]}
+        headers={["研究主题", "状态", "当前阶段", "进度", "最近活动", "问题"]}
         rows={workflows.map((workflow) => (
           <tr
             key={workflow.id}
             className="clickable"
             onClick={() => navigate(`/workflows/${workflow.id}`)}
           >
-            <td className="mono">{workflow.id}</td>
+            <td title={workflow.display?.event_title || workflow.display?.title || workflow.id}><div className="workflow-display-title">{workflow.display?.title || "研究工作流"}</div><div className="muted workflow-display-subtitle">{workflow.display?.subtitle || "待获取研究主题"} · <span className="mono">{workflow.display?.short_id || workflow.id}</span></div></td>
             <td>
               <StatusBadge value={workflow.status} />
             </td>
-            <td>{workflow.current_node || "–"}</td>
-            <td>v{workflow.state_version}</td>
-            <td className="mono">{workflow.event_id}</td>
-            <td>{workflow.error_code || "–"}</td>
+            <td>{workflow.display?.current_stage_label || workflow.current_node || "等待启动"}</td>
+            <td><div className="workflow-progress"><i style={{ width: `${workflow.display?.progress_percent ?? 0}%` }} /></div><small>{workflow.display?.progress_percent ?? 0}% · v{workflow.state_version}</small></td>
+            <td>{workflow.display?.last_activity_at ? `${formatDate(workflow.display.last_activity_at)}` : "–"}</td>
+            <td>{workflow.display?.error_label || "–"}</td>
           </tr>
         ))}
       />
@@ -125,17 +125,26 @@ function WorkflowDetailPage({ workflowId }: { workflowId: string }) {
         return map;
       }, new Map()),
   );
+  const visibleNodes = NODES.filter(
+    (node) =>
+      node !== "preliminary_assess" ||
+      attempts.some(
+        (item) => item.node_name === node || item.node_name === `dynamic:${node}`,
+      ) ||
+      Object.prototype.hasOwnProperty.call(workflow.blackboard || {}, "preliminary_assessment"),
+  );
 
   return (
     <>
       <PageHeader
         eyebrow={workflow.budget_profile || "workflow"}
-        title={`工作流 ${workflow.id}`}
-        description={`节点 ${workflow.current_node || "–"} · v${workflow.state_version} · as_of ${formatDate(workflow.as_of)}`}
+        title={workflow.display?.title || "研究工作流"}
+        description={`${workflow.display?.subtitle || "研究工作流"} · ${workflow.display?.current_stage_label || workflow.current_node || "等待启动"} · as_of ${formatDate(workflow.as_of)}`}
         actions={
-          <Link className="button ghost" to="/workflows">
-            返回列表
-          </Link>
+          <div className="actions">
+            {workflow.display?.event_href ? <Link className="button ghost" to={workflow.display.event_href}>查看事件</Link> : null}
+            <Link className="button ghost" to="/workflows">返回列表</Link>
+          </div>
         }
       />
       {canStart || canResume ? (
@@ -193,16 +202,17 @@ function WorkflowDetailPage({ workflowId }: { workflowId: string }) {
         <section className="panel">
           <h3>节点时间线</h3>
           <div className="timeline">
-            {NODES.map((node) => {
+            {visibleNodes.map((node) => {
               const nodeAttempts = attempts.filter((item) => item.node_name === node);
               const latest = nodeAttempts[nodeAttempts.length - 1];
               const status =
                 workflow.current_node === node
                   ? workflow.status
                   : latest?.status || (nodeAttempts.length ? "succeeded" : "pending");
+              const label = workflow.display?.current_stage_label && node === workflow.current_node ? workflow.display.current_stage_label : nodeLabel(node);
               return (
                 <div key={node} className="timeline-item">
-                  <div className="mono">{node}</div>
+                  <div><strong>{label}</strong><small className="muted mono">{node}</small></div>
                   <div>
                     <StatusBadge value={status} />
                     {latest?.error_code ? (
@@ -266,4 +276,9 @@ function WorkflowDetailPage({ workflowId }: { workflowId: string }) {
       />
     </>
   );
+}
+
+function nodeLabel(node: string): string {
+  const labels: Record<string, string> = { context: "构建研究上下文", fact_check: "核验事件事实", preliminary_assess: "事件初步研判", company: "公司影响分析", industry: "行业传导分析", market: "市场反应分析", skeptic: "反方审查", synthesize: "综合研究结论", draft: "生成报告草稿", guardrail: "质量与合规检查" };
+  return labels[node] || node;
 }

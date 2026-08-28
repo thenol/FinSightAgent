@@ -393,6 +393,8 @@ class WorkflowResponse(BaseModel):
     error_code: Optional[str]
     budget_profile: str = "mvp_standard"
     created_at: Optional[datetime] = None
+    display: dict[str, Any] = Field(default_factory=dict)
+    technical: dict[str, Any] = Field(default_factory=dict)
 
 
 class BudgetLedgerEntryResponse(BaseModel):

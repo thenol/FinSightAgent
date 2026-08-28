@@ -691,6 +691,14 @@ a:hover {
 .overview-review-item__meta em { color: var(--color-text-muted); font-size: .7rem; font-style: normal; font-weight: 700; }
 .priority-critical .overview-review-item__meta em { color: var(--color-red); }
 .priority-high .overview-review-item__meta em { color: var(--color-amber); }
+.workflow-display-title { color: var(--color-text-strong); font-weight: 700; line-height: 1.35; }
+.workflow-display-subtitle { margin-top: .2rem; font-size: .72rem; }
+.workflow-progress { width: 7rem; height: .35rem; overflow: hidden; border-radius: 999px; background: var(--color-border); }
+.workflow-progress i { display: block; height: 100%; border-radius: inherit; background: var(--color-blue); }
+.panel > ul a { display: inline-flex; flex-direction: column; gap: .15rem; }
+.panel > ul a .muted { font-size: .74rem; }
+.timeline-item > div:first-child { display: grid; gap: .15rem; }
+.timeline-item > div:first-child small { font-size: .68rem; }
 
 .impact-target-summary > div {
   display: grid;

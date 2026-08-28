@@ -1230,6 +1230,108 @@ def market_quality(
 
 
 BUSINESS_ROLES = ("researcher", "reviewer", "publisher", "admin")
+
+WORKFLOW_NODE_LABELS = {
+    "context": "构建研究上下文",
+    "fact_check": "核验事件事实",
+    "preliminary_assess": "事件初步研判",
+    "company": "公司影响分析",
+    "industry": "行业传导分析",
+    "market": "市场反应分析",
+    "skeptic": "反方审查",
+    "synthesize": "综合研究结论",
+    "draft": "生成报告草稿",
+    "guardrail": "质量与合规检查",
+}
+WORKFLOW_ERROR_LABELS = {
+    "REPORT_REVIEW_REQUIRED": "研究报告等待审核",
+    "QUALITY_GATE_FAILED": "质量门未通过",
+    "MODEL_TIMEOUT": "分析模型响应超时",
+    "BUDGET_HARD_LIMIT": "达到研究预算上限",
+    "CLAIM_CONFLICT": "事实证据存在冲突",
+}
+WORKFLOW_STATUS_LABELS = {
+    "pending": "待启动",
+    "running": "分析中",
+    "waiting_review": "等待审核",
+    "failed": "运行失败",
+    "succeeded": "已完成",
+    "cancelled": "已取消",
+}
+WORKFLOW_EVENT_TYPE_LABELS = {
+    "macro_policy": "宏观政策",
+    "monetary_policy": "货币政策",
+    "fiscal_policy": "财政政策",
+    "earnings": "业绩公告",
+    "earnings_guidance": "业绩预告",
+    "corporate_action": "公司行动",
+    "ipo": "新股发行",
+    "industry": "行业事件",
+    "market": "市场事件",
+}
+
+
+def _workflow_response(repository, run) -> WorkflowResponse:
+    event = repository.get_event(run.event_id) if run.event_id else None
+    blackboard = run.blackboard or {}
+    research_plan = blackboard.get("research_plan")
+    if not isinstance(research_plan, dict):
+        research_plan = {}
+    fallback_title = (
+        research_plan.get("question")
+        or blackboard.get("research_subject")
+        or blackboard.get("summary")
+        or "独立研究任务"
+    )
+    title = (event.title if event and event.title else fallback_title).strip()
+    title_source = "event" if event and event.title else "research_context"
+    event_label = (
+        WORKFLOW_EVENT_TYPE_LABELS.get(event.event_type, event.event_type) if event else "独立研究"
+    )
+    current = run.current_node or ""
+    # The preliminary assessment is an optional enrichment stage.  It should
+    # only contribute to progress for runs that actually produced it.
+    known_nodes = tuple(
+        node
+        for node in WORKFLOW_NODE_LABELS
+        if node != "preliminary_assess" or "preliminary_assessment" in blackboard
+    )
+    completed = sum(1 for node in known_nodes if node in blackboard)
+    progress = min(100, round(completed / len(known_nodes) * 100)) if known_nodes else 0
+    short_id = run.id if len(run.id) <= 18 else f"{run.id[:10]}…{run.id[-5:]}"
+    trigger_labels = {"auto": "事件自动触发", "manual": "人工创建", "research_api": "研究请求触发"}
+    error = run.error_code
+    return WorkflowResponse.model_validate(
+        {
+            **run.__dict__,
+            "display": {
+                "title": f"{title} · 影响研究",
+                "subtitle": f"{event_label} · {trigger_labels.get(run.trigger_id, run.trigger_id)}",
+                "event_title": title,
+                "title_source": title_source,
+                "event_type_label": event_label,
+                "trigger_label": trigger_labels.get(run.trigger_id, run.trigger_id),
+                "status_label": WORKFLOW_STATUS_LABELS.get(run.status, run.status),
+                "current_stage_label": WORKFLOW_NODE_LABELS.get(current, current or "等待启动"),
+                "progress_percent": progress,
+                "last_activity_at": run.updated_at.isoformat()
+                if getattr(run, "updated_at", None)
+                else run.created_at.isoformat()
+                if run.created_at
+                else None,
+                "short_id": short_id,
+                "error_label": WORKFLOW_ERROR_LABELS.get(error, error),
+                "event_href": f"/events/{run.event_id}" if event else None,
+            },
+            "technical": {
+                "workflow_id": run.id,
+                "current_node": run.current_node,
+                "error_code": run.error_code,
+            },
+        }
+    )
+
+
 MAX_PAGE_SIZE = 200
 
 
@@ -1697,7 +1799,7 @@ def create_workflow(
     if payload.execute:
         run = service.run(run.id)
     response = envelope(
-        WorkflowResponse.model_validate(run, from_attributes=True), request.state.request_id
+        _workflow_response(request.app.state.repository, run), request.state.request_id
     )
     return _idempotency_finish(request, storage_key, request_hash, operation, run.id, response)
 
@@ -1738,7 +1840,7 @@ def run_workflow(
         )
     )
     response = envelope(
-        WorkflowResponse.model_validate(updated, from_attributes=True),
+        _workflow_response(request.app.state.repository, updated),
         request.state.request_id,
     )
     return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
@@ -1753,9 +1855,7 @@ def get_workflow(
     run = request.app.state.repository.get_workflow_run(workflow_id)
     if not run:
         raise HTTPException(status_code=404, detail="WORKFLOW_NOT_FOUND")
-    return envelope(
-        WorkflowResponse.model_validate(run, from_attributes=True), request.state.request_id
-    )
+    return envelope(_workflow_response(request.app.state.repository, run), request.state.request_id)
 
 
 @router.get("/api/v1/workflows", response_model=DataEnvelope)
@@ -1775,7 +1875,7 @@ def list_workflows(
     runs = request.app.state.repository.list_workflow_runs(
         event_id=event_id, status=status_filter, limit=limit + 1, cursor=cursor
     )
-    values = [WorkflowResponse.model_validate(run, from_attributes=True) for run in runs]
+    values = [_workflow_response(request.app.state.repository, run) for run in runs]
     return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
 
 
@@ -1794,7 +1894,7 @@ def list_event_workflows(
     runs = request.app.state.repository.list_workflow_runs(
         event_id=event_id, limit=limit + 1, cursor=cursor
     )
-    values = [WorkflowResponse.model_validate(run, from_attributes=True) for run in runs]
+    values = [_workflow_response(request.app.state.repository, run) for run in runs]
     return _page_envelope(values, limit, lambda value: value.created_at, request.state.request_id)
 
 
@@ -2152,7 +2252,7 @@ def resume_workflow(
         )
     )
     response = envelope(
-        WorkflowResponse.model_validate(updated, from_attributes=True), request.state.request_id
+        _workflow_response(request.app.state.repository, updated), request.state.request_id
     )
     return _idempotency_finish(request, storage_key, request_hash, operation, updated.id, response)
 
@@ -2501,7 +2601,7 @@ def decide_review(
             updated_run = workflows.cancel(run.id, reason=payload.comment)
         else:
             raise HTTPException(status_code=409, detail="REVIEW_DECISION_INVALID")
-        response_payload = WorkflowResponse.model_validate(updated_run, from_attributes=True)
+        response_payload = _workflow_response(request.app.state.repository, updated_run)
     elif task.object_type == "claim_conflict":
         if payload.decision not in {"approve", "reject"}:
             raise HTTPException(status_code=409, detail="REVIEW_DECISION_INVALID")
