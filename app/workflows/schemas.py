@@ -178,3 +178,37 @@ class SynthesisOutput(BaseModel):
     )
     assessment_delta: dict = Field(default_factory=dict)
     delta_reasons: list[str] = Field(default_factory=list)
+
+
+class ResearchMemoSection(BaseModel):
+    """A non-overlapping paragraph in the reader-facing research memo."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["why_now", "mechanism", "evidence", "counter_case", "watch"]
+    title: str = Field(min_length=1, max_length=80)
+    body: str = Field(min_length=1, max_length=3000)
+    claim_ids: list[str] = Field(default_factory=list)
+    card_refs: list[str] = Field(default_factory=list)
+
+
+class ResearchMemoOutput(BaseModel):
+    """Constrained prose built from verified facts and analysis cards only."""
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["2.0.0"] = "2.0.0"
+    model_run_id: str | None = None
+    analysis_ref: Literal["research_memo"] = "research_memo"
+    status: Literal["complete", "evidence_limited"]
+    conclusion: str = Field(min_length=1, max_length=1200)
+    direction: Literal[
+        "strongly_positive",
+        "moderately_positive",
+        "neutral",
+        "mixed",
+        "moderately_negative",
+        "strongly_negative",
+        "uncertain",
+    ]
+    horizon: Literal["immediate", "short_term", "medium_term", "long_term", "uncertain"]
+    confidence: float = Field(ge=0, le=1)
+    sections: list[ResearchMemoSection] = Field(min_length=1, max_length=5)

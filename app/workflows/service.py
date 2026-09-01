@@ -20,6 +20,7 @@ from app.review.service import AutoReviewService
 from app.workflows.agents import (
     CompanyAnalystAgent,
     FactCheckerAgent,
+    ResearchWriterAgent,
     SkepticAgent,
     SynthesizerAgent,
 )
@@ -46,6 +47,8 @@ class ResearchState(TypedDict, total=False):
     company_analysis: dict
     counter_analysis: dict
     synthesis: dict
+    research_memo: dict
+    research_pack: dict
     guardrail_result: dict
     report_draft_ref: str
     report_draft: dict
@@ -81,6 +84,7 @@ class WorkflowService:
         self.company_analyst = CompanyAnalystAgent(self.model_gateway, self.tool_gateway)
         self.skeptic = SkepticAgent(self.model_gateway)
         self.synthesizer = SynthesizerAgent(self.model_gateway)
+        self.research_writer = ResearchWriterAgent(self.model_gateway)
         self.assembler = ReportAssembler(repository)
         self.guardrail_engine = GuardrailEngine()
         self._sleep = sleep_fn or default_sleep
@@ -94,6 +98,7 @@ class WorkflowService:
         graph.add_node("company", self._company)
         graph.add_node("skeptic", self._skeptic)
         graph.add_node("synthesize", self._synthesize)
+        graph.add_node("research_writer", self._research_writer)
         graph.add_node("guardrail", self._guardrail)
         graph.add_node("draft", self._draft)
         graph.add_edge(START, "context")
@@ -101,7 +106,8 @@ class WorkflowService:
         graph.add_edge("fact_check", "company")
         graph.add_edge("company", "skeptic")
         graph.add_edge("skeptic", "synthesize")
-        graph.add_edge("synthesize", "draft")
+        graph.add_edge("synthesize", "research_writer")
+        graph.add_edge("research_writer", "draft")
         graph.add_edge("draft", "guardrail")
         graph.add_edge("guardrail", END)
         return graph.compile(checkpointer=self.checkpointer_factory.create())
@@ -173,9 +179,7 @@ class WorkflowService:
             )
 
         if budget_adjust:
-            self.budget.adjust(
-                run.id, budget_adjust, reason=reason, actor_id=actor_id
-            )
+            self.budget.adjust(run.id, budget_adjust, reason=reason, actor_id=actor_id)
 
         resume_count = int(blackboard.get("_resume_count", 0)) + 1
         blackboard["_resume_count"] = resume_count
@@ -250,9 +254,7 @@ class WorkflowService:
         values = getattr(snapshot, "values", None) or {}
         return dict(values)
 
-    def _invoke(
-        self, run: WorkflowRun, thread_id: str, *, recover: bool = False
-    ) -> dict[str, Any]:
+    def _invoke(self, run: WorkflowRun, thread_id: str, *, recover: bool = False) -> dict[str, Any]:
         config = {"configurable": {"thread_id": thread_id}}
         graph_input: dict[str, Any] | None = self._initial_state(run)
         if recover:
@@ -326,9 +328,7 @@ class WorkflowService:
             "version": "guardrail-v1",
             "rules": [],
         }
-        FactCardService(self.repository).create_from_draft(
-            event, run, draft, status="published"
-        )
+        FactCardService(self.repository).create_from_draft(event, run, draft, status="published")
         result = replace(
             run,
             status="succeeded",
@@ -367,14 +367,10 @@ class WorkflowService:
                     resume_from="draft",
                 )
             blocking = [
-                rule
-                for rule in guardrail_result.get("rules", [])
-                if rule.get("status") == "fail"
+                rule for rule in guardrail_result.get("rules", []) if rule.get("status") == "fail"
             ]
             error_code = (
-                f"GUARDRAIL_{blocking[0]['rule'].upper()}"
-                if blocking
-                else "GUARDRAIL_BLOCKED"
+                f"GUARDRAIL_{blocking[0]['rule'].upper()}" if blocking else "GUARDRAIL_BLOCKED"
             )
             result = replace(
                 run,
@@ -388,19 +384,21 @@ class WorkflowService:
 
         event = self.repository.get_event(run.event_id)
         if event and draft:
+            previous = self.repository.get_fact_card_for_event(event.id)
             card = FactCardService(self.repository).create_from_draft(
                 event, run, draft, status="needs_review"
             )
-            self.repository.save_review_task(
-                ReviewTask(
-                    id=new_id("rvt"),
-                    object_type="report",
-                    object_id=card.id,
-                    reason_code="REPORT_REVIEW_REQUIRED",
-                    allowed_decisions=["approve", "return", "reject"],
-                    created_at=datetime.now(timezone.utc),
+            if previous is None or previous.id != card.id:
+                self.repository.save_review_task(
+                    ReviewTask(
+                        id=new_id("rvt"),
+                        object_type="report",
+                        object_id=card.id,
+                        reason_code="REPORT_REVIEW_REQUIRED",
+                        allowed_decisions=["approve", "return", "reject"],
+                        created_at=datetime.now(timezone.utc),
+                    )
                 )
-            )
         result = replace(
             run,
             status="succeeded",
@@ -624,6 +622,20 @@ class WorkflowService:
             reserve_amounts={"model_calls": 1, "tool_calls": 0, "elapsed_seconds": 1},
         )
 
+    def _research_writer(self, state: ResearchState) -> dict[str, Any]:
+        return self._execute_node(
+            "research_writer",
+            lambda s: self.research_writer.run(s, self.repository),
+            state,
+            input_fields=(
+                "fact_check_snapshot",
+                "company_analysis",
+                "counter_analysis",
+                "synthesis",
+            ),
+            reserve_amounts={"model_calls": 1, "tool_calls": 0, "elapsed_seconds": 1},
+        )
+
     def _draft(self, state: ResearchState) -> dict[str, Any]:
         def _run(s: ResearchState) -> dict[str, Any]:
             run = self.repository.get_workflow_run(s["workflow_id"])
@@ -646,6 +658,8 @@ class WorkflowService:
                 "company_analysis",
                 "counter_analysis",
                 "fact_check_snapshot",
+                "research_memo",
+                "research_pack",
             ),
             reserve_amounts={"model_calls": 0, "tool_calls": 0, "elapsed_seconds": 1},
         )

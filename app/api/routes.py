@@ -7,8 +7,19 @@ from typing import Annotated, Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.agents.configuration import (
+    AgentConfigurationError,
+    create_prompt_version,
+    default_prompt_for_operation,
+    get_agent_configuration,
+    list_agent_configurations,
+    publish_prompt_version,
+    save_runtime_config,
+    validate_prompt_version,
+)
 from app.agents.registry import AgentRegistry
 from app.analysis.aggregation import ImpactAggregationService
 from app.analysis.backfill import ImpactProjectionBackfillService
@@ -20,6 +31,8 @@ from app.api.errors import openapi_error_responses
 from app.api.login_guard import client_ip_from_request
 from app.api.schemas import (
     AdminMetricsResponse,
+    AgentPromptVersionCreateRequest,
+    AgentRuntimeConfigRequest,
     AuditLogResponse,
     BriefEntryResponse,
     BriefResponse,
@@ -73,6 +86,7 @@ from app.api.schemas import (
     OODObservationResponse,
     PipelineResponse,
     PreliminaryAssessmentResponse,
+    ReportEventGroupResponse,
     ReportTransitionRequest,
     ReprocessingJobResponse,
     ResearchBlackboardResponse,
@@ -87,10 +101,12 @@ from app.api.schemas import (
     ReviewPolicyResponse,
     ReviewPolicyUpdateRequest,
     ReviewTaskResponse,
+    SourceCollectionConfigRequest,
     SourceCreateRequest,
     SourceHealthResponse,
     SourceResponse,
     SourceUpdateRequest,
+    SystemOutboxRetryRequest,
     WorkflowCreateRequest,
     WorkflowResponse,
     WorkflowResumeRequest,
@@ -108,6 +124,7 @@ from app.domain import (
     RetrievalRequest,
     ReviewPolicy,
     Source,
+    SourceCollectionConfig,
     User,
 )
 from app.events.type_registry import (
@@ -147,7 +164,7 @@ from app.model_gateway.config import (
 from app.model_gateway.secrets import SecretBox
 from app.ood_learning import OODLearningService
 from app.platform.ids import new_id
-from app.platform.pagination import decode_cursor, page_items
+from app.platform.pagination import decode_cursor, encode_cursor, page_items
 from app.platform.repository import (
     ApiIdempotencyRecord,
     DocumentNotSoftDeletedError,
@@ -1240,6 +1257,7 @@ WORKFLOW_NODE_LABELS = {
     "market": "市场反应分析",
     "skeptic": "反方审查",
     "synthesize": "综合研究结论",
+    "research_writer": "撰写研究备忘录",
     "draft": "生成报告草稿",
     "guardrail": "质量与合规检查",
 }
@@ -2201,6 +2219,224 @@ def get_admin_metrics(
 ) -> DataEnvelope:
     metrics = AdminMetricsResponse(**_build_admin_metrics(request.app.state.repository))
     return envelope(metrics.model_dump(), request.state.request_id)
+
+
+SYSTEM_WORKERS = (
+    "outbox-worker",
+    "workflow-worker",
+    "source-worker",
+    "auto-review-worker",
+    "impact-aggregation-worker",
+    "forward-impact-worker",
+)
+
+
+@router.get("/api/v1/admin/system/status", response_model=DataEnvelope)
+async def get_system_status(
+    request: Request,
+    _user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    settings = request.app.state.settings
+    database = {"status": "ready"}
+    try:
+        if hasattr(repository, "engine"):
+            with repository.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        database = {"status": "unavailable", "detail": type(exc).__name__}
+    redis_status = {"status": "not_configured"}
+    if settings.repository == "postgresql":
+        client = Redis.from_url(settings.redis_url)
+        try:
+            await client.ping()
+            redis_status = {"status": "ready"}
+        except Exception as exc:  # noqa: BLE001
+            redis_status = {"status": "unavailable", "detail": type(exc).__name__}
+        finally:
+            await client.aclose()
+    now = datetime.now(timezone.utc)
+    latest: dict[str, Any] = {}
+    for item in repository.list_audit_logs(limit=100_000):
+        if item.action != "system.worker.heartbeat" or not item.object_id:
+            continue
+        current = latest.get(item.object_id)
+        if current is None or (item.created_at and item.created_at > current.created_at):
+            latest[item.object_id] = item
+    workers = []
+    for worker_name in SYSTEM_WORKERS:
+        heartbeat = latest.get(worker_name)
+        age = (
+            (now - heartbeat.created_at).total_seconds()
+            if heartbeat and heartbeat.created_at
+            else None
+        )
+        workers.append(
+            {
+                "name": worker_name,
+                "status": "ready" if age is not None and age <= 90 else "offline",
+                "last_heartbeat_at": heartbeat.created_at if heartbeat else None,
+                "age_seconds": round(age, 1) if age is not None else None,
+            }
+        )
+    metrics = _build_admin_metrics(repository)
+    return envelope(
+        {
+            "platform": {
+                "environment": settings.environment,
+                "repository": settings.repository,
+                "api_status": "ready" if database["status"] == "ready" else "degraded",
+                "admin_url": "/admin/",
+                "docs_url": "/docs",
+            },
+            "dependencies": {"database": database, "redis": redis_status},
+            "workers": workers,
+            "queues": {
+                "outbox_pending": metrics["outbox"]["pending"],
+                "outbox_dead_lettered": metrics["outbox"]["dead_lettered"],
+                "active_workflows": sum(
+                    metrics["workflows"]["by_status"].get(value, 0)
+                    for value in ("pending", "running", "waiting_review")
+                ),
+                "pending_reviews": metrics["reviews"]["pending"],
+                "open_quarantine": metrics["sources"]["open_quarantine"],
+            },
+            "configuration": {
+                "market_data_provider": settings.market_data_provider,
+                "review_policy": getattr(repository.get_review_policy(), "mode", "agent"),
+                "active_sources": metrics["sources"]["by_status"].get("active", 0),
+                "configured_llm_providers": len(repository.list_llm_providers()),
+            },
+            "refreshed_at": now,
+        },
+        request.state.request_id,
+    )
+
+
+@router.get("/api/v1/admin/system/collection", response_model=DataEnvelope)
+def get_collection_control(
+    request: Request,
+    _user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    config = repository.get_source_collection_config()
+    sources = repository.list_sources()
+    active = [item for item in sources if item.status == "active"]
+    degraded = [item for item in sources if item.status == "degraded" or item.consecutive_failures]
+    return envelope({
+        "config": config.__dict__,
+        "sources": {
+            "total": len(sources), "active": len(active), "degraded": len(degraded),
+            "disabled": len(sources) - len(active) - len(degraded),
+        },
+        "health": [
+            {"id": item.id, "code": item.code, "name": item.name, "status": item.status,
+             "last_success_at": item.last_success_at, "next_retry_at": item.next_retry_at,
+             "consecutive_failures": item.consecutive_failures,
+             "last_error_code": item.last_error_code,
+             "crawl_interval_seconds": item.crawl_interval_seconds}
+            for item in sources
+        ],
+    }, request.state.request_id)
+
+
+@router.patch("/api/v1/admin/system/collection", response_model=DataEnvelope)
+def update_collection_control(
+    payload: SourceCollectionConfigRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    repository = request.app.state.repository
+    current = repository.get_source_collection_config()
+    values = current.__dict__.copy()
+    for key, value in payload.model_dump(exclude_none=True).items():
+        values[key] = value
+    values["updated_by"] = user.id
+    values["updated_at"] = datetime.now(timezone.utc)
+    config = SourceCollectionConfig(**values)
+    repository.save_source_collection_config(config)
+    repository.save_audit_log(AuditLog(
+        id=new_id("aud"), actor_id=user.id, action="system.collection.config.update",
+        object_type="source_collection_config", object_id=config.id,
+        details={"changed": payload.model_dump(exclude_none=True)},
+        request_id=request.state.request_id,
+        created_at=datetime.now(timezone.utc)))
+    return envelope(config.__dict__, request.state.request_id)
+
+
+@router.post("/api/v1/admin/system/actions/retry-outbox", response_model=DataEnvelope)
+def retry_system_outbox(
+    payload: SystemOutboxRetryRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    if not payload.outbox_ids and not payload.retry_all_dead:
+        raise HTTPException(status_code=422, detail="OUTBOX_RETRY_TARGET_REQUIRED")
+    repository = request.app.state.repository
+    ids = set(payload.outbox_ids)
+    if payload.retry_all_dead:
+        ids.update(item.id for item in repository.list_outbox(dead_lettered=True, limit=100))
+    for outbox_id in ids:
+        repository.retry_outbox(outbox_id)
+    result = {"retried": len(ids), "outbox_ids": sorted(ids)}
+    repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"), actor_id=user.id, action="system.outbox.retry",
+            object_type="outbox", object_id=None, details=result,
+            request_id=request.state.request_id, created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(result, request.state.request_id)
+
+
+@router.post("/api/v1/admin/system/actions/rebuild-impact-projections", response_model=DataEnvelope)
+def rebuild_system_impact_projections(
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    report = ImpactProjectionBackfillService(request.app.state.repository).run()
+    result = jsonable_encoder(report.__dict__)
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"), actor_id=user.id, action="system.impact_projection.rebuild",
+            object_type="impact_projection", object_id=None, details=result,
+            request_id=request.state.request_id, created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(result, request.state.request_id)
+
+
+@router.post("/api/v1/admin/system/actions/sync-sources", response_model=DataEnvelope)
+async def sync_system_sources(
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    results = []
+    for source in request.app.state.repository.list_sources():
+        if source.status != "active":
+            continue
+        result = await request.app.state.rss_sync.sync(
+            source, trigger="system_management", request_id=request.state.request_id
+        )
+        results.append({"source_id": source.id, "code": source.code, **result})
+    summary = {"synced": len(results), "results": results}
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"), actor_id=user.id, action="system.sources.sync",
+            object_type="source", object_id=None, details={"count": len(results)},
+            request_id=request.state.request_id, created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(summary, request.state.request_id)
+
+
+@router.post("/api/v1/admin/system/actions/collect-now", response_model=DataEnvelope)
+async def collect_now_system_sources(
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    """Semantic alias used by the operations console for an immediate collection."""
+    return await sync_system_sources(request, user)
 
 
 @router.post(
@@ -3347,6 +3583,206 @@ def put_llm_bindings_bulk(
     )
 
 
+def _agent_configuration_view(value) -> dict[str, Any]:
+    config = value.config or {}
+    operation = config.get("runtime_operation", value.agent_key)
+    return {
+        "agent_key": operation,
+        "display_name": value.display_name,
+        "enabled": config.get("enabled", True),
+        "timeout_seconds": config.get("timeout_seconds"),
+        "budget_profile": value.budget_profile,
+        "capabilities": value.capabilities,
+        "input_schema_refs": value.input_schema_refs,
+        "output_schema_ref": value.output_schema_ref,
+        "allowed_tools": value.allowed_tools,
+        "published_prompt_version_id": config.get("published_prompt_version_id"),
+        "prompt_versions": config.get("prompt_versions", []),
+        "default_system_prompt": default_prompt_for_operation(operation),
+        "updated_at": value.updated_at,
+    }
+
+
+@router.get("/api/v1/admin/agents", response_model=DataEnvelope)
+def list_agent_configurations_endpoint(
+    request: Request,
+    _user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    values = list_agent_configurations(request.app.state.repository)
+    return envelope(
+        [_agent_configuration_view(value) for value in values], request.state.request_id
+    )
+
+
+@router.get("/api/v1/admin/agents/{agent_key}", response_model=DataEnvelope)
+def get_agent_configuration_endpoint(
+    agent_key: str,
+    request: Request,
+    _user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = get_agent_configuration(request.app.state.repository, agent_key)
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return envelope(_agent_configuration_view(value), request.state.request_id)
+
+
+@router.patch("/api/v1/admin/agents/{agent_key}/runtime-config", response_model=DataEnvelope)
+def patch_agent_runtime_config(
+    agent_key: str,
+    payload: AgentRuntimeConfigRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = save_runtime_config(
+            request.app.state.repository,
+            agent_key,
+            enabled=payload.enabled,
+            timeout_seconds=payload.timeout_seconds,
+        )
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="agent.runtime_config.update",
+            object_type="agent_registration",
+            object_id=agent_key,
+            details={"enabled": payload.enabled, "timeout_seconds": payload.timeout_seconds},
+            request_id=request.state.request_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_agent_configuration_view(value), request.state.request_id)
+
+
+@router.post("/api/v1/admin/agents/{agent_key}/prompt-versions", response_model=DataEnvelope)
+def post_agent_prompt_version(
+    agent_key: str,
+    payload: AgentPromptVersionCreateRequest,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = create_prompt_version(
+            request.app.state.repository,
+            agent_key,
+            system_prompt=payload.system_prompt,
+            instruction_appendix=payload.instruction_appendix,
+            change_note=payload.change_note,
+            actor_id=user.id,
+        )
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="agent.prompt.draft_create",
+            object_type="agent_prompt_version",
+            object_id=agent_key,
+            details={"change_note": payload.change_note},
+            request_id=request.state.request_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_agent_configuration_view(value), request.state.request_id)
+
+
+@router.post(
+    "/api/v1/admin/agents/{agent_key}/prompt-versions/{version_id}/validate",
+    response_model=DataEnvelope,
+)
+def post_validate_agent_prompt_version(
+    agent_key: str,
+    version_id: str,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value, validation = validate_prompt_version(
+            request.app.state.repository, agent_key, version_id
+        )
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="agent.prompt.validate",
+            object_type="agent_prompt_version",
+            object_id=version_id,
+            details=validation,
+            request_id=request.state.request_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(
+        {"agent": _agent_configuration_view(value), "validation": validation},
+        request.state.request_id,
+    )
+
+
+@router.post(
+    "/api/v1/admin/agents/{agent_key}/prompt-versions/{version_id}/publish",
+    response_model=DataEnvelope,
+)
+def post_publish_agent_prompt_version(
+    agent_key: str,
+    version_id: str,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = publish_prompt_version(request.app.state.repository, agent_key, version_id, user.id)
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="agent.prompt.publish",
+            object_type="agent_prompt_version",
+            object_id=version_id,
+            details={"agent_key": agent_key},
+            request_id=request.state.request_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_agent_configuration_view(value), request.state.request_id)
+
+
+@router.post(
+    "/api/v1/admin/agents/{agent_key}/prompt-versions/{version_id}/rollback",
+    response_model=DataEnvelope,
+)
+def post_rollback_agent_prompt_version(
+    agent_key: str,
+    version_id: str,
+    request: Request,
+    user: User = Depends(require_roles("admin")),  # noqa: B008
+) -> DataEnvelope:
+    try:
+        value = publish_prompt_version(request.app.state.repository, agent_key, version_id, user.id)
+    except AgentConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    request.app.state.repository.save_audit_log(
+        AuditLog(
+            id=new_id("aud"),
+            actor_id=user.id,
+            action="agent.prompt.rollback",
+            object_type="agent_prompt_version",
+            object_id=version_id,
+            details={"agent_key": agent_key},
+            request_id=request.state.request_id,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    return envelope(_agent_configuration_view(value), request.state.request_id)
+
+
 def envelope(data: object, request_id: str, *, next_cursor: Optional[str] = None) -> DataEnvelope:
     meta: dict[str, Any] = {"request_id": request_id, "schema_version": "1.0"}
     if next_cursor is not None:
@@ -4092,6 +4528,7 @@ def get_report(
 def list_reports(
     request: Request,
     event_id: Optional[str] = None,
+    view: Annotated[str, Query(pattern="^(versions|events)$")] = "versions",
     status_filter: Annotated[
         Optional[str],
         Query(
@@ -4104,8 +4541,56 @@ def list_reports(
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
     _user: User = Depends(require_roles("researcher", "reviewer", "publisher", "admin")),  # noqa: B008
 ) -> DataEnvelope:
-    _validate_query(request, {"event_id", "status_filter", "cursor", "limit"})
+    _validate_query(request, {"event_id", "view", "status_filter", "cursor", "limit"})
     _validate_cursor(cursor)
+    if view == "events":
+        # The event view is intentionally an additive representation: callers
+        # relying on the historical version list keep using the default view.
+        cards = request.app.state.repository.list_fact_cards(
+            event_id=event_id, status=status_filter, limit=None, cursor=None
+        )
+        grouped: dict[str, list[Any]] = {}
+        for card in cards:
+            grouped.setdefault(card.event_id, []).append(card)
+        rows: list[dict[str, Any]] = []
+        for grouped_event_id, versions in grouped.items():
+            latest = max(versions, key=lambda value: (value.version, value.as_of))
+            published = [value for value in versions if value.status == "published"]
+            published_report = (
+                max(published, key=lambda value: (value.version, value.as_of))
+                if published
+                else None
+            )
+            event = request.app.state.repository.get_event(grouped_event_id)
+            rows.append(
+                {
+                    "event_id": grouped_event_id,
+                    "event_title": event.title if event else latest.title,
+                    "latest_report": FactCardResponse.model_validate(latest, from_attributes=True),
+                    "published_report": (
+                        FactCardResponse.model_validate(published_report, from_attributes=True)
+                        if published_report
+                        else None
+                    ),
+                    "version_count": len(versions),
+                    "latest_version": latest.version,
+                    "last_updated_at": latest.as_of,
+                }
+            )
+        rows.sort(key=lambda value: value["last_updated_at"], reverse=True)
+        if cursor:
+            cursor_time, cursor_id = decode_cursor(cursor)
+            rows = [
+                value
+                for value in rows
+                if (value["last_updated_at"], value["event_id"]) < (cursor_time, cursor_id)
+            ]
+        page = [ReportEventGroupResponse.model_validate(value) for value in rows[:limit]]
+        next_cursor = None
+        if len(rows) > limit and page:
+            last = page[-1]
+            next_cursor = encode_cursor(last.last_updated_at, last.event_id)
+        return envelope(page, request.state.request_id, next_cursor=next_cursor)
     cards = request.app.state.repository.list_fact_cards(
         event_id=event_id,
         status=status_filter,

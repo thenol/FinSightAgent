@@ -60,7 +60,12 @@ async def rescan_sources(
 ) -> None:
     """Sync DB active sources into the scheduler; refresh changed intervals."""
     try:
+        config = repository.get_source_collection_config()
         sources = [item for item in repository.list_sources() if item.status == "active"]
+        if not config.scheduler_enabled:
+            for job_id in _scheduled_ingest_ids(scheduler):
+                scheduler.remove_job(job_id)
+            return
         wanted = {_job_id(item.id): item for item in sources}
         current = _scheduled_ingest_ids(scheduler)
 
@@ -132,7 +137,10 @@ def build_source_scheduler(
         jobstores={"default": MemoryJobStore()},
         job_defaults={"coalesce": True, "max_instances": 1},
     )
+    collection_config = repository.get_source_collection_config()
     for source in repository.list_sources():
+        if not collection_config.scheduler_enabled:
+            break
         if source.status != "active":
             continue
         interval = _interval_for(source)

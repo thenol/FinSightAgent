@@ -44,17 +44,18 @@ def test_workflow_records_node_attempts_for_each_node() -> None:
     service.run(run.id)
 
     attempts = [a for a in repository.node_attempts if a.workflow_id == run.id]
-    # 7 个节点都应留下成功 attempt
+    # 8 个节点（含受约束的研究备忘录写作）都应留下成功 attempt
     succeeded = [a for a in attempts if a.status == "succeeded"]
-    assert len(succeeded) == 7
+    assert len(succeeded) == 8
     node_names = {a.node_name for a in succeeded}
     assert node_names == {
         "context",
         "fact_check",
         "company",
-        "skeptic",
-        "synthesize",
-        "guardrail",
+            "skeptic",
+            "synthesize",
+            "research_writer",
+            "guardrail",
         "draft",
     }
 

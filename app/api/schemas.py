@@ -55,6 +55,15 @@ class SourceUpdateRequest(BaseModel):
     extra_config: Optional[dict[str, Any]] = None
 
 
+class SourceCollectionConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduler_enabled: Optional[bool] = None
+    default_crawl_interval_seconds: Optional[int] = Field(default=None, ge=60, le=86400)
+    max_concurrent_runs: Optional[int] = Field(default=None, ge=1, le=64)
+    retry_limit: Optional[int] = Field(default=None, ge=0, le=10)
+
+
 class DocumentUpdateRequest(BaseModel):
     retention_hold: Optional[bool] = None
 
@@ -226,6 +235,28 @@ class LlmAgentBindingBulkRequest(BaseModel):
 
     provider_id: Optional[str] = None
     model_override: Optional[str] = Field(default=None, max_length=120)
+
+
+class AgentRuntimeConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    timeout_seconds: Optional[float] = Field(default=None, gt=0, le=120)
+
+
+class AgentPromptVersionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    system_prompt: str = Field(min_length=1, max_length=12000)
+    instruction_appendix: str = Field(default="", max_length=4000)
+    change_note: str = Field(min_length=1, max_length=500)
+
+
+class SystemOutboxRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outbox_ids: list[str] = Field(default_factory=list, max_length=100)
+    retry_all_dead: bool = False
 
 
 class ReviewPolicyUpdateRequest(BaseModel):
@@ -625,6 +656,18 @@ class FactCardResponse(BaseModel):
     change_reason: Optional[str] = None
     content: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportEventGroupResponse(BaseModel):
+    """One management-list row representing all report versions for an event."""
+
+    event_id: str
+    event_title: str
+    latest_report: FactCardResponse
+    published_report: Optional[FactCardResponse] = None
+    version_count: int
+    latest_version: int
+    last_updated_at: datetime
 
 
 class TransmissionStepResponse(BaseModel):

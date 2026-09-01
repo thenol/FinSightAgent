@@ -21,6 +21,7 @@ from app.research.tools.gateway import ToolGateway
 from app.workflows.schemas import (
     CompanyAnalysisOutput,
     FinancialImpact,
+    ResearchMemoOutput,
     SkepticOutput,
     SynthesisOutput,
 )
@@ -361,3 +362,152 @@ class SynthesizerAgent:
                 else [],
             )
         return {"synthesis": output.model_dump()}
+
+
+class ResearchWriterAgent:
+    """Writes one concise memo from verified facts and approved analysis cards.
+
+    The writer is deliberately downstream of synthesis: it cannot retrieve new
+    material or turn unverified BlackBoard data into reader-facing prose.
+    """
+
+    agent_type = "research_writer"
+    operation = "research_writer"
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
+
+    def run(self, state: dict[str, Any], repository) -> dict[str, Any]:
+        event = repository.get_event(state["event_id"])
+        as_of = _parse_as_of(state)
+        claims = repository.get_claims_for_event(state["event_id"], as_of=as_of)
+        verified = [claim for claim in claims if claim.status == "verified"]
+        company = state.get("company_analysis", {})
+        counter = state.get("counter_analysis", {})
+        synthesis = state.get("synthesis", {})
+        cards = {
+            "fact_cards": [self._fact_card(claim) for claim in verified],
+            "impact_card": company,
+            "counter_card": counter,
+            "watch_card": {
+                "items": synthesis.get("watch_items", []),
+                "triggers": synthesis.get("reanalysis_triggers", []),
+            },
+        }
+        response = self.gateway.invoke(
+            ModelRequest(
+                operation=self.operation,
+                input_schema_version=AGENT_SCHEMA_VERSION,
+                output_schema_version="v2",
+                payload={
+                    "event": {
+                        "id": state["event_id"],
+                        "title": event.title if event else "研究事件",
+                        "event_type": event.event_type if event else "unknown",
+                    },
+                    "verified_facts": cards["fact_cards"],
+                    "impact_card": company,
+                    "counter_card": counter,
+                    "synthesis": synthesis,
+                    "writing_rules": [
+                        "Only use supplied verified facts and analysis cards.",
+                        "Do not repeat a claim across sections.",
+                        "Every material statement must include claim_ids or card_refs.",
+                    ],
+                },
+                system_prompt=(
+                    "Write a concise institutional research memo as valid JSON. "
+                    "Use only the supplied evidence. Do not give investment instructions."
+                ),
+            )
+        )
+        parsed = _try_parse_payload(response.payload, ResearchMemoOutput)
+        output = (
+            parsed.model_copy(update={"model_run_id": response.run_id})
+            if parsed is not None
+            else self._fallback(event, verified, company, counter, synthesis, response.run_id)
+        )
+        return {"research_memo": output.model_dump(), "research_pack": cards}
+
+    @staticmethod
+    def _fact_card(claim) -> dict[str, Any]:
+        return {
+            "claim_id": claim.id,
+            "subject": claim.subject_text,
+            "predicate": claim.predicate,
+            "value": claim.object_value,
+        }
+
+    def _fallback(self, event, verified, company, counter, synthesis, model_run_id: str):
+        claim_ids = [claim.id for claim in verified]
+        fact = self._fact_sentence(verified[0]) if verified else "尚无可用于正式结论的已验证事实。"
+        direction = synthesis.get("signal", "uncertain")
+        confidence = float(synthesis.get("confidence", 0.4))
+        horizon = company.get("impact_horizon", synthesis.get("horizon", "uncertain"))
+        title = event.title if event else "该事件"
+        sections = [
+            {
+                "kind": "why_now",
+                "title": "为何值得关注",
+                "body": fact,
+                "claim_ids": claim_ids[:1],
+                "card_refs": [],
+            },
+            {
+                "kind": "mechanism",
+                "title": "传导逻辑",
+                "body": (
+                    f"{title} 的影响方向目前为 {direction}，判断以已核验事实及主体影响卡片为基础。"
+                ),
+                "claim_ids": [],
+                "card_refs": ["company_analysis", "synthesis"],
+            },
+        ]
+        counter_arguments = counter.get("counter_arguments", [])
+        if counter_arguments:
+            sections.append(
+                {
+                    "kind": "counter_case",
+                    "title": "反方与证伪条件",
+                    "body": str(counter_arguments[0].get("statement", "仍需验证反方因素。")),
+                    "claim_ids": list(counter_arguments[0].get("claim_ids", []))[:1],
+                    "card_refs": ["counter_analysis"],
+                }
+            )
+        watch_items = synthesis.get("watch_items", [])
+        if watch_items:
+            item = watch_items[0]
+            sections.append(
+                {
+                    "kind": "watch",
+                    "title": "后续观察",
+                    "body": (
+                        f"关注 {item.get('indicator', '后续经营数据')}："
+                        f"{item.get('reason', '验证当前判断')}。"
+                    ),
+                    "claim_ids": [],
+                    "card_refs": ["watch_card"],
+                }
+            )
+        return ResearchMemoOutput(
+            model_run_id=model_run_id,
+            status="complete" if verified else "evidence_limited",
+            conclusion=(
+                f"{title} 的当前判断为 {direction}，影响期限为 {horizon}；"
+                "该判断受已验证事实数量与反方条件约束。"
+            ),
+            direction=direction,
+            horizon=horizon,
+            confidence=confidence,
+            sections=sections,
+        )
+
+    @staticmethod
+    def _fact_sentence(claim) -> str:
+        value = claim.object_value
+        rendered = (
+            ", ".join(f"{key}={item}" for key, item in value.items())
+            if isinstance(value, dict)
+            else str(value)
+        )
+        return f"已验证事实：{claim.subject_text} {claim.predicate} {rendered}。"

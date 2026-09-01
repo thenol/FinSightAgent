@@ -78,6 +78,7 @@ from app.domain import (
     ReviewTask,
     Security,
     Source,
+    SourceCollectionConfig,
     TargetImpactSnapshot,
     TargetImpactSnapshotContribution,
     ToolCall,
@@ -157,6 +158,7 @@ from app.platform.db_models import (
     ReviewPolicyModel,
     ReviewTaskModel,
     SecurityModel,
+    SourceCollectionConfigModel,
     SourceModel,
     TargetImpactSnapshotContributionModel,
     TargetImpactSnapshotModel,
@@ -282,6 +284,10 @@ class Repository(Protocol):
     def get_review_policy(self) -> ReviewPolicy: ...
 
     def save_review_policy(self, policy: ReviewPolicy) -> None: ...
+
+    def get_source_collection_config(self) -> SourceCollectionConfig: ...
+
+    def save_source_collection_config(self, config: SourceCollectionConfig) -> None: ...
 
     def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None: ...
 
@@ -953,6 +959,7 @@ class InMemoryRepository:
         self.audit_logs: list[AuditLog] = []
         self.review_tasks: dict[str, ReviewTask] = {}
         self.review_policy = ReviewPolicy()
+        self.source_collection_config = SourceCollectionConfig()
         self.auto_review_attempts: list[AutoReviewAttempt] = []
         self.model_runs: dict[str, ModelRun] = {}
         self.workflow_runs: dict[str, WorkflowRun] = {}
@@ -1172,6 +1179,12 @@ class InMemoryRepository:
 
     def save_review_policy(self, policy: ReviewPolicy) -> None:
         self.review_policy = policy
+
+    def get_source_collection_config(self) -> SourceCollectionConfig:
+        return self.source_collection_config
+
+    def save_source_collection_config(self, config: SourceCollectionConfig) -> None:
+        self.source_collection_config = config
 
     def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None:
         self.auto_review_attempts.append(attempt)
@@ -2839,6 +2852,13 @@ class SqlAlchemyRepository:
         with self.transaction() as repository:
             repository.save_review_policy(policy)
 
+    def get_source_collection_config(self) -> SourceCollectionConfig:
+        return self._read(lambda repository: repository.get_source_collection_config())
+
+    def save_source_collection_config(self, config: SourceCollectionConfig) -> None:
+        with self.transaction() as repository:
+            repository.save_source_collection_config(config)
+
     def save_auto_review_attempt(self, attempt: AutoReviewAttempt) -> None:
         with self.transaction() as repository:
             repository.save_auto_review_attempt(attempt)
@@ -3874,6 +3894,32 @@ class SqlAlchemyTransaction:
         data["updated_at"] = data.get("updated_at") or datetime.now(timezone.utc)
         if model is None:
             self.session.add(ReviewPolicyModel(**data))
+        else:
+            for field, field_value in data.items():
+                if field != "id":
+                    setattr(model, field, field_value)
+        self.session.flush()
+
+    def get_source_collection_config(self) -> SourceCollectionConfig:
+        model = self.session.get(SourceCollectionConfigModel, "source_collection:default")
+        if model is None:
+            return SourceCollectionConfig()
+        return SourceCollectionConfig(
+            id=model.id,
+            scheduler_enabled=model.scheduler_enabled,
+            default_crawl_interval_seconds=model.default_crawl_interval_seconds,
+            max_concurrent_runs=model.max_concurrent_runs,
+            retry_limit=model.retry_limit,
+            updated_by=model.updated_by,
+            updated_at=model.updated_at,
+        )
+
+    def save_source_collection_config(self, value: SourceCollectionConfig) -> None:
+        model = self.session.get(SourceCollectionConfigModel, value.id)
+        data = value.__dict__.copy()
+        data["updated_at"] = data.get("updated_at") or datetime.now(timezone.utc)
+        if model is None:
+            self.session.add(SourceCollectionConfigModel(**data))
         else:
             for field, field_value in data.items():
                 if field != "id":

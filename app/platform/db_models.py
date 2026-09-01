@@ -146,6 +146,19 @@ class ReviewPolicyModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SourceCollectionConfigModel(Base):
+    __tablename__ = "source_collection_config"
+    __table_args__ = {"schema": "platform"}
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    scheduler_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_crawl_interval_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=4)
+    retry_limit: Mapped[int] = mapped_column(Integer, default=3)
+    updated_by: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class AutoReviewAttemptModel(Base):
     __tablename__ = "auto_review_attempts"
     __table_args__ = (

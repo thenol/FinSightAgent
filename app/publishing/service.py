@@ -79,6 +79,15 @@ class FactCardService:
         以避免将任意 Blackboard 内容持久化为报告正文。
         """
         previous = self.repository.get_fact_card_for_event(event.id)
+        fingerprint = (draft.get("provenance") or {}).get("semantic_fingerprint")
+        if (
+            fingerprint
+            and previous is not None
+            and (previous.provenance or {}).get("semantic_fingerprint") == fingerprint
+        ):
+            # A replay with the same evidence and memo must not create another
+            # reader-visible report version or another review task.
+            return previous
         card = FactCard(
             id=new_id("rpt"),
             event_id=event.id,

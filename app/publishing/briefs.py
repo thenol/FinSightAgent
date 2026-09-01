@@ -122,8 +122,11 @@ class BriefService:
 
     def _report_confidence(self, report: FactCard) -> float:
         # 研究卡片置信度由报告承载；事实卡片回退到来源等级映射
-        if report.report_type == "research_card":
-            return 0.65  # 由 ReportAssembler 写入的草稿置信度；MVP 取基线
+        if report.report_type in {"research_card", "research_memo"}:
+            memo = (report.content or {}).get("memo", {})
+            if isinstance(memo, dict) and memo.get("confidence") is not None:
+                return float(memo["confidence"])
+            return 0.65
         return 0.50
 
     @staticmethod

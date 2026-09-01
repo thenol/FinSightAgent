@@ -37,6 +37,7 @@ from app.platform.db_models import WorkflowRunModel
 from app.platform.messaging import OutboxPublisher, RedisStreamBroker
 from app.platform.repository import InMemoryRepository, SqlAlchemyRepository
 from app.platform.settings import Settings
+from app.platform.worker_heartbeat import record_worker_heartbeat
 from app.review.service import AutoReviewService
 from app.workflows.service import WorkflowService
 
@@ -58,6 +59,7 @@ async def run_outbox() -> None:
 
     try:
         while not stop.is_set():
+            record_worker_heartbeat(repository, "outbox-worker")
             result = await publisher.run_once()
             delay = 0.1 if result.published or result.failed else 1.0
             try:
@@ -79,6 +81,7 @@ async def run_impact_aggregation() -> None:
     for event in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(event, stop.set)
     while not stop.is_set():
+        record_worker_heartbeat(repository, "impact-aggregation-worker")
         processed = await asyncio.to_thread(worker.run_once, 20)
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.1 if processed else 1.0)
@@ -105,6 +108,7 @@ async def run_forward_impact() -> None:
     for event in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(event, stop.set)
     while not stop.is_set():
+        record_worker_heartbeat(repository, "forward-impact-worker")
         processed = await asyncio.to_thread(worker.run_once, 10)
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.1 if processed else 1.0)
@@ -127,6 +131,7 @@ async def run_workflow() -> None:
         loop.add_signal_handler(event, stop.set)
 
     while not stop.is_set():
+        record_worker_heartbeat(repository, "workflow-worker")
         with claim_workflow_run(repository, stale_after=stale_after) as workflow_id:
             if workflow_id is not None:
                 await asyncio.to_thread(service.run, workflow_id)
@@ -159,6 +164,7 @@ async def run_auto_review() -> None:
     for event in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(event, stop.set)
     while not stop.is_set():
+        record_worker_heartbeat(repository, "auto-review-worker")
         processed = await asyncio.to_thread(_auto_review_once, repository, 20)
         try:
             await asyncio.wait_for(stop.wait(), timeout=0.1 if processed else 2.0)
@@ -200,7 +206,12 @@ async def run_source() -> None:
 
     scheduler.start()
     try:
-        await stop.wait()
+        while not stop.is_set():
+            record_worker_heartbeat(repository, "source-worker")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=15)
+            except asyncio.TimeoutError:
+                pass
     finally:
         scheduler.shutdown(wait=False)
         await client.close()

@@ -76,6 +76,17 @@ class ModelGateway:
         return self._override_provider or DeterministicProvider()
 
     def invoke(self, request: ModelRequest) -> ModelResponse:
+        from app.agents.configuration import prompt_for_operation
+
+        prompt, timeout_seconds, _prompt_version_id = prompt_for_operation(
+            self.repository, request.operation, request.system_prompt, request.timeout_seconds
+        )
+        request = request.model_copy(
+            update={
+                "system_prompt": prompt,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
         active = self._resolve_provider(request.operation)
         request_hash = self._hash(request)
         prior = self.repository.find_model_run_by_hash(request_hash)

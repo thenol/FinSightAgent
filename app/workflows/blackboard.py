@@ -17,6 +17,8 @@ FIELD_OWNERS: dict[str, str] = {
     "company_analysis": "company",
     "counter_analysis": "skeptic",
     "synthesis": "synthesize",
+    "research_memo": "research_writer",
+    "research_pack": "research_writer",
     "guardrail_result": "guardrail",
     "report_draft_ref": "draft",
     "research_plan": "planner",

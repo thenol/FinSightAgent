@@ -47,6 +47,19 @@ class Source:
 
 
 @dataclass(frozen=True)
+class SourceCollectionConfig:
+    """Runtime controls for the source scheduler."""
+
+    id: str = "source_collection:default"
+    scheduler_enabled: bool = True
+    default_crawl_interval_seconds: int = 3600
+    max_concurrent_runs: int = 4
+    retry_limit: int = 3
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
 class IngestRun:
     """One source sync attempt (manual, scheduled, or sync-all)."""
 

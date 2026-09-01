@@ -9,12 +9,15 @@ ReportAssembler 从 Blackboard 投影报告草稿，不进行开放式生成（D
 - 数据截止时间取 WorkflowRun ``as_of``，不得取发布时间或当前时间代替。
 """
 
+import hashlib
+import json
 from typing import Any
 
 from app.domain import Claim, Event, WorkflowRun
 from app.platform.repository import Repository
 
 REPORT_SCHEMA_VERSION = "1.0.0"
+RESEARCH_MEMO_SCHEMA_VERSION = "2.0.0"
 DEFAULT_DISCLAIMER = "本内容由自动化系统生成，仅供研究参考，不构成投资建议。"
 
 # 禁止在报告中出现的强措辞（GuardrailEngine 复用）
@@ -51,6 +54,21 @@ class ReportAssembler:
         company = blackboard.get("company_analysis", {})
         counter = blackboard.get("counter_analysis", {})
         preliminary = blackboard.get("preliminary_assessment", {})
+
+        # v2 keeps reader prose, research cards, and operational provenance in
+        # separate layers. Legacy blackboards keep the prior projection intact.
+        research_memo = blackboard.get("research_memo")
+        if isinstance(research_memo, dict):
+            return self._assemble_research_memo(
+                run,
+                event,
+                verified,
+                conflicted,
+                unverified,
+                research_memo,
+                blackboard.get("research_pack", {}),
+                preliminary,
+            )
 
         report_type = self._report_type(blackboard, synthesis)
         sections = self._sections(verified, conflicted, unverified, company, counter, synthesis)
@@ -108,6 +126,165 @@ class ReportAssembler:
             "content": content,
             "provenance": provenance,
         }
+
+    def _assemble_research_memo(
+        self,
+        run: WorkflowRun,
+        event: Event,
+        verified: list[Claim],
+        conflicted: list[Claim],
+        unverified: list[Claim],
+        memo: dict[str, Any],
+        research_pack: dict[str, Any],
+        preliminary: dict[str, Any],
+    ) -> dict[str, Any]:
+        claim_ids = [claim.id for claim in verified]
+        citations = [
+            {
+                "id": f"E{index}",
+                "claim_id": claim.id,
+                "label": f"{claim.subject_text} · {claim.predicate}",
+            }
+            for index, claim in enumerate(verified, start=1)
+        ]
+        citation_by_claim = {item["claim_id"]: item["id"] for item in citations}
+        sections = self._deduplicate_memo_sections(memo.get("sections", []), citation_by_claim)
+        conclusion = str(
+            memo.get("conclusion") or self._summary(event, verified, {}, "research_card")
+        )
+        confidence = float(memo.get("confidence", 0.4))
+        signal = memo.get("direction", "uncertain")
+        semantic_payload = {
+            "event_id": event.id,
+            "claim_ids": claim_ids,
+            "conclusion": conclusion,
+            "direction": signal,
+            "horizon": memo.get("horizon", "uncertain"),
+            "sections": sections,
+        }
+        semantic_fingerprint = hashlib.sha256(
+            json.dumps(semantic_payload, ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest()
+        analysis_ids = self._analysis_ids(run.blackboard or {})
+        tool_calls = self.repository.list_tool_calls(run.id)
+        preliminary_id = (run.blackboard or {}).get(
+            "preliminary_assessment_ref"
+        ) or preliminary.get("id")
+        content = {
+            "memo": {
+                "schema_version": RESEARCH_MEMO_SCHEMA_VERSION,
+                "conclusion": conclusion,
+                "direction": signal,
+                "horizon": memo.get("horizon", "uncertain"),
+                "confidence": confidence,
+                "sections": sections,
+                "citations": citations,
+            },
+            "research_pack": research_pack if isinstance(research_pack, dict) else {},
+        }
+        provenance = {
+            "workflow_run_id": run.id,
+            "analysis_ids": analysis_ids,
+            "analysis_refs": self._analysis_refs(run.blackboard or {}),
+            "model_run_ids": self._model_run_ids(run.blackboard or {}),
+            "tool_call_ids": [call.id for call in tool_calls],
+            "preliminary_assessment_id": preliminary_id,
+            "semantic_fingerprint": semantic_fingerprint,
+        }
+        # Keep the evidence partition for Guardrail validation. It is not used
+        # as reader prose, so facts are not rendered twice in the report UI.
+        audit_sections = [
+            {
+                "kind": "verified_facts",
+                "title": "已验证事实",
+                "items": [
+                    {
+                        "claim_id": claim.id,
+                        "subject": claim.subject_text,
+                        "predicate": claim.predicate,
+                        "value": claim.object_value,
+                    }
+                    for claim in verified
+                ],
+            }
+        ]
+        if conflicted:
+            audit_sections.append(
+                {
+                    "kind": "conflicts",
+                    "title": "冲突说明",
+                    "items": [
+                        {"claim_id": claim.id, "subject": claim.subject_text}
+                        for claim in conflicted
+                    ],
+                }
+            )
+        if unverified:
+            audit_sections.append(
+                {
+                    "kind": "unverified",
+                    "title": "待验证事项",
+                    "items": [
+                        {"claim_id": claim.id, "subject": claim.subject_text}
+                        for claim in unverified
+                    ],
+                }
+            )
+        return {
+            "schema_version": RESEARCH_MEMO_SCHEMA_VERSION,
+            "report_type": "research_memo",
+            "event_id": event.id,
+            "as_of": run.as_of.isoformat(),
+            "title": event.title,
+            "summary": conclusion,
+            "signal": signal,
+            "confidence": confidence,
+            "claim_ids": claim_ids,
+            "analysis_ids": analysis_ids,
+            "sections": audit_sections,
+            "disclaimer": DEFAULT_DISCLAIMER,
+            "content": content,
+            "provenance": provenance,
+        }
+
+    @staticmethod
+    def _deduplicate_memo_sections(
+        raw_sections: Any, citation_by_claim: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        if not isinstance(raw_sections, list):
+            return []
+        seen_claims: set[str] = set()
+        seen_bodies: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for section in raw_sections:
+            if not isinstance(section, dict):
+                continue
+            body = str(section.get("body", "")).strip()
+            if not body or body in seen_bodies:
+                continue
+            claim_refs = [
+                claim_id
+                for claim_id in section.get("claim_ids", [])
+                if isinstance(claim_id, str) and claim_id not in seen_claims
+            ]
+            seen_bodies.add(body)
+            seen_claims.update(claim_refs)
+            result.append(
+                {
+                    "kind": section.get("kind", "evidence"),
+                    "title": section.get("title", "研究说明"),
+                    "body": body,
+                    "citation_ids": [
+                        citation_by_claim[claim_id]
+                        for claim_id in claim_refs
+                        if claim_id in citation_by_claim
+                    ],
+                    "card_refs": [
+                        value for value in section.get("card_refs", []) if isinstance(value, str)
+                    ],
+                }
+            )
+        return result
 
     def _report_type(self, blackboard: dict, synthesis: dict) -> str:
         # fact_only 工作流（缺关键分析或 synthesis 显式标记）只生成事实卡片

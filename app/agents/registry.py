@@ -162,7 +162,10 @@ class AgentRegistry:
         self.repository = repository
         self._registrations: dict[str, AgentRegistration] = {}
         for registration in registrations or DEFAULT_REGISTRATIONS:
-            self.register(registration)
+            # Built-ins are runtime fallbacks. Persist only explicit updates;
+            # otherwise constructing a registry would overwrite administrator
+            # configuration loaded from the repository.
+            self._registrations[registration.agent_key] = registration
         if repository is not None:
             self._load_from_repository()
 
