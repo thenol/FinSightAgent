@@ -9,7 +9,7 @@ import { useAuth } from "@/app/AuthContext";
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
 import { asList } from "@/lib/format";
 import { canManageLlm } from "@/lib/roles";
-import type { LlmAgentBinding, LlmPreset, LlmProvider, ReviewPolicy } from "@/types/api";
+import type { AgentConfiguration, LlmAgentBinding, LlmPreset, LlmProvider, ReviewPolicy } from "@/types/api";
 
 const AGENT_LABELS: Record<string, string> = {
   fact_check: "Fact Checker",
@@ -32,6 +32,7 @@ export function ModelsPage() {
   const [presetCode, setPresetCode] = useState("openai");
   const [rotateId, setRotateId] = useState<string | null>(null);
   const [rotateKey, setRotateKey] = useState("");
+  const [selectedAgentKey, setSelectedAgentKey] = useState("");
 
   const providersQuery = useQuery({
     queryKey: ["llm-providers"],
@@ -53,11 +54,18 @@ export function ModelsPage() {
     queryFn: () => apiGet<ReviewPolicy>("/api/v1/admin/review-policy"),
     enabled: manage,
   });
+  const agentConfigsQuery = useQuery({
+    queryKey: ["agent-configurations"],
+    queryFn: () => apiGet<AgentConfiguration[]>("/api/v1/admin/agents"),
+    enabled: manage,
+  });
 
   const providers = asList<LlmProvider>(providersQuery.data);
   const presets = asList<LlmPreset>(presetsQuery.data);
   const bindings = asList<LlmAgentBinding>(bindingsQuery.data);
   const policy = policyQuery.data;
+  const agentConfigs = asList<AgentConfiguration>(agentConfigsQuery.data);
+  const selectedAgent = agentConfigs.find((item) => item.agent_key === selectedAgentKey) || agentConfigs[0];
   const bindingMap = useMemo(
     () => Object.fromEntries(bindings.map((item) => [item.agent_key, item])),
     [bindings],
@@ -68,6 +76,7 @@ export function ModelsPage() {
     await queryClient.invalidateQueries({ queryKey: ["llm-providers"] });
     await queryClient.invalidateQueries({ queryKey: ["llm-bindings"] });
     await queryClient.invalidateQueries({ queryKey: ["review-policy"] });
+    await queryClient.invalidateQueries({ queryKey: ["agent-configurations"] });
   };
 
   const testMutation = useMutation({
@@ -462,6 +471,46 @@ export function ModelsPage() {
           })}
         />
         {bindingsQuery.isLoading ? <Skeleton /> : null}
+      </section>
+
+      <section className="panel" style={{ marginTop: "1rem" }}>
+        <h3>Agent 配置中心</h3>
+        <p className="muted">Prompt 先保存为草稿，完成校验后才可发布。运行中的 Agent 只读取已发布版本；工具权限和输出 Schema 为只读约束。</p>
+        {agentConfigsQuery.isLoading ? <Skeleton /> : null}
+        {agentConfigsQuery.isError ? <ErrorState>Agent 配置加载失败</ErrorState> : null}
+        {selectedAgent ? <>
+          <div className="form-row">
+            <select value={selectedAgent.agent_key} onChange={(event) => setSelectedAgentKey(event.target.value)}>
+              {agentConfigs.map((item) => <option key={item.agent_key} value={item.agent_key}>{item.display_name}</option>)}
+            </select>
+            <StatusBadge value={selectedAgent.enabled ? "active" : "disabled"} />
+            <span className="muted">预算 {selectedAgent.budget_profile} · 已发布 {selectedAgent.published_prompt_version_id ? `v${selectedAgent.prompt_versions.find((item) => item.id === selectedAgent.published_prompt_version_id)?.number || "?"}` : "内置默认"}</span>
+          </div>
+          <form className="form-row" style={{ marginTop: ".75rem" }} onSubmit={async (event) => {
+            event.preventDefault(); const data = new FormData(event.currentTarget);
+            try { await apiPatch(`/api/v1/admin/agents/${selectedAgent.agent_key}/runtime-config`, { enabled: data.get("enabled") === "on", timeout_seconds: Number(data.get("timeout_seconds")) || null }); push("运行配置已保存"); await invalidate(); } catch (error) { push(error instanceof Error ? error.message : "保存失败", "error"); }
+          }}>
+            <label><input name="enabled" type="checkbox" defaultChecked={selectedAgent.enabled} /> 启用 Agent</label>
+            <input name="timeout_seconds" type="number" min="1" max="120" defaultValue={selectedAgent.timeout_seconds || ""} placeholder="超时秒数（默认）" />
+            <button type="submit" className="button ghost">保存运行配置</button>
+          </form>
+          <details style={{ marginTop: ".75rem" }}><summary>只读契约与权限</summary><p className="muted">输入：{selectedAgent.input_schema_refs.join(" · ") || "运行时上下文"}</p><p className="muted">输出：{selectedAgent.output_schema_ref}</p><p className="muted">允许工具：{selectedAgent.allowed_tools.join(" · ") || "无"}</p></details>
+          <details className="agent-default-prompt" style={{ marginTop: ".75rem" }}>
+            <summary>查看内置默认 Prompt（当前代码基线）</summary>
+            <p className="muted">未发布自定义版本时，运行时使用此基线；平台安全约束会在调用时自动追加。</p>
+            <pre className="pre">{selectedAgent.default_system_prompt}</pre>
+          </details>
+          <form style={{ marginTop: "1rem" }} onSubmit={async (event) => {
+            event.preventDefault(); const data = new FormData(event.currentTarget);
+            try { await apiPost(`/api/v1/admin/agents/${selectedAgent.agent_key}/prompt-versions`, { system_prompt: String(data.get("system_prompt") || ""), instruction_appendix: String(data.get("instruction_appendix") || ""), change_note: String(data.get("change_note") || "") }); push("Prompt 草稿已创建"); event.currentTarget.reset(); await invalidate(); } catch (error) { push(error instanceof Error ? error.message : "创建草稿失败", "error"); }
+          }}>
+            <h4>新建 Prompt 草稿</h4>
+            <textarea name="system_prompt" required rows={6} placeholder="系统提示词：角色、分析方法、输出风格。安全与 Schema 约束由平台自动追加。" />
+            <textarea name="instruction_appendix" rows={3} placeholder="业务指令附加段（可选）" style={{ marginTop: ".5rem" }} />
+            <div className="form-row" style={{ marginTop: ".5rem" }}><input name="change_note" required placeholder="本次变更说明" /><button type="submit" className="button primary">保存草稿</button></div>
+          </form>
+          <DataTable headers={["版本", "状态", "变更说明", "验证", "操作"]} rows={selectedAgent.prompt_versions.slice().reverse().map((version) => <tr key={version.id}><td>v{version.number}</td><td><StatusBadge value={version.status} /></td><td>{version.change_note}</td><td>{version.validation?.ok ? "通过" : "未验证"}</td><td><div className="actions"><button type="button" className="button ghost" onClick={async () => { try { const result = await apiPost<{ validation: { ok: boolean } }>(`/api/v1/admin/agents/${selectedAgent.agent_key}/prompt-versions/${version.id}/validate`, {}); push(result.validation.ok ? "校验通过" : "校验未通过", result.validation.ok ? "ok" : "error"); await invalidate(); } catch (error) { push(error instanceof Error ? error.message : "校验失败", "error"); } }}>验证</button>{version.status === "validated" ? <button type="button" className="button primary" onClick={async () => { try { await apiPost(`/api/v1/admin/agents/${selectedAgent.agent_key}/prompt-versions/${version.id}/publish`, {}); push("Prompt 已发布"); await invalidate(); } catch (error) { push(error instanceof Error ? error.message : "发布失败", "error"); } }}>发布</button> : null}{version.status === "superseded" ? <button type="button" className="button ghost" onClick={async () => { try { await apiPost(`/api/v1/admin/agents/${selectedAgent.agent_key}/prompt-versions/${version.id}/rollback`, {}); push("已回滚到该版本"); await invalidate(); } catch (error) { push(error instanceof Error ? error.message : "回滚失败", "error"); } }}>回滚</button> : null}</div></td></tr>)} />
+        </> : <EmptyState>暂无 Agent 配置</EmptyState>}
       </section>
     </>
   );

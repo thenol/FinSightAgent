@@ -103,12 +103,24 @@ const NAV_GROUPS: NavGroup[] = [
     label: "业务工作台",
     items: [
       { to: "/", label: "总览", end: true, icon: ICONS.overview },
+      { to: "/events", label: "事件证据", icon: ICONS.events, visible: hasBusinessRole },
       {
         to: "/reviews",
         label: "审核中心",
         badge: "reviews",
         icon: ICONS.reviews,
         visible: canReview,
+      },
+      { to: "/reports", label: "研究报告", icon: ICONS.reports, visible: hasBusinessRole },
+      { to: "/impact-targets", label: "目标影响", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/market-outlook", label: "市场展望", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/future-events", label: "研究日历", icon: ICONS.briefs, visible: hasBusinessRole },
+      { to: "/research", label: "动态研究", icon: ICONS.research, visible: canRunResearch },
+      {
+        to: "/forecast-evaluation",
+        label: "预测评估",
+        icon: ICONS.models,
+        visible: hasBusinessRole,
       },
       {
         to: "/merge-reviews",
@@ -122,24 +134,12 @@ const NAV_GROUPS: NavGroup[] = [
         icon: ICONS.types,
         visible: canReview,
       },
-      { to: "/events", label: "事件证据", icon: ICONS.events, visible: hasBusinessRole },
-      { to: "/impact-targets", label: "目标影响", icon: ICONS.briefs, visible: hasBusinessRole },
-      { to: "/future-events", label: "研究日历", icon: ICONS.briefs, visible: hasBusinessRole },
-      { to: "/market-outlook", label: "市场展望", icon: ICONS.briefs, visible: hasBusinessRole },
-      {
-        to: "/forecast-evaluation",
-        label: "预测评估",
-        icon: ICONS.models,
-        visible: hasBusinessRole,
-      },
       {
         to: "/market-master-data",
         label: "市场主数据",
         icon: ICONS.types,
         visible: canManageMarketMasterData,
       },
-      { to: "/reports", label: "研究报告", icon: ICONS.reports, visible: hasBusinessRole },
-      { to: "/research", label: "动态研究", icon: ICONS.research, visible: canRunResearch },
     ],
   },
   {
@@ -159,6 +159,7 @@ const NAV_GROUPS: NavGroup[] = [
         visible: canManageDocuments,
       },
       { to: "/models", label: "模型配置", icon: ICONS.models, visible: canManageLlm },
+      { to: "/system", label: "系统管理", icon: ICONS.audit, visible: canManageLlm },
       {
         to: "/workflows",
         label: "工作流",
@@ -212,6 +213,7 @@ function titleFor(pathname: string): { crumbs: string[]; title: string } {
   if (pathname.startsWith("/sources")) return { crumbs: ["来源"], title: "来源运维" };
   if (pathname.startsWith("/documents")) return { crumbs: ["文档保留"], title: "文档保留" };
   if (pathname.startsWith("/models")) return { crumbs: ["模型配置"], title: "模型配置" };
+  if (pathname.startsWith("/system")) return { crumbs: ["系统管理"], title: "系统管理" };
   if (isDetailPath(pathname, "/workflows")) {
     return pathname === "/workflows"
       ? { crumbs: ["工作流"], title: "研究工作流" }

@@ -55,6 +55,12 @@ export type SourceHealth = {
   recent_runs: IngestRun[];
 };
 
+export type SourceCollectionControl = {
+  config: { id: string; scheduler_enabled: boolean; default_crawl_interval_seconds: number; max_concurrent_runs: number; retry_limit: number; updated_at?: string | null };
+  sources: { total: number; active: number; degraded: number; disabled: number };
+  health: Array<{ id: string; code: string; name: string; status: string; last_success_at?: string | null; next_retry_at?: string | null; consecutive_failures: number; last_error_code?: string | null; crawl_interval_seconds: number }>;
+};
+
 export type EventItem = {
   id: string;
   event_type: string;
@@ -141,6 +147,16 @@ export type Report = {
   change_reason?: string | null;
   content?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
+};
+
+export type ReportEventGroup = {
+  event_id: string;
+  event_title: string;
+  latest_report: Report;
+  published_report?: Report | null;
+  version_count: number;
+  latest_version: number;
+  last_updated_at: string;
 };
 
 export type ReviewTask = {
@@ -293,6 +309,36 @@ export type LlmAgentBinding = {
   updated_at?: string | null;
 };
 
+export type AgentPromptVersion = {
+  id: string;
+  number: number;
+  status: "draft" | "validated" | "published" | "superseded" | "archived";
+  system_prompt: string;
+  instruction_appendix: string;
+  change_note: string;
+  created_by?: string;
+  created_at?: string;
+  validated_at?: string | null;
+  published_at?: string | null;
+  validation?: { ok: boolean; checks?: Record<string, unknown> } | null;
+};
+
+export type AgentConfiguration = {
+  agent_key: string;
+  display_name: string;
+  enabled: boolean;
+  timeout_seconds?: number | null;
+  budget_profile: string;
+  capabilities: string[];
+  input_schema_refs: string[];
+  output_schema_ref: string;
+  allowed_tools: string[];
+  published_prompt_version_id?: string | null;
+  prompt_versions: AgentPromptVersion[];
+  default_system_prompt: string;
+  updated_at?: string | null;
+};
+
 export type ReviewPolicy = {
   id: string;
   mode: "agent" | "human";
@@ -379,6 +425,15 @@ export type AdminMetrics = {
     claims_with_evidence: number;
     total_claims: number;
   };
+};
+
+export type SystemStatus = {
+  platform: { environment: string; repository: string; api_status: string; admin_url: string; docs_url: string };
+  dependencies: { database: { status: string; detail?: string }; redis: { status: string; detail?: string } };
+  workers: Array<{ name: string; status: string; last_heartbeat_at?: string | null; age_seconds?: number | null }>;
+  queues: { outbox_pending: number; outbox_dead_lettered: number; active_workflows: number; pending_reviews: number; open_quarantine: number };
+  configuration: { market_data_provider: string; review_policy: string; active_sources: number; configured_llm_providers: number };
+  refreshed_at: string;
 };
 
 export type TransmissionStep = {

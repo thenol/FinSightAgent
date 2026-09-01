@@ -33,6 +33,7 @@ import { FutureEventsPage } from "@/pages/FutureEventsPage";
 import { MarketOutlookPage } from "@/pages/MarketOutlookPage";
 import { ForecastEvaluationPage } from "@/pages/ForecastEvaluationPage";
 import { MarketMasterDataPage } from "@/pages/MarketMasterDataPage";
+import { SystemManagementPage } from "@/pages/SystemManagementPage";
 
 function RequireAuth() {
   const { token } = useAuth();
@@ -81,6 +82,7 @@ export function AppRouter() {
           </Route>
           <Route element={<RequireRole allow={canManageLlm} />}>
             <Route path="models" element={<ModelsPage />} />
+            <Route path="system" element={<SystemManagementPage />} />
           </Route>
           <Route element={<RequireRole allow={canRunWorkflow} />}>
             <Route path="workflows" element={<WorkflowsPage />} />

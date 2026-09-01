@@ -13,7 +13,7 @@ import { asList, formatDate } from "@/lib/format";
 import { canReview, canRunWorkflow } from "@/lib/roles";
 import type { BudgetEntry, NodeAttempt, Workflow } from "@/types/api";
 
-const NODES = ["context", "fact_check", "preliminary_assess", "company", "skeptic", "synthesize", "draft", "guardrail"];
+const NODES = ["context", "fact_check", "preliminary_assess", "company", "skeptic", "synthesize", "research_writer", "draft", "guardrail"];
 
 export function WorkflowsPage() {
   const { workflowId } = useParams();
@@ -279,6 +279,6 @@ function WorkflowDetailPage({ workflowId }: { workflowId: string }) {
 }
 
 function nodeLabel(node: string): string {
-  const labels: Record<string, string> = { context: "构建研究上下文", fact_check: "核验事件事实", preliminary_assess: "事件初步研判", company: "公司影响分析", industry: "行业传导分析", market: "市场反应分析", skeptic: "反方审查", synthesize: "综合研究结论", draft: "生成报告草稿", guardrail: "质量与合规检查" };
+  const labels: Record<string, string> = { context: "构建研究上下文", fact_check: "核验事件事实", preliminary_assess: "事件初步研判", company: "公司影响分析", industry: "行业传导分析", market: "市场反应分析", skeptic: "反方审查", synthesize: "综合研究结论", research_writer: "撰写研究备忘录", draft: "生成报告草稿", guardrail: "质量与合规检查" };
   return labels[node] || node;
 }

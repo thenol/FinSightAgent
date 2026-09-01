@@ -693,6 +693,34 @@ a:hover {
 .priority-high .overview-review-item__meta em { color: var(--color-amber); }
 .workflow-display-title { color: var(--color-text-strong); font-weight: 700; line-height: 1.35; }
 .workflow-display-subtitle { margin-top: .2rem; font-size: .72rem; }
+.report-list-summary { margin-top: .2rem; max-width: 38rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+.report-version-current { display: inline-flex; align-items: center; border-radius: 999px; padding: .16rem .5rem; background: color-mix(in srgb, var(--color-blue) 14%, transparent); color: var(--color-blue); font-weight: 650; }
+.report-version-active td { background: color-mix(in srgb, var(--color-blue) 7%, transparent); }
+.report-version-timeline { position: sticky; top: 0; z-index: 20; margin: 0 0 .75rem; padding: .5rem 0; background: var(--color-surface-1); box-shadow: 0 6px 12px color-mix(in srgb, var(--color-text-strong) 12%, transparent); }
+.report-version-timeline__items { display: flex; flex-wrap: nowrap; gap: .4rem; overflow-x: auto; padding: 0 .25rem; scrollbar-width: thin; }
+.report-version-chip { display: inline-flex; align-items: center; flex: 0 0 auto; gap: .38rem; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-2); color: var(--color-text-muted); padding: .35rem .7rem; cursor: pointer; font-size: .76rem; line-height: 1.2; white-space: nowrap; }
+.report-version-chip__status { color: var(--color-text-muted); }
+.report-version-chip strong { color: var(--color-text-strong); font-size: .8rem; }
+.report-version-chip small { color: var(--color-text-muted); font-size: .72rem; }
+.report-version-chip:hover { border-color: var(--color-blue); }
+.report-version-chip.active { border-color: var(--color-blue); background: var(--color-blue); color: #fff; box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-blue) 25%, transparent); }
+.report-version-chip.active .report-version-chip__status, .report-version-chip.active strong, .report-version-chip.active small { color: #fff; }
+.report-memo { max-width: 68rem; }
+.report-memo__conclusion { margin: .85rem 0; color: var(--color-text-strong); font-size: 1.05rem; font-weight: 650; line-height: 1.7; }
+.report-memo__meta { display: flex; gap: .55rem; align-items: center; color: var(--color-text-muted); font-size: .78rem; }
+.report-memo__sections { display: grid; gap: .7rem; margin-top: 1rem; }
+.report-memo__section { border-left: 2px solid var(--color-border); padding: .1rem 0 .1rem .8rem; }
+.report-memo__section h4 { margin: 0; font-size: .88rem; }
+.report-memo__section p { margin: .35rem 0; line-height: 1.7; }
+.report-memo__section--counter_case { border-left-color: var(--color-amber); }
+.report-memo__section--watch { border-left-color: var(--color-blue); }
+.report-citation { margin-left: .25rem; color: var(--color-blue); cursor: help; font-size: .76rem; font-weight: 700; }
+.system-worker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+.system-worker { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .7rem .8rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); }
+.system-worker p { margin: .2rem 0 0; font-size: .75rem; }
+@media (max-width: 700px) { .system-worker-grid { grid-template-columns: 1fr; } }
+.report-audit-details { margin-top: .85rem; }
+.report-audit-details summary { cursor: pointer; color: var(--color-text-muted); font-size: .82rem; }
 .workflow-progress { width: 7rem; height: .35rem; overflow: hidden; border-radius: 999px; background: var(--color-border); }
 .workflow-progress i { display: block; height: 100%; border-radius: inherit; background: var(--color-blue); }
 .panel > ul a { display: inline-flex; flex-direction: column; gap: .15rem; }
@@ -2028,6 +2056,7 @@ dialog::backdrop {
 .section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .section-heading h2 { margin: 0.2rem 0; }
 .metric-strip.compact { margin: 0.75rem 0; }
+.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .overview-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .overview-event-card { border: 1px solid var(--color-border); border-radius: 12px; padding: 0.9rem; background: var(--color-surface-2); }
 .overview-event-card h3 { margin: 0.45rem 0; font-size: 1rem; }

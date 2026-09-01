@@ -103,6 +103,7 @@ export const statusNames: Record<string, string> = {
   general_market_news: "综合资讯",
   out_of_scope: "范围外",
   unsupported: "范围外（旧）",
+  research_memo: "研究备忘录",
 };
 
 export const MVP_EVENT_TYPES = new Set([
