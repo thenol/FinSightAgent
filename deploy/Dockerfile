@@ -21,7 +21,7 @@ COPY deploy/entrypoint.sh /entrypoint.sh
 RUN pip install --no-cache-dir ".[postgres]" \
     && groupadd --system finsight \
     && useradd --system --gid finsight --home-dir /app finsight \
-    && mkdir -p /data/artifacts \
+    && mkdir -p /data/artifacts /data/market \
     && chown -R finsight:finsight /app /data /entrypoint.sh \
     && chmod 0555 /entrypoint.sh
 
